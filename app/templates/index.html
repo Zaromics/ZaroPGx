@@ -3011,6 +3011,44 @@
             }
         };
 
+        // A completed job's report links, keyed as showResults reads them, from
+        // GET /reports/job/{id}. Only one job_update carries them (the last one
+        // upload_router sends); an end learned any other way (another "completed"
+        // message, the status sent on reconnecting, the poll, the tab-visible
+        // refresh) has none. The endpoint returns the job's reports with
+        // generate_report's *_path keys or, in its fallback shape, *_url keys, where
+        // html_report_url is the interactive report.
+        window.fetchReportLinks = async function(jobId) {
+            const response = await fetch(`/reports/job/${encodeURIComponent(jobId)}`);
+            if (!response.ok) {
+                throw new Error(`GET /reports/job answered ${response.status}`);
+            }
+            const reports = (await response.json()).reports || {};
+            const pathKeys = {
+                pdf_report_url: 'pdf_path',
+                interactive_html_report_url: 'interactive_html_path',
+                pharmcat_html_report_url: 'pharmcat_html_path',
+                pharmcat_json_report_url: 'pharmcat_json_path',
+                pharmcat_tsv_report_url: 'pharmcat_tsv_path',
+                mtdna_report_url: 'mtdna_report_path',
+                mtdna_haplogroups_url: 'mtdna_haplogroups_path',
+                mtdna_vcf_url: 'mtdna_vcf_path'
+            };
+            const links = { job_id: jobId };
+            Object.entries(pathKeys).forEach(([key, pathKey]) => {
+                let url = reports[pathKey] || reports[key];
+                if (!url && key === 'interactive_html_report_url') {
+                    url = reports.html_report_url;
+                }
+                // showResults puts these in href attributes as they are, as it does
+                // the job_update's; take only the report paths the server builds.
+                if (typeof url === 'string' && url.startsWith('/reports/')) {
+                    links[key] = url;
+                }
+            });
+            return links;
+        };
+
         window.monitorProgress = function(jobId) {
             console.log('Starting workflow monitoring for job:', jobId);
             
@@ -3049,7 +3087,35 @@
             
             // Initialize smooth progress manager
             const smoothProgress = window.initializeSmoothProgress();
-            
+
+            // How this job's end has been shown (see onComplete).
+            let endShown = null;
+            let linksShown = false;
+            const reportLinkKeys = [
+                'pdf_report_url', 'interactive_html_report_url', 'pharmcat_html_report_url',
+                'pharmcat_json_report_url', 'pharmcat_tsv_report_url', 'mtdna_report_url',
+                'mtdna_haplogroups_url', 'mtdna_vcf_url'
+            ];
+            // The results card, with whichever report links `links` has.
+            const showCompleted = (links) => {
+                // Extract patient_id from report URLs: any of them, not just
+                // the PDF's. A job with the custom report off has PharmCAT's
+                // links only, and lost its "Download All" button.
+                let patient_id = links.patient_id;
+                const reportUrl = reportLinkKeys
+                    .map(key => links[key])
+                    .find((url) => typeof url === 'string' && url);
+                if (!patient_id && reportUrl) {
+                    const match = reportUrl.match(/\/reports\/([^\/]+)\//);
+                    if (match) {
+                        patient_id = match[1];
+                    }
+                }
+                const resultsData = { job_id: links.job_id || links.workflow_id || jobId, patient_id: patient_id };
+                reportLinkKeys.forEach(key => { resultsData[key] = links[key]; });
+                window.showResults(resultsData);
+            };
+
             // Start workflow monitoring using the new system
             console.log('WorkflowMonitor available:', typeof WorkflowMonitor !== 'undefined');
             console.log('WorkflowMonitor class:', WorkflowMonitor);
@@ -3064,6 +3130,12 @@
                     workflowMonitor = new WorkflowMonitor(jobId, {
                         baseUrl: window.location.origin,
                     onProgress: (progress, data) => {
+                        // The socket goes on sending after the end is shown; those
+                        // messages restarted the stopped bar and replaced its final
+                        // status line ("Analysis failed") with theirs.
+                        if (endShown) {
+                            return;
+                        }
                         console.log('Workflow progress received:', progress, data);
                         console.log('Progress data:', {
                             progress_percentage: data.progress_percentage,
@@ -3094,7 +3166,24 @@
                         // failed or cancelled. Only "completed" is a success; a
                         // failed job showed a green bar at 100% and "Analysis
                         // Complete! ... completed successfully".
+                        //
+                        // And however the page learned it: a live job_update (several
+                        // say "completed", one of them with the report links), the
+                        // status sent on reconnecting, the poll or the tab-visible
+                        // refresh. A job ends once, so its first end is the one shown.
+                        // After that only a message with the links changes anything:
+                        // it draws a completed job's card again with them. One without
+                        // them used to redraw the card and wipe its links.
                         const endedAs = String((data && data.status) || 'completed').toLowerCase();
+                        const hasLinks = reportLinkKeys.some(key => data && data[key]);
+                        if (endShown) {
+                            if (endShown === 'completed' && endedAs === 'completed' && hasLinks && !linksShown) {
+                                linksShown = true;
+                                showCompleted(data);
+                            }
+                            return;
+                        }
+                        endShown = endedAs;
                         if (endedAs !== 'completed') {
                             window.showJobEnded(endedAs, smoothProgress);
                             return;
@@ -3127,44 +3216,47 @@
                         }
                         
                         // Show results window with completion data (now includes report URLs)
-                        if (data && (data.job_id || data.workflow_id)) {
-                            // Extract patient_id from report URLs: any of them, not just
-                            // the PDF's. A job with the custom report off has PharmCAT's
-                            // links only, and lost its "Download All" button.
-                            let patient_id = data.patient_id;
-                            const reportUrl = [
-                                data.pdf_report_url, data.interactive_html_report_url,
-                                data.pharmcat_html_report_url, data.pharmcat_json_report_url,
-                                data.pharmcat_tsv_report_url, data.mtdna_haplogroups_url,
-                                data.mtdna_vcf_url, data.mtdna_report_url
-                            ].find((url) => typeof url === 'string' && url);
-                            if (!patient_id && reportUrl) {
-                                const match = reportUrl.match(/\/reports\/([^\/]+)\//);
-                                if (match) {
-                                    patient_id = match[1];
-                                }
-                            }
-                            
-                            // Create a data object that matches what showResults expects
-                            const resultsData = {
-                                job_id: data.job_id || data.workflow_id,
-                                patient_id: patient_id,
-                                pdf_report_url: data.pdf_report_url,
-                                interactive_html_report_url: data.interactive_html_report_url,
-                                pharmcat_html_report_url: data.pharmcat_html_report_url,
-                                pharmcat_json_report_url: data.pharmcat_json_report_url,
-                                pharmcat_tsv_report_url: data.pharmcat_tsv_report_url,
-                                mtdna_report_url: data.mtdna_report_url,
-                                mtdna_haplogroups_url: data.mtdna_haplogroups_url,
-                                mtdna_vcf_url: data.mtdna_vcf_url
-                            };
-                            
-                            // Call the existing showResults function
-                            window.showResults(resultsData);
+                        if (hasLinks) {
+                            linksShown = true;
+                            showCompleted(data);
+                            return;
                         }
+                        // A fetch still out when another job is monitored drew this
+                        // job's card over that one's view.
+                        const stillMonitored = () => workflowMonitor && workflowMonitor.workflowId === jobId;
+                        window.fetchReportLinks(jobId).then(links => {
+                            // The message with the links may have come meanwhile; if
+                            // these have links, a later one need not draw them again.
+                            if (stillMonitored() && !linksShown) {
+                                linksShown = reportLinkKeys.some(key => links[key]);
+                                showCompleted(links);
+                            }
+                        }, error => {
+                            if (!stillMonitored() || linksShown) {
+                                return;
+                            }
+                            console.warn('Could not load the report links:', error);
+                            showCompleted({});
+                            window.addLogMessage(`Could not load the report links: ${error.message}`, 'warning');
+                            // A card that says "complete" and offers nothing reads as
+                            // a job without reports; say where they are instead.
+                            const resultsDiv = document.getElementById('analysisResults');
+                            if (resultsDiv) {
+                                const note = document.createElement('p');
+                                note.className = 'mt-3 mb-0';
+                                note.textContent = 'The report links could not be loaded. This job\'s reports are on the host in '
+                                    + `data/reports/<patient_id>/${jobId}/.`;
+                                (resultsDiv.querySelector('.alert') || resultsDiv).append(note);
+                            }
+                        });
                     },
                     onError: (error) => {
                         console.error('Workflow error:', error);
+                        // After the end is shown nothing is left to report: a late
+                        // connection error reset the stage row the end had marked.
+                        if (endShown) {
+                            return;
+                        }
                         // Update stage indicators using simple glyph system
                         window.GlyphManager.updateStageIndicators('Error', 'failed');
                         window.addLogMessage(`Workflow error: ${error.message}`, 'danger');
