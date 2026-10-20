@@ -108,9 +108,9 @@ class WorkflowMonitor {
     }
 
     /**
-     * Poll the progress endpoint while the job runs. Progress only: completion
-     * stays with the WebSocket, whose message carries the report links that
-     * /progress does not.
+     * Poll the progress endpoint while the job runs. It also reports the job's
+     * end: while the socket is down or reconnecting no job_update arrives, and
+     * the bar just stopped. /progress has no report links; the page fetches them.
      */
     startProgressPolling() {
         this.pollTimer = setInterval(async () => {
@@ -125,13 +125,50 @@ class WorkflowMonitor {
                 );
                 if (!response.ok || this.isCompleted) return;
                 const data = await response.json();
-                if (data.status !== 'running' || data.progress_percentage === undefined) return;
+                if (this.isCompleted || data.progress_percentage === undefined) return;
+                if (data.status !== 'running' && !this.hasEnded(data)) return;
                 this.currentProgress = data.progress_percentage;
                 this.callbacks.onProgress(data.progress_percentage, data);
+                this.reportEnd(data);
             } catch (error) {
                 this.logger.debug('Progress poll failed:', error);
             }
         }, this.config.progressPollInterval);
+    }
+
+    hasEnded(data) {
+        return ['completed', 'failed', 'cancelled'].includes(data && data.status);
+    }
+
+    /**
+     * Tell the page the job ended, from a status read outside the live job_update
+     * stream: the status sent on (re)connecting, the poll or the tab-visible
+     * refresh. Once, and only if no live message said so first; live messages
+     * still go to onComplete as they come, since the one with the report links
+     * can follow others that say "completed" without them.
+     */
+    reportEnd(data) {
+        if (this.isCompleted || !this.hasEnded(data)) return;
+        this.isCompleted = true;
+        this.stopProgressPolling();
+        // A reconnect under way would fail after the end is shown, and its onError
+        // reset the stage row the end had just marked: call it off.
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = null;
+        }
+        if (this.websocket && this.websocket.readyState === 0) {
+            this.websocket.onerror = null;
+            this.websocket.onclose = null;
+            this.websocket.close();
+            this.websocket = null;
+            this.isConnecting = false;
+        }
+        this.callbacks.onComplete(data);
     }
 
     stopProgressPolling() {
@@ -191,10 +228,7 @@ class WorkflowMonitor {
                     this.callbacks.onProgress(data.progress_percentage, data);
 
                     // Check if completed while tab was hidden
-                    if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
-                        this.isCompleted = true;
-                        this.callbacks.onComplete(data);
-                    }
+                    this.reportEnd(data);
                 }
             } else {
                 let detail = '';
@@ -361,6 +395,9 @@ class WorkflowMonitor {
         
         this.callbacks.onWorkflowUpdate(data);
         this.callbacks.onProgress(data.progress_percentage || 0, data);
+        // Sent on every (re)connect. A job that ended while the socket was down
+        // gets no job_update saying so; this is where the page learns it.
+        this.reportEnd(data);
     }
     
     /**

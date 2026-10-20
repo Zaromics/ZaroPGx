@@ -10,17 +10,16 @@ Reference: https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.htm
 import json
 import logging
 import os
+import re
 import uuid
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from xml.dom import minidom
 
 from sqlalchemy.orm import Session
 
 from app.reports.actionable import actionable_genes
-from app.services.fhir import terminology
+from app.services.fhir import terminology, xml_format
 from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
@@ -62,8 +61,15 @@ def fhir_export_enabled() -> bool:
 # Reports directory - same as other report outputs
 REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
 
-# FHIR namespace for XML export
-FHIR_NAMESPACE = "http://hl7.org/fhir"
+# Namespace of the resources' ids. Each id is a name-based (v5) UUID of what the
+# resource is -- the report's genotype for CYP2D6, its recommendation n for
+# codeine -- so the bundle of one report names its resources the same way every
+# time it is written, and pushing it again (app.services.fhir.push) updates them.
+RESOURCE_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:zaropgx:fhir-resource")
+
+
+# The HLA-B alleles PharmCAT screens, each reported as its own result.
+HLA_B_SCREENED_ALLELES = ("*15:02", "*57:01", "*58:01")
 
 
 class FHIRExportService:
@@ -100,6 +106,7 @@ class FHIRExportService:
         include_recommendations: bool = True,
         pharmcat_data: Optional[Dict[str, Any]] = None,
         workflow_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Export a PharmCAT run as a FHIR Bundle.
@@ -109,6 +116,9 @@ class FHIRExportService:
             patient_info: Optional patient information dict
             output_format: "json" or "xml"
             include_recommendations: Whether to include therapeutic implications
+            patient_id: The ZaroPGx patient the run belongs to, the Patient's
+                identifier when patient_info names none (else the job's
+                patient, else the run id)
 
         Returns:
             Dict containing:
@@ -150,6 +160,7 @@ class FHIRExportService:
                 patient_info=patient_info,
                 include_recommendations=include_recommendations,
                 workflow_id=workflow_id,
+                patient_id=patient_id or self._job_patient_id(workflow_id),
             )
 
             # Convert to requested format
@@ -220,6 +231,7 @@ class FHIRExportService:
                 run_id=run_id,
                 patient_info=patient_info,
                 workflow_id=workflow_id,
+                patient_id=self._job_patient_id(workflow_id),
             )
 
             file_stub = workflow_id or run_id or "workflow"
@@ -305,6 +317,14 @@ class FHIRExportService:
                 else [output_format.lower()]
             )
 
+            # The patient directory is the patient's id, unless it is the job's
+            # own directory (no patient given; save_fhir_export_for_workflow).
+            bundle_patient_id = (
+                patient_id
+                if patient_id and str(patient_id) != str(workflow_id)
+                else None
+            )
+
             for fmt in formats_to_export:
                 # Generate the export
                 result = self.export_pgx_report(
@@ -314,6 +334,7 @@ class FHIRExportService:
                     include_recommendations=include_recommendations,
                     pharmcat_data=pharmcat_data,
                     workflow_id=workflow_id,
+                    patient_id=bundle_patient_id,
                 )
 
                 if not result.get("success"):
@@ -423,6 +444,7 @@ class FHIRExportService:
         patient_info: Optional[Dict[str, Any]] = None,
         include_recommendations: bool = True,
         workflow_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Build a FHIR Bundle containing all PGx report resources.
@@ -430,6 +452,7 @@ class FHIRExportService:
         Following the HL7 Genomics Reporting IG structure:
         - DiagnosticReport (Genomic Report)
         - Observation (Genotype) for each gene
+        - Observation (Therapeutic Implication) for each gene's phenotype
         - Observation (Therapeutic Implication) for each drug
         - Task (Medication Recommendation) for each recommendation
         - Patient
@@ -455,13 +478,27 @@ class FHIRExportService:
 
         entries = []
         observation_references = []
+        phenotype_references = []
+        # The same phenotype observations as a drug's implication cites them: by
+        # gene, without the phenotype (the observation states it).
+        phenotype_citations = []
         implication_references = []
         task_references = []
+        # How often each name has come up, so a gene or drug listed twice still
+        # gets an id of its own.
+        seen: Dict[tuple, int] = {}
+
+        def stable_id(kind: str, name: Any = "") -> str:
+            key = (kind, str(name))
+            seen[key] = seen.get(key, 0) + 1
+            suffix = f"/{seen[key]}" if seen[key] > 1 else ""
+            return self._stable_id(kind, reference_id, f"{name}{suffix}")
 
         # Create Patient resource
         patient_resource, patient_ref = self._create_patient_resource(
             patient_info or {},
             reference_id,
+            patient_id=patient_id,
         )
         entries.append(
             {
@@ -477,6 +514,7 @@ class FHIRExportService:
                 gene_data=gene_data,
                 patient_ref=patient_ref,
                 run_id=run_id,
+                resource_id=stable_id("genotype", gene_data.get("gene")),
             )
             entries.append(
                 {
@@ -484,23 +522,56 @@ class FHIRExportService:
                     "resource": genotype_obs,
                 }
             )
-            observation_references.append(
-                {
-                    "reference": f"urn:uuid:{genotype_obs['id']}",
-                    "display": f"{gene_data.get('gene', 'Unknown')} {gene_data.get('diplotype', '')}",
-                }
-            )
+            genotype_ref = {
+                "reference": f"urn:uuid:{genotype_obs['id']}",
+                "display": f"{gene_data.get('gene', 'Unknown')} {gene_data.get('diplotype', '')}",
+            }
+            observation_references.append(genotype_ref)
+
+            # The phenotype, as the IG states one: a therapeutic implication of
+            # the genotype (see _create_phenotype_implication).
+            phenotype = gene_data.get("phenotype")
+            if self._states_a_phenotype(phenotype):
+                phenotype_obs = self._create_phenotype_implication(
+                    gene_data=gene_data,
+                    patient_ref=patient_ref,
+                    genotype_ref=genotype_ref,
+                    resource_id=stable_id("phenotype", gene_data.get("gene")),
+                )
+                entries.append(
+                    {
+                        "fullUrl": f"urn:uuid:{phenotype_obs['id']}",
+                        "resource": phenotype_obs,
+                    }
+                )
+                phenotype_references.append(
+                    {
+                        "reference": f"urn:uuid:{phenotype_obs['id']}",
+                        "display": f"{gene_data.get('gene', 'Unknown')} {phenotype}",
+                    }
+                )
+                phenotype_citations.append(
+                    {
+                        "reference": f"urn:uuid:{phenotype_obs['id']}",
+                        "display": f"{gene_data.get('gene', 'Unknown')} phenotype",
+                    }
+                )
 
         # Create Therapeutic Implications and Medication Recommendations
         if include_recommendations:
             drug_recommendations = pharmcat_data.get("drugRecommendations", [])
             for drug_rec in drug_recommendations:
                 # Therapeutic Implication observation
+                implication_id = stable_id(
+                    "therapeutic-implication", drug_rec.get("drug")
+                )
                 implication_obs = self._create_therapeutic_implication(
                     drug_data=drug_rec,
                     patient_ref=patient_ref,
                     observation_refs=observation_references,
+                    phenotype_refs=phenotype_citations,
                     run_id=run_id,
+                    resource_id=implication_id,
                 )
                 entries.append(
                     {
@@ -517,13 +588,16 @@ class FHIRExportService:
 
                 # Medication Recommendation Task
                 recommendations = drug_rec.get("recommendations", [])
-                for rec in recommendations:
+                for index, rec in enumerate(recommendations, start=1):
                     med_task = self._create_medication_recommendation_task(
                         drug_name=drug_rec.get("drug", "Unknown"),
                         recommendation=rec,
                         patient_ref=patient_ref,
                         implication_ref=f"urn:uuid:{implication_obs['id']}",
                         run_id=run_id,
+                        resource_id=self._stable_id(
+                            "medication-recommendation", implication_id, index
+                        ),
                     )
                     entries.append(
                         {
@@ -542,6 +616,7 @@ class FHIRExportService:
             pharmcat_data=pharmcat_data,
             patient_ref=patient_ref,
             run_id=run_id,
+            resource_id=stable_id("genomic-study"),
         )
         entries.append(
             {
@@ -551,7 +626,9 @@ class FHIRExportService:
         )
 
         # Create DiagnosticReport (main Genomic Report)
-        all_result_refs = observation_references + implication_references
+        all_result_refs = (
+            observation_references + phenotype_references + implication_references
+        )
         diagnostic_report = self._create_diagnostic_report(
             pharmcat_data=pharmcat_data,
             patient_ref=patient_ref,
@@ -600,9 +677,18 @@ class FHIRExportService:
         self,
         patient_info: Dict[str, Any],
         run_id: str,
+        patient_id: Optional[str] = None,
     ) -> tuple:
-        """Create a FHIR Patient resource."""
-        patient_id = str(uuid.uuid4())
+        """Create a FHIR Patient resource.
+
+        Its identifier is the id patient_info gives, else the ZaroPGx patient's
+        (patient_id), and only failing both the run's. It used to fall straight
+        to the run: a bundle saved without patient details (POST
+        /fhir/save/workflow/{job}) named a Patient after the job, and pushing it
+        then made a second Patient and moved the report onto it.
+        """
+        patient_identifier = patient_info.get("id") or patient_id or run_id
+        patient_id = self._stable_id("Patient", patient_identifier)
 
         resource = {
             "resourceType": "Patient",
@@ -613,7 +699,7 @@ class FHIRExportService:
             "identifier": [
                 {
                     "system": terminology.ZAROPGX_PATIENT_ID,
-                    "value": patient_info.get("id", run_id),
+                    "value": patient_identifier,
                 }
             ],
         }
@@ -648,16 +734,16 @@ class FHIRExportService:
         gene_data: Dict[str, Any],
         patient_ref: str,
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Observation for genotype/diplotype.
 
         Following the Genotype profile from HL7 Genomics Reporting IG.
         """
-        obs_id = str(uuid.uuid4())
+        obs_id = resource_id or str(uuid.uuid4())
         gene_symbol = gene_data.get("gene", "Unknown")
         diplotype = gene_data.get("diplotype", "Unknown")
-        phenotype = gene_data.get("phenotype", "Unknown")
         activity_score = gene_data.get("activity_score")
         activity_value = None
         if activity_score not in (None, "", "n/a"):
@@ -672,18 +758,9 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_GENOTYPE],
             },
+            "identifier": [self._resource_identifier(obs_id)],
             "status": "final",
-            "category": [
-                {
-                    "coding": [
-                        {
-                            "system": terminology.OBSERVATION_CATEGORY,
-                            "code": "laboratory",
-                            "display": "Laboratory",
-                        }
-                    ]
-                }
-            ],
+            "category": self._genomic_observation_category(),
             "code": {
                 "coding": [
                     {
@@ -700,14 +777,11 @@ class FHIRExportService:
                 "reference": patient_ref,
             },
             "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            # Text, as the IG's PharmVar genotype example has it. The diplotype
+            # was sent as a code of http://www.pharmvar.org, whose codes are
+            # PharmVar's allele ids (PV00155), never a diplotype -- and genes
+            # PharmVar does not cover (ABCG2's rs2231142) went under it too.
             "valueCodeableConcept": {
-                "coding": [
-                    {
-                        "system": terminology.PHARMVAR,
-                        "code": diplotype,
-                        "display": diplotype,
-                    }
-                ],
                 "text": diplotype,
             },
             "component": [],
@@ -727,47 +801,19 @@ class FHIRExportService:
                         }
                     ],
                 },
-                "valueCodeableConcept": {
-                    "coding": [
-                        {
-                            "system": terminology.HGNC_GENE_ID,
-                            "code": gene_symbol,
-                            "display": gene_symbol,
-                        }
-                    ],
-                    "text": gene_symbol,
-                },
+                "valueCodeableConcept": self._gene_concept(gene_symbol),
             }
         )
 
-        # Add phenotype component. "N/A" (app/reports/generator.py) says the
-        # calling tool defines none for the gene: there is no phenotype to state.
-        if phenotype and phenotype not in ("Unknown", "N/A"):
-            observation["component"].append(
-                {
-                    # Text, not a LOINC code: the code once sent here was
-                    # CYP2C9's metabolic-activity interpretation, for every
-                    # gene. The IG's coded form is the FHIR round's work.
-                    "code": {"text": "Phenotype"},
-                    "valueCodeableConcept": {
-                        "text": phenotype,
-                    },
-                }
-            )
+        # No phenotype here: the genotype profile has no place for one, and the
+        # IG states it as a therapeutic implication of the genotype
+        # (_create_phenotype_implication). It was a text component.
 
         # Add activity score if present
         if activity_value is not None:
             observation["component"].append(
                 {
-                    "code": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "activity-score",
-                                "display": "Activity Score",
-                            }
-                        ],
-                    },
+                    "code": self._activity_score_code(gene_symbol),
                     "valueQuantity": {
                         "value": activity_value,
                         "system": terminology.UCUM,
@@ -820,19 +866,156 @@ class FHIRExportService:
 
         return observation
 
+    @staticmethod
+    def _states_a_phenotype(phenotype: Any) -> bool:
+        """Whether the row has a phenotype to state. "N/A" (app/reports/
+        generator.py) says the calling tool defines none for the gene; "Unknown"
+        that none was reported."""
+        return bool(phenotype) and phenotype not in ("Unknown", "N/A")
+
+    def _create_phenotype_implication(
+        self,
+        gene_data: Dict[str, Any],
+        patient_ref: str,
+        genotype_ref: Dict[str, str],
+        resource_id: str,
+    ) -> Dict[str, Any]:
+        """The gene's phenotype as a therapeutic implication of its genotype.
+
+        The Genomics Reporting IG (3.0.0) states a pharmacogenomic phenotype --
+        metabolizer status, function, a risk -- in the "therapeutic-implication"
+        component of a therapeutic-implication observation derived from the
+        genotype, coded from its genetic-therapeutic-implications value set
+        (LOINC answers such as LA9657-3 "Poor metabolizer"). This one names no
+        medication: the phenotype is the genotype's, whatever the drug, and every
+        gene with one gets it, drugs or not. A phenotype the value set has no code
+        for travels as text (_phenotype_concept); a risk coded after CPIC's EHR
+        priority carries a note that says so.
+        """
+        gene_symbol = gene_data.get("gene", "Unknown")
+        concept = self._phenotype_concept(gene_data.get("phenotype"))
+        observation = {
+            "resourceType": "Observation",
+            "id": resource_id,
+            "meta": {
+                "profile": [terminology.PROFILE_THERAPEUTIC_IMPLICATION],
+            },
+            "identifier": [self._resource_identifier(resource_id)],
+            "status": "final",
+            "category": self._genomic_observation_category(),
+            "code": {
+                "coding": [self._tbd_coding("therapeutic-implication")],
+                "text": f"{gene_symbol} phenotype",
+            },
+            "subject": {
+                "reference": patient_ref,
+            },
+            "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            "derivedFrom": [dict(genotype_ref)],
+            "component": [
+                {
+                    "code": {
+                        "coding": [self._tbd_coding("therapeutic-implication")],
+                    },
+                    "valueCodeableConcept": concept,
+                }
+            ],
+        }
+        # High or Low risk is CPIC's EHR priority for the call, not the call
+        # itself (terminology.CPIC_PRIORITY_TERMS). A reader of the code alone
+        # would take it for the result, so the observation says what it stands for.
+        coding = concept.get("coding", [{}])[0]
+        priority = terminology.CPIC_PRIORITY_TERMS.get(coding.get("code"))
+        if priority:
+            # One result, one term. HLA-B states a result per risk allele, joined
+            # with ", " (_hla_results_code; no other risk phenotype has a comma):
+            # High risk is CPIC's term for a positive one among them, Low risk its
+            # term for negative results, every one of them.
+            if "," not in concept["text"]:
+                basis = "that result"
+            elif coding["code"] == terminology.HLA_ALLELE_RESULT_ANSWERS["positive"]:
+                basis = "a positive result"
+            else:
+                basis = "negative results"
+            observation["note"] = [
+                {
+                    "text": (
+                        f'ZaroPGx called this phenotype "{concept["text"]}". It is '
+                        f'coded LOINC {coding["code"]} "{coding["display"]}" after '
+                        f'CPIC\'s EHR priority term for {basis}, "{priority}", as '
+                        "the IG's value set has no code for the call itself."
+                    )
+                }
+            ]
+        return observation
+
+    @staticmethod
+    def _phenotype_concept(phenotype: str) -> Dict[str, Any]:
+        """The phenotype as the IG codes it, with ZaroPGx's words as the text, or
+        the words alone when the value set has no code that says the same thing
+        (terminology.PHENOTYPE_ANSWERS)."""
+        text = str(phenotype).strip()
+        key = " ".join(text.lower().split())
+        code = terminology.PHENOTYPE_ANSWERS.get(key)
+        if code is None:
+            code = FHIRExportService._hla_results_code(key)
+        if code is None:
+            return {"text": text}
+        return {
+            "coding": [
+                {
+                    "system": terminology.LOINC,
+                    "code": code,
+                    "display": terminology.LOINC_DISPLAYS[code],
+                }
+            ],
+            "text": text,
+        }
+
+    @staticmethod
+    def _hla_results_code(key: str) -> Optional[str]:
+        """High or Low risk for an HLA phenotype: one result per risk allele
+        screened, joined with ", " ("*31:01 negative"; HLA-B's "*15:02 negative,
+        *57:01 positive, *58:01 negative"). High risk if any result is positive,
+        Low risk only if every one is negative; None, so the phenotype stays
+        text, if any part is not an allele result. The results hold at once: by
+        the first alone, a *57:01 or *58:01 carrier would be Low risk."""
+        results = {}
+        for part in key.split(","):
+            allele_result = re.fullmatch(
+                r"(\*\d+:\d+) (positive|negative)", part.strip()
+            )
+            if allele_result is None:
+                return None
+            results[allele_result.group(1)] = allele_result.group(2)
+        # HLA-B is screened for three alleles. A phenotype naming only some of
+        # them is HLA-B cut short (main kept only the first, "*15:02 negative",
+        # before fix/hla-b-every-allele-result): coding it would call a *57:01 or
+        # *58:01 carrier Low risk, so it stays text.
+        screened = set(HLA_B_SCREENED_ALLELES)
+        if screened & set(results) and not screened <= set(results):
+            return None
+        result = "positive" if "positive" in results.values() else "negative"
+        return terminology.HLA_ALLELE_RESULT_ANSWERS[result]
+
     def _create_therapeutic_implication(
         self,
         drug_data: Dict[str, Any],
         patient_ref: str,
         observation_refs: List[Dict[str, str]],
         run_id: str,
+        resource_id: Optional[str] = None,
+        phenotype_refs: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Observation for therapeutic implication.
 
         Following the Therapeutic Implication profile from HL7 Genomics Reporting IG.
+        It derives from its genes' genotypes and cites their phenotypes, which
+        their own implications state (_create_phenotype_implication), instead of
+        saying them again.
         """
-        obs_id = str(uuid.uuid4())
+        obs_id = resource_id or str(uuid.uuid4())
         drug_name = drug_data.get("drug", "Unknown")
         genes = drug_data.get("genes", [])
         recommendations = drug_data.get("recommendations", [])
@@ -850,26 +1033,11 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_THERAPEUTIC_IMPLICATION],
             },
+            "identifier": [self._resource_identifier(obs_id)],
             "status": "final",
-            "category": [
-                {
-                    "coding": [
-                        {
-                            "system": terminology.OBSERVATION_CATEGORY,
-                            "code": "laboratory",
-                            "display": "Laboratory",
-                        }
-                    ]
-                }
-            ],
+            "category": self._genomic_observation_category(),
             "code": {
-                "coding": [
-                    {
-                        "system": terminology.GENOMICS_TBD_CODES,
-                        "code": "therapeutic-implication",
-                        "display": "Therapeutic Implication",
-                    }
-                ],
+                "coding": [self._tbd_coding("therapeutic-implication")],
             },
             "subject": {
                 "reference": patient_ref,
@@ -893,13 +1061,10 @@ class FHIRExportService:
                         }
                     ],
                 },
+                # The drug's name. An RxNorm coding with no code stood here:
+                # PharmCAT names drugs by ClinPGx id, not RxNorm, so there is
+                # no code to send.
                 "valueCodeableConcept": {
-                    "coding": [
-                        {
-                            "system": terminology.RXNORM,
-                            "display": drug_name,
-                        }
-                    ],
                     "text": drug_name,
                 },
             }
@@ -910,13 +1075,7 @@ class FHIRExportService:
             observation["component"].append(
                 {
                     "code": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "conclusion-string",
-                                "display": "Conclusion String",
-                            }
-                        ],
+                        "coding": [self._tbd_coding("conclusion-string")],
                     },
                     "valueString": recommendation_text,
                 }
@@ -942,11 +1101,13 @@ class FHIRExportService:
                 }
             )
 
-        # Link to derived genotype observations
+        # Link to derived genotype observations. Each reference's display is
+        # "<gene> <diplotype>": match its gene exactly. A substring match tied
+        # CYP3A4's drugs to whichever of CYP3A4 and CYP3A43 came first, and F2's
+        # to CYP4F2.
         for gene in genes:
-            # Find matching observation reference
             for obs_ref in observation_refs:
-                if gene in obs_ref.get("display", ""):
+                if obs_ref.get("display", "").split(" ", 1)[0] == gene:
                     observation["derivedFrom"].append(
                         {
                             "reference": obs_ref["reference"],
@@ -954,6 +1115,20 @@ class FHIRExportService:
                         }
                     )
                     break
+        # Then to the phenotype implications of the same genes, matched the same
+        # way ("<gene> phenotype"). The IG's profile slices derivedFrom openly, so
+        # another therapeutic implication is allowed there; the phenotype stays in
+        # its own observation, not repeated here.
+        for gene in genes:
+            for phenotype_ref in phenotype_refs or []:
+                if phenotype_ref.get("display", "").split(" ", 1)[0] == gene:
+                    observation["derivedFrom"].append(dict(phenotype_ref))
+                    break
+        # No genotype to point at: no derivedFrom, not an empty list (FHIR JSON
+        # has no empty arrays). The IG's profile wants one, so such a drug's
+        # implication will not validate; it is still sent.
+        if not observation["derivedFrom"]:
+            del observation["derivedFrom"]
 
         return observation
 
@@ -964,34 +1139,31 @@ class FHIRExportService:
         patient_ref: str,
         implication_ref: str,
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Task for medication recommendation.
 
         Following the Medication Recommendation profile from HL7 Genomics Reporting IG.
         """
-        task_id = str(uuid.uuid4())
+        task_id = resource_id or str(uuid.uuid4())
         rec_text = recommendation.get("recommendation", "See report for details")
         classification = recommendation.get("classification", "")
 
+        # No Task.code: the profile binds it (required) to LOINC's medication
+        # usage suggestions (LL4049-4: consider alternative, decrease dose, ...).
+        # Choosing one would be reading the guideline's text; it said
+        # "Recommendation for <drug>" in a code system with no such code. The
+        # drug is the medication-assessed input, the guidance the description.
         task = {
             "resourceType": "Task",
             "id": task_id,
             "meta": {
                 "profile": [terminology.PROFILE_MEDICATION_RECOMMENDATION],
             },
+            "identifier": [self._resource_identifier(task_id)],
             "status": "requested",
             "intent": "proposal",
-            "code": {
-                "coding": [
-                    {
-                        "system": terminology.GENOMICS_TBD_CODES,
-                        "code": "medication-recommendation",
-                        "display": "Medication Recommendation",
-                    }
-                ],
-                "text": f"Recommendation for {drug_name}",
-            },
             "description": rec_text,
             "for": {
                 "reference": patient_ref,
@@ -1002,13 +1174,7 @@ class FHIRExportService:
             "input": [
                 {
                     "type": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "medication-assessed",
-                                "display": "Medication Assessed",
-                            }
-                        ],
+                        "coding": [self._loinc_coding("medication_assessed")],
                     },
                     "valueCodeableConcept": {
                         "text": drug_name,
@@ -1017,19 +1183,16 @@ class FHIRExportService:
             ],
         }
 
-        # Add evidence level if available
-        if classification:
+        # PharmCAT's classification is CPIC's strength of recommendation (Strong,
+        # Moderate, Optional, No recommendation; "Unspecified" for a guideline
+        # without one, see app/reports/evidence.py), not a level of evidence:
+        # sent as text, under a text type, since no LOINC code names it. Sent as
+        # LOINC 93044-6 "Level of evidence" before. "Unknown" is the readers'
+        # default when PharmCAT gave nothing, so it is left out.
+        if classification and classification.strip().lower() != "unknown":
             task["input"].append(
                 {
-                    "type": {
-                        "coding": [
-                            {
-                                "system": terminology.GENOMICS_TBD_CODES,
-                                "code": "evidence-level",
-                                "display": "Evidence Level",
-                            }
-                        ],
-                    },
+                    "type": {"text": "Strength of recommendation"},
                     "valueCodeableConcept": {
                         "text": classification,
                     },
@@ -1043,9 +1206,10 @@ class FHIRExportService:
         pharmcat_data: Dict[str, Any],
         patient_ref: str,
         run_id: str,
+        resource_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a FHIR Procedure resource for the genomic study."""
-        study_id = str(uuid.uuid4())
+        study_id = resource_id or str(uuid.uuid4())
         pharmcat_version = pharmcat_data.get("pharmcat_version", "Unknown")
 
         study = {
@@ -1054,24 +1218,26 @@ class FHIRExportService:
             "meta": {
                 "profile": [terminology.PROFILE_GENOMIC_STUDY],
             },
+            "identifier": [self._resource_identifier(study_id)],
             "status": "completed",
+            # The genomic-study profile fixes the category to "laboratory".
             "category": {
+                "coding": [
+                    {
+                        "system": terminology.OBSERVATION_CATEGORY,
+                        "code": "laboratory",
+                        "display": "Laboratory",
+                    }
+                ],
+            },
+            # What was done: a genetic test (a SNOMED CT procedure). It was coded
+            # as LOINC's "Genetic analysis report", the DiagnosticReport's code.
+            "code": {
                 "coding": [
                     {
                         "system": terminology.SNOMED_CT,
                         "code": terminology.SNOMED_GENETIC_TEST[0],
                         "display": terminology.SNOMED_GENETIC_TEST[1],
-                    }
-                ],
-            },
-            "code": {
-                "coding": [
-                    {
-                        "system": terminology.LOINC,
-                        "code": self.LOINC_CODES["pgx_report"],
-                        "display": terminology.LOINC_DISPLAYS[
-                            self.LOINC_CODES["pgx_report"]
-                        ],
                     }
                 ],
                 "text": "Pharmacogenomic Analysis",
@@ -1103,7 +1269,7 @@ class FHIRExportService:
 
         Following the Genomic Report profile from HL7 Genomics Reporting IG.
         """
-        report_id = str(uuid.uuid4())
+        report_id = self._stable_id("DiagnosticReport", run_id)
         # The genes this bundle states a genotype for (one genotype observation
         # each), counted the same whichever lane built the data. total_genes was
         # PharmCAT's row count: 23 for a 30x NA12878 report whose bundle carries 91
@@ -1165,22 +1331,13 @@ class FHIRExportService:
             "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
             "issued": datetime.now(timezone.utc).isoformat(),
             "result": result_refs,
+            # No conclusionCode: "PGX-COMPLETE" in urn:zaropgx:conclusion-codes, a
+            # code system defined nowhere, said what status "final" says.
             "conclusion": (
                 f"Pharmacogenomic analysis completed. {total_genes} "
                 f"gene{'' if total_genes == 1 else 's'} analyzed, {actionable_count} "
                 f"actionable finding{'' if actionable_count == 1 else 's'} identified."
             ),
-            "conclusionCode": [
-                {
-                    "coding": [
-                        {
-                            "system": terminology.ZAROPGX_CONCLUSION_CODES,
-                            "code": "PGX-COMPLETE",
-                            "display": "Pharmacogenomic Analysis Complete",
-                        }
-                    ],
-                }
-            ],
         }
 
         # Add reference to genomic study
@@ -1195,6 +1352,118 @@ class FHIRExportService:
         )
 
         return report
+
+    def _job_patient_id(self, workflow_id: Optional[str]) -> Optional[str]:
+        """The patient a job belongs to (its metadata's patient_id, the name of
+        its report directory's parent), or None."""
+        if not workflow_id:
+            return None
+        try:
+            # Lazy for the same circular-import reason as generator's imports.
+            from app.services.job_service import JobService
+
+            job = JobService(self.db).get_job(str(workflow_id))
+        except Exception as e:
+            logger.debug(f"No job metadata for {workflow_id}: {e}")
+            return None
+        metadata = getattr(job, "job_metadata", None)
+        value = metadata.get("patient_id") if isinstance(metadata, dict) else None
+        return str(value) if isinstance(value, (str, uuid.UUID)) and value else None
+
+    @staticmethod
+    def _stable_id(*parts: Any) -> str:
+        """The v5 UUID of what a resource is (see RESOURCE_ID_NAMESPACE)."""
+        name = "/".join(str(part) for part in parts)
+        return str(uuid.uuid5(RESOURCE_ID_NAMESPACE, name))
+
+    @staticmethod
+    def _resource_identifier(resource_id: str) -> Dict[str, str]:
+        """The resource's id as its business identifier: what a FHIR server
+        matches a re-pushed resource on (``Observation?identifier=...``)."""
+        return {
+            "system": terminology.URI_IDENTIFIER,
+            "value": f"urn:uuid:{resource_id}",
+        }
+
+    @staticmethod
+    def _genomic_observation_category() -> List[Dict[str, Any]]:
+        """Both categories the IG's genomic observations require: laboratory and
+        Genetics (v2-0074 GE). The genotype and therapeutic-implication
+        profiles reject an observation that has only one."""
+        return [
+            {
+                "coding": [
+                    {
+                        "system": terminology.OBSERVATION_CATEGORY,
+                        "code": "laboratory",
+                        "display": "Laboratory",
+                    }
+                ]
+            },
+            {
+                "coding": [
+                    {
+                        "system": terminology.DIAGNOSTIC_SERVICE_SECTION,
+                        "code": "GE",
+                        "display": "Genetics",
+                    }
+                ]
+            },
+        ]
+
+    @staticmethod
+    def _loinc_coding(key: str) -> Dict[str, str]:
+        """The LOINC coding for one of LOINC_CODES, with its official display."""
+        code = terminology.LOINC_CODES[key]
+        return {
+            "system": terminology.LOINC,
+            "code": code,
+            "display": terminology.LOINC_DISPLAYS[code],
+        }
+
+    @staticmethod
+    def _tbd_coding(code: str) -> Dict[str, str]:
+        """A code of the IG's tbd-codes-cs, with the IG's display."""
+        return {
+            "system": terminology.GENOMICS_TBD_CODES,
+            "code": code,
+            "display": terminology.GENOMICS_TBD_DISPLAYS[code],
+        }
+
+    @staticmethod
+    def _gene_concept(gene_symbol: str) -> Dict[str, Any]:
+        """A gene as the IG's hgnc-vs codes it: its HGNC id, the symbol as the
+        display. A gene missing from HGNC_IDS is sent by its symbol alone."""
+        hgnc_id = terminology.HGNC_IDS.get(gene_symbol)
+        if not hgnc_id:
+            return {"text": gene_symbol}
+        return {
+            "coding": [
+                {
+                    "system": terminology.HGNC,
+                    "code": hgnc_id,
+                    "display": gene_symbol,
+                }
+            ],
+            "text": gene_symbol,
+        }
+
+    @staticmethod
+    def _activity_score_code(gene_symbol: str) -> Dict[str, Any]:
+        """LOINC's activity-score code for the gene, or a text code for a gene
+        LOINC has none for."""
+        code = terminology.ACTIVITY_SCORE_LOINC.get(gene_symbol)
+        if not code:
+            return {"text": "Activity score"}
+        return {
+            "coding": [
+                {
+                    "system": terminology.LOINC,
+                    "code": code,
+                    "display": terminology.LOINC_DISPLAYS[code],
+                }
+            ],
+        }
 
     def _get_guideline_url(self, source: str, drug_name: str) -> str:
         """Get the guideline URL based on source."""
@@ -1215,71 +1484,8 @@ class FHIRExportService:
             return f"https://www.pharmgkb.org/drug/{drug_lower}"
 
     def _bundle_to_xml(self, bundle: Dict[str, Any]) -> str:
-        """
-        Convert a FHIR Bundle dict to XML string.
-
-        Args:
-            bundle: FHIR Bundle as dictionary
-
-        Returns:
-            XML string representation
-        """
-        root = ET.Element("Bundle")
-        root.set("xmlns", FHIR_NAMESPACE)
-
-        self._dict_to_xml(bundle, root)
-
-        # Pretty print
-        xml_str = ET.tostring(root, encoding="unicode")
-        parsed = minidom.parseString(xml_str)
-        return parsed.toprettyxml(indent="  ")
-
-    def _dict_to_xml(self, data: Any, parent: ET.Element) -> None:
-        """Recursively convert dict to XML elements."""
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if key == "resourceType":
-                    # resourceType is the element name in FHIR XML
-                    continue
-                elif key == "extension":
-                    # Handle extensions specially
-                    if isinstance(value, list):
-                        for ext in value:
-                            ext_elem = ET.SubElement(parent, "extension")
-                            if isinstance(ext, dict) and "url" in ext:
-                                ext_elem.set("url", ext["url"])
-                                for k, v in ext.items():
-                                    if k != "url":
-                                        self._add_element(ext_elem, k, v)
-                elif isinstance(value, list):
-                    for item in value:
-                        elem = ET.SubElement(parent, key)
-                        if isinstance(item, dict):
-                            self._dict_to_xml(item, elem)
-                        else:
-                            elem.set("value", str(item))
-                elif isinstance(value, dict):
-                    elem = ET.SubElement(parent, key)
-                    self._dict_to_xml(value, elem)
-                elif value is not None:
-                    elem = ET.SubElement(parent, key)
-                    elem.set("value", str(value))
-
-    def _add_element(self, parent: ET.Element, key: str, value: Any) -> None:
-        """Add an element to parent."""
-        if isinstance(value, dict):
-            elem = ET.SubElement(parent, key)
-            self._dict_to_xml(value, elem)
-        elif isinstance(value, list):
-            for item in value:
-                elem = ET.SubElement(parent, key)
-                if isinstance(item, dict):
-                    self._dict_to_xml(item, elem)
-                else:
-                    elem.set("value", str(item))
-        elif value is not None:
-            elem = ET.SubElement(parent, key)
-            elem.set("value", str(value))
+        """The bundle as FHIR XML (app.services.fhir.xml_format)."""
+        return xml_format.bundle_to_xml(bundle)
 
 
 def get_fhir_export_service(db: Session) -> FHIRExportService:

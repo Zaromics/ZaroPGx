@@ -31,7 +31,8 @@ nextflow.enable.dsl=2
   a file too large, a malformed VCF), and the same input is refused again. Those calls
   exit 65, which nextflow.config's errorStrategy terminates on instead of retrying:
   the retry re-sent the whole input, so NA12878's 15 GB CRAM took 7 minutes to be
-  refused rather than 3. A 5xx, or no response (000), still exits 1 and is retried.
+  refused rather than 3. A 5xx, or no response (000), still exits 1 and is retried,
+  except /align-fastq's 507 (too little free disk), which is a refusal too.
 */
 
 params.input          = params.input ?: ''
@@ -107,14 +108,14 @@ params.source_build   = params.source_build ?: ''
 // upload_router's own default; do not "fix" this default in isolation.
 params.skip_mtdna     = params.skip_mtdna != null ? params.skip_mtdna : true
 
-// FASTQ alignment. Short-read FASTQ under the 20 GB cap, single-end or an R1/R2 pair,
-// whose platform is detectable from its read names, is accepted at ingest and sets
-// needs_alignment, which mints the gatk_alignment StepTemplate in
-// app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI native since
-// GATK 4, so no extra aligner is installed anywhere -- the endpoint runs FastqToSam,
-// BwaSpark and MarkDuplicatesSpark (the combined BwaAndMarkDuplicatesPipelineSpark
-// cannot do single-end). A mate arrives as `fastq2`; with none it is the 0-byte
-// placeholder, and the `[ -s ]` test below tells the two apart.
+// FASTQ alignment. Short-read FASTQ under the size cap (FASTQ_MAX_UPLOAD_BYTES, 20 GB
+// unless set), single-end or an R1/R2 pair, whose platform is detectable from its read
+// names, is accepted at ingest and sets needs_alignment, which mints the gatk_alignment
+// StepTemplate in app/services/workflow_registry.py. GATK has bundled bwa-mem as a JNI
+// native since GATK 4, so no extra aligner is installed anywhere -- the endpoint runs
+// FastqToSam, BwaSpark and MarkDuplicatesSpark (the combined
+// BwaAndMarkDuplicatesPipelineSpark cannot do single-end). A mate arrives as `fastq2`;
+// with none it is the 0-byte placeholder, and the `[ -s ]` test below tells the two apart.
 process FastqToBAM {
     tag "align_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -155,7 +156,9 @@ process FastqToBAM {
     if ! HTTP_CODE=$(curl -sS --fail-with-body -o align_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/align-fastq); then
       echo "gatk-api /align-fastq returned an error (HTTP $HTTP_CODE):" >&2
       cat align_response.json >&2 || true
-      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
+      # 507 too: too little free disk for the alignment, which a retry a moment
+      # later finds the same.
+      case "$HTTP_CODE" in 4??|507) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
     BAM_PATH=$(python3 - <<'PY'
@@ -600,6 +603,11 @@ process PyPGxBam2Vcf {
     // Not optional: without it PharmCAT would be handed PyPGx's variants-only VCF,
     // which reads every reference position as a no-call.
     path "pharmcat/pharmcat_positions.vcf.gz", emit: pharmcat_vcf
+    // Each PharmCAT position's status -- reference, variant, no_reads, uncertain --
+    // with its gene and reads: which positions PharmCAT will read as missing, and why.
+    // The report reads it from the published directory. Optional: it explains the
+    // VCF above and is not needed to use it.
+    path "pharmcat/pharmcat_position_status.tsv", optional: true
 
     shell:
     '''
@@ -616,10 +624,11 @@ process PyPGxBam2Vcf {
       case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
       exit 1
     fi
-    read -r VCF_PATH PHARMCAT_VCF_PATH < <(python3 - <<'PY'
+    read -r VCF_PATH PHARMCAT_VCF_PATH STATUS_PATH < <(python3 - <<'PY'
 import json
 data = json.load(open('response.json'))
-print(data.get('vcf_path') or data.get('vcf') or '-', data.get('pharmcat_vcf_path') or '-')
+print(data.get('vcf_path') or data.get('vcf') or '-', data.get('pharmcat_vcf_path') or '-',
+      data.get('pharmcat_status_path') or '-')
 PY
 )
     if [ "$VCF_PATH" = "-" ] || [ "$PHARMCAT_VCF_PATH" = "-" ]; then
@@ -633,6 +642,9 @@ PY
     mkdir -p pharmcat
     cp "$PHARMCAT_VCF_PATH" pharmcat/pharmcat_positions.vcf.gz
     [ -f "${PHARMCAT_VCF_PATH}.tbi" ] && cp "${PHARMCAT_VCF_PATH}.tbi" pharmcat/pharmcat_positions.vcf.gz.tbi || true
+    if [ "$STATUS_PATH" != "-" ] && [ -f "$STATUS_PATH" ]; then
+      cp "$STATUS_PATH" pharmcat/pharmcat_position_status.tsv
+    fi
     '''
 }
 

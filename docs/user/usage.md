@@ -72,6 +72,9 @@ When the job completes, the page links to:
   mtDNA-Server 2's own report;
 - a ZIP of every report for this patient.
 
+With the FHIR server on, **Push to FHIR server** sends the job's FHIR bundle to it
+({doc}`reports`).
+
 Everything is in `data/reports/<patient_id>/<job_id>/` on the host. The upload itself is
 deleted when the job ends, unless `KEEP_UPLOADS=true`.
 

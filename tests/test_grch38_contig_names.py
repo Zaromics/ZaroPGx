@@ -290,7 +290,8 @@ def test_a_grch38_accession_named_bam_is_renamed_before_the_pipeline_reads_it(
     assert renamed == str(tmp_path / "ucsc_sample.bam")
     assert _contigs_and_reads(renamed)[0] == ["chr6", "chrM"]
     assert not upload.exists(), "the upload it replaces is not kept twice"
-    assert job.job_metadata["file_paths"] == [str(upload), renamed]
+    # The copy's index is released with it when the job ends.
+    assert job.job_metadata["file_paths"] == [str(upload), renamed, renamed + ".bai"]
     assert job.job_metadata["contigs_renamed"] == 2
     completed = [u for name, u in service.steps if name == "header_analysis"][-1]
     assert completed.output_data["contigs_renamed"]
@@ -388,3 +389,31 @@ def test_an_alignment_with_no_readable_chromosome_is_refused():
 )
 def test_an_alignment_with_a_readable_chromosome_is_not(contigs, build):
     assert not _alignment_workflow(contigs, build).get("unsupported")
+
+
+def test_a_copy_that_cannot_be_indexed_says_so(monkeypatch, tmp_path):
+    """Not "Could not rename": the renaming worked, the index did not."""
+    from pathlib import Path
+
+    from app.genome.contig_names import RenamedCopyNotIndexed
+
+    files = _alignment(tmp_path)
+
+    def unindexable(path, file_type, plan):
+        Path(ur.renamed_path(path)).write_bytes(b"copy")
+        raise RenamedCopyNotIndexed("[bam_index_core] unsorted positions")
+
+    monkeypatch.setattr(ur, "write_renamed_copy", unindexable)
+    with pytest.raises(RuntimeError, match="sorted by coordinate") as caught:
+        asyncio.run(
+            ur.use_ucsc_contig_names(
+                _JobService(_Job(files.bam)),
+                "job-1",
+                str(files.bam),
+                "bam",
+                _accession_header(),
+            )
+        )
+    assert "Could not rename" not in str(caught.value)
+    assert "unsorted positions" in str(caught.value)
+    assert not Path(ur.renamed_path(str(files.bam))).exists()

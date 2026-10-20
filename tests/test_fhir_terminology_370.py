@@ -112,14 +112,25 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # genotype code (84413-4) for every gene instead of per-gene codes that named other
 # genes, official LOINC display names, a phenotype component without CYP2C9's
 # code, no "genomics-bundle" profile, SNOMED 405824009 as "Genetic test". Re-taken
-# after fix/actionable-means-prescribing-change, whose only change to the bundle is
-# the conclusion's count: genes a prescribing change comes from (CYP2C19, 1), no
-# longer the length of the data's actionable_findings list (2); and again for
-# the singular, "1 actionable finding".
-GOLDEN_JSON_SHA256 = "90565668bf4d005e60090b1d3c409404405238e880cd6d10bbcf94a41cca2952"
-GOLDEN_JSON_BYTES = 21468
-GOLDEN_XML_SHA256 = "6482489bfcced36e43f7f63c0262321db8ae3356ead69c03e01bc1d0ddad7f85"
-GOLDEN_XML_BYTES = 19644
+# after fix/fhir-ig-conformance, which made the bundle validate against the Genomics
+# Reporting IG's profiles: both observation categories, HGNC ids, no PharmVar or
+# empty RxNorm codings, no tbd codes the IG does not define, no Task.code, the
+# genomic study's fixed category, no conclusionCode. The XML digest once more when
+# the XML became FHIR XML (resources wrapped in their type, children in the
+# specification's order) instead of a mirror of the JSON no FHIR parser could read.
+# And when each resource got a name-based id and an identifier to match a re-push
+# on (feat/fhir-push-hapi), and when CPIC's strength of recommendation stopped
+# being sent as LOINC's "Level of evidence". And when each gene's phenotype moved
+# from a text component of its genotype to a therapeutic implication coded the
+# IG's way (feat/fhir-coded-implications), and when each drug's implication came
+# to cite those phenotype implications in derivedFrom (the only change: two
+# references; feat/fhir-implications-cite-phenotype).
+# And when the conclusion came to count the genes a prescribing change comes
+# from (fix/actionable-means-prescribing-change), in the singular for one.
+GOLDEN_JSON_SHA256 = "1cbe43057f8329072b431d3032433a3420b58dd64e29f47dfb574344c925a76a"
+GOLDEN_JSON_BYTES = 26803
+GOLDEN_XML_SHA256 = "dd5fbc4ab08d74559943329a770229f7bc62e2b93a653739058b3a86d5be0ae1"
+GOLDEN_XML_BYTES = 26546
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -127,37 +138,40 @@ GOLDEN_XML_BYTES = 19644
 GOLDEN_URI_CENSUS = {
     "http://hl7.org/fhir/StructureDefinition/Patient": 1,
     "http://hl7.org/fhir/StructureDefinition/workflow-relatedArtifact": 1,
-    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs": 10,
+    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-codes-cs": 8,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-report": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomic-study-reference": 1,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype": 3,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation": 2,
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/recommended-action": 2,
-    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 2,
-    "http://loinc.org": 13,
+    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication": 4,
+    "http://loinc.org": 17,
     "http://snomed.info/sct": 1,
-    "http://terminology.hl7.org/CodeSystem/observation-category": 5,
-    "http://terminology.hl7.org/CodeSystem/v2-0074": 1,
+    "http://terminology.hl7.org/CodeSystem/observation-category": 8,
+    "http://terminology.hl7.org/CodeSystem/v2-0074": 8,
     "http://unitsofmeasure.org": 1,
-    "http://www.genenames.org/geneId": 3,
-    "http://www.nlm.nih.gov/research/umls/rxnorm": 2,
-    "http://www.pharmvar.org": 3,
+    "http://www.genenames.org": 3,
     "https://www.clinpgx.org/guidelineAnnotations": 1,
-    "urn:zaropgx:conclusion-codes": 1,
+    "urn:ietf:rfc:3986": 10,
     "urn:zaropgx:patient-id": 1,
     "urn:zaropgx:report-id": 1,
 }
 
 
 class _SequentialUuid:
-    """Stand-in for the ``uuid`` module handing out 00...01, 00...02, ..."""
+    """Stand-in for the ``uuid`` module handing out 00...01, 00...02, ...
+
+    Only uuid4 is random; the resources' name-based ids (uuid5) are the real ones.
+    """
 
     def __init__(self) -> None:
         self._counter = itertools.count(1)
 
     def uuid4(self) -> uuid_module.UUID:
         return uuid_module.UUID(int=next(self._counter))
+
+    uuid5 = staticmethod(uuid_module.uuid5)
 
 
 class _FrozenDatetime:
@@ -238,14 +252,20 @@ def test_terminology_module_is_importable_and_single_sourced():
     assert not hasattr(terminology, "GENE_LOINC_CODES")
 
 
-# The official display of each LOINC code (tx.fhir.org, 2026-10-12). LOINC's licence
-# asks that a code travel with one of its official names.
+# The official display of each LOINC code (tx.fhir.org, 2026-10-12 and -16). LOINC's
+# licence asks that a code travel with one of its official names.
 OFFICIAL_LOINC_DISPLAYS = {
     "84413-4": "Genotype display name",
     "51963-7": "Medication assessed [ID]",
     "51969-4": "Genetic analysis report",
     "84414-2": "Haplotype name",
     "48018-6": "Gene studied [ID]",
+    "104666-3": "CYP2B6 Activity Score in Blood or Tissue",
+    "104667-1": "CYP2C19 Activity Score in Blood or Tissue",
+    "104668-9": "CYP2C9 Activity Score in Blood or Tissue",
+    "104669-7": "CYP2D6 Activity Score in Blood or Tissue",
+    "104665-5": "DPYD Activity Score in Blood or Tissue",
+    "LA10317-8": "Intermediate metabolizer",
 }
 
 

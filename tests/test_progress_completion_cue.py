@@ -78,7 +78,9 @@ def test_reduced_motion_still_gets_a_single_ping():
 def test_completion_applies_the_class_and_clears_bg_info():
     source = _source()
     start = source.index("onComplete: (data) => {")
-    body = source[start : start + 2000]
+    # The callback, up to the next one: a fixed-size window broke whenever the
+    # callback grew.
+    body = source[start : source.index("onError: (error) => {", start)]
     assert "classList.add('progress-bar-complete')" in body
     assert "classList.remove('bg-info')" in body
 
@@ -88,5 +90,5 @@ def test_a_new_run_resets_the_bar_out_of_the_completed_state():
     source = _source()
     start = source.index("this.progressBar.style.width = '0%';")
     body = source[start : start + 600]
-    assert "classList.remove('progress-bar-complete')" in body
-    assert "classList.add('bg-info')" in body
+    assert re.search(r"classList\.remove\([^)]*'progress-bar-complete'", body)
+    assert re.search(r"classList\.add\([^)]*'bg-info'", body)

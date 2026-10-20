@@ -1644,9 +1644,11 @@
                     this.progressBar.style.width = '0%';
                     this.progressBar.textContent = '0%';
                     this.progressBar.setAttribute('aria-valuenow', 0);
-                    // Drop the completion colour, or the next run starts green.
-                    this.progressBar.classList.remove('progress-bar-complete');
-                    this.progressBar.classList.add('bg-info');
+                    // Drop the completion and failure colours, or the next run starts
+                    // green, red or grey (Bootstrap's bg-danger outranks bg-info), and
+                    // put back the stripes a failed or cancelled run took off.
+                    this.progressBar.classList.remove('progress-bar-complete', 'bg-danger', 'bg-secondary');
+                    this.progressBar.classList.add('bg-info', 'progress-bar-striped', 'progress-bar-animated');
                     if (this.progressStatus) {
                         this.progressStatus.textContent = 'Preparing...';
                     }
@@ -1660,6 +1662,10 @@
                     }
                     this.isAnimating = false;
                     this.stopSimulation();
+                    // A stage update still waiting out minStageDuration is stale once
+                    // the bar stops: fired later, it moved a finished or failed bar
+                    // again and replaced its final status line.
+                    this.pendingStageUpdate = null;
 
                     // Settle on the target instead of freezing wherever the
                     // animation happened to be. onComplete calls
@@ -1848,10 +1854,15 @@
                     `;
                 }
 
+                // Filled by offerFhirPush below, once /services-config says the
+                // FHIR server and the export are both on; empty and hidden until then.
+                resultsHtml += `<div id="fhirPushSection" class="mt-4 d-none"></div>`;
+
                 resultsHtml += `</div>`;
                 resultsDiv.innerHTML = resultsHtml;
                 resultsDiv.classList.remove('d-none');
-                
+                window.offerFhirPush(jobId);
+
                 // Hide the workflow analysis panel when showing results
                 const workflowPanel = document.getElementById('workflowAnalysisPanel');
                 if (workflowPanel) {
@@ -2369,6 +2380,149 @@
             addLogMessage('Download started for all reports', 'success');
         }
 
+        // Text from a response goes into innerHTML only through this.
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        // Push to FHIR server: sends a finished job's FHIR bundle to the stack's
+        // own FHIR server (FHIR_SERVER_URL, the bundled HAPI by default) through
+        // POST /fhir/push/workflow/{job_id}. The endpoint updates the job's
+        // resources in place on a second push, so the button can be pressed again.
+        const FHIR_PUSH_LABEL = '<i class="bi bi-cloud-upload" aria-hidden="true"></i> Push to FHIR server';
+
+        window.offerFhirPush = async function(jobId) {
+            const section = document.getElementById('fhirPushSection');
+            if (!section || !jobId) return;
+            const config = await window.getServicesConfig();
+            const services = (config && config.services) || {};
+            const enabled = (name) => !!(services[name] && services[name].enabled);
+            // HAPI_FHIR_ENABLED=false means this stack has no FHIR server to push
+            // to; FHIR_EXPORT_ENABLED=false means no bundle and no /fhir routes.
+            if (!enabled('hapi_fhir') || !enabled('fhir_export')) return;
+            // Another job's results may have replaced this card while the
+            // configuration was read; that card offers its own push.
+            if (document.getElementById('fhirPushSection') !== section) return;
+
+            section.innerHTML = `
+                <h5>FHIR Server</h5>
+                <p class="small mb-2">Sends this job's FHIR bundle to this installation's FHIR server.
+                    Pushing again replaces what this job put there before.</p>
+                <button type="button" id="fhirPushBtn" class="btn btn-primary">${FHIR_PUSH_LABEL}</button>
+                <div id="fhirPushResult" class="mt-2" role="status" aria-live="polite"></div>
+            `;
+            section.classList.remove('d-none');
+            document.getElementById('fhirPushBtn').addEventListener('click', () => window.pushJobToFhir(jobId));
+        };
+
+        window.pushJobToFhir = async function(jobId) {
+            const button = document.getElementById('fhirPushBtn');
+            const result = document.getElementById('fhirPushResult');
+            if (!button || !result) return;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Pushing...';
+            result.innerHTML = '';
+            try {
+                let response;
+                try {
+                    response = await fetch(`/fhir/push/workflow/${encodeURIComponent(jobId)}`, { method: 'POST' });
+                } catch (error) {
+                    // The browser cannot tell a request that never reached
+                    // ZaroPGx from one whose answer was lost mid-push, so this
+                    // does not claim nothing was pushed.
+                    result.innerHTML = fhirPushFailureHtml('No answer from ZaroPGx', error.message, 'warning');
+                    return;
+                }
+                let body = null;
+                try {
+                    body = await response.json();
+                } catch (e) {
+                    body = null;
+                }
+                if (response.ok && body && body.success) {
+                    result.innerHTML = fhirPushSuccessHtml(body);
+                    window.addLogMessage("Pushed the job's FHIR bundle to this installation's FHIR server", 'success');
+                    return;
+                }
+                // The endpoint answers 502 whatever went wrong at the FHIR
+                // server; X-FHIR-Push-Outcome says what it means for the server.
+                let title = 'Not pushed';
+                let tone = 'danger';
+                if (response.status === 502) {
+                    const outcome = response.headers.get('X-FHIR-Push-Outcome');
+                    if (outcome === 'unreachable') title = 'Could not reach the FHIR server';
+                    if (outcome === 'refused') title = 'The FHIR server did not accept the bundle';
+                    if (outcome === 'unknown') {
+                        // The bundle was sent and no answer came back: the
+                        // server may have stored it, which "Not pushed" denies.
+                        title = 'No answer from the FHIR server: it may have stored the bundle';
+                        tone = 'warning';
+                    }
+                }
+                const detail = (body && typeof body.detail === 'string')
+                    ? body.detail
+                    : `HTTP ${response.status} ${response.statusText || ''}`.trim();
+                result.innerHTML = fhirPushFailureHtml(title, detail, tone);
+                window.addLogMessage(`FHIR push: ${title}`, tone);
+            } finally {
+                button.disabled = false;
+                button.innerHTML = FHIR_PUSH_LABEL;
+            }
+        };
+
+        // What the server did, per resource type: "existing" is a resource it
+        // already held and updated in place, except the Patient, which a push
+        // reuses as it is (app/services/fhir/push.py).
+        //
+        // The server is not named by body.server_url: that is FHIR_SERVER_URL,
+        // the address ZaroPGx reaches it at, in Compose a container name
+        // (http://fhir-server:8080/fhir) the browser cannot open. The report's
+        // and the Patient's references are relative to the server's base,
+        // wherever the user opens it from.
+        function fhirPushSuccessHtml(body) {
+            const rows = Object.entries(body.resources || {}).map(([type, counts]) => {
+                const parts = [];
+                if (counts.created) parts.push(`${counts.created} created`);
+                if (counts.existing) {
+                    parts.push(type === 'Patient'
+                        ? `${counts.existing} already there, reused`
+                        : `${counts.existing} updated`);
+                }
+                if (counts.deleted) parts.push(`${counts.deleted} deleted, no longer in this job's bundle`);
+                return `<li><strong>${escapeHtml(type)}</strong>: ${escapeHtml(parts.join('; ') || 'none')}</li>`;
+            }).join('');
+            const locations = [];
+            if (body.diagnostic_report) locations.push(`Report: ${escapeHtml(body.diagnostic_report)}`);
+            if (body.patient) locations.push(`Patient: ${escapeHtml(body.patient)}`);
+            return `
+                <div class="fhir-push-outcome border border-success-subtle rounded p-2 bg-body text-body">
+                    <div class="fw-semibold text-success-emphasis text-break">
+                        <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
+                        Pushed to this installation's FHIR server
+                    </div>
+                    <ul class="list-unstyled small mb-0 mt-1">${rows}</ul>
+                    ${locations.length ? `<div class="small mt-1 text-break">${locations.join(' &middot; ')}</div>` : ''}
+                </div>
+            `;
+        }
+
+        // tone: "danger" when nothing was pushed, "warning" when it is not
+        // known whether the bundle reached the server.
+        function fhirPushFailureHtml(title, detail, tone = 'danger') {
+            const icon = tone === 'warning' ? 'bi-exclamation-triangle-fill' : 'bi-x-circle-fill';
+            return `
+                <div class="fhir-push-outcome border border-${tone}-subtle rounded p-2 bg-body text-body">
+                    <div class="fw-semibold text-${tone}-emphasis">
+                        <i class="bi ${icon}" aria-hidden="true"></i>
+                        ${escapeHtml(title)}
+                    </div>
+                    <div class="small mt-1 text-break">${escapeHtml(detail)}</div>
+                </div>
+            `;
+        }
+
         // Stage Popup and Toggle Functionality
         window.initializeStagePopups = function() {
             console.log('Initializing stage popups...');
@@ -2438,28 +2592,50 @@
             });
         };
 
+        // /services-config, read once: the stage switches use it when the page
+        // loads, and a finished job's results card uses it to decide whether to
+        // offer the FHIR push. null when it could not be read; the next caller
+        // then asks again.
+        let servicesConfigRequest = null;
+        window.getServicesConfig = function() {
+            if (!servicesConfigRequest) {
+                servicesConfigRequest = fetch('/services-config')
+                    .then((response) => (response.ok ? response.json() : null))
+                    .catch((error) => {
+                        console.error('Could not read /services-config:', error);
+                        return null;
+                    })
+                    .then((config) => {
+                        if (!config) servicesConfigRequest = null;
+                        return config;
+                    });
+            }
+            return servicesConfigRequest;
+        };
+
         // Initialize service toggles from backend configuration
         window.initializeServiceToggles = async function() {
             console.log('Initializing service toggles from backend configuration...');
-            
+
             try {
-                // Fetch service configuration from backend
-                const response = await fetch('/services-config');
-                if (!response.ok) {
+                const config = await window.getServicesConfig();
+                if (!config) {
                     console.warn('Failed to fetch service configuration, using defaults');
                     return;
                 }
-                
-                const config = await response.json();
                 console.log('Service configuration:', config);
                 
-                // Map backend service names to UI stage names
+                // Map backend service names to UI stage names. Nothing maps onto
+                // the Report stage: no service switches the custom report off.
+                // Kroki did until 2026-10, and it only renders Mermaid diagrams,
+                // which the report draws with Graphviz without it -- so with
+                // KROKI_ENABLED=false every upload went out with report_enabled
+                // false and finished with no reports.
                 const serviceMapping = {
                     'optitype': 'hla',
                     'gatk': 'gatk',
                     'pypgx': 'pypgx',
-                    'mtdna': 'mtdna',
-                    'kroki': 'report'  // Needs to be changed, kroki is not synonymous with report
+                    'mtdna': 'mtdna'
                 };
                 
                 // Update UI toggles based on backend configuration
@@ -2786,6 +2962,93 @@
         };
 
         // Enhanced progress monitoring that integrates with new workflow system
+        // A job that ended without completing (failed or cancelled), told as such:
+        // in the progress bar, the log and the results card.
+        window.showJobEnded = function(status, smoothProgress) {
+            const failed = status !== 'cancelled';
+            if (smoothProgress) {
+                smoothProgress.stopAnimation();
+            }
+            const bar = document.getElementById('progressBar');
+            if (bar) {
+                bar.classList.remove('bg-info', 'progress-bar-animated', 'progress-bar-striped');
+                bar.classList.add(failed ? 'bg-danger' : 'bg-secondary');
+            }
+            const progressStatus = document.getElementById('progressStatus');
+            if (progressStatus) {
+                progressStatus.textContent = failed ? 'Analysis failed' : 'Analysis cancelled';
+            }
+            // The stage row is left as it is: onProgress, from this same message, has
+            // just marked the step that failed. updateStageIndicators resets the whole
+            // row before marking, so calling it here with no step erased that mark.
+            window.addLogMessage(
+                failed ? `Workflow ended: ${status}` : 'Workflow cancelled',
+                failed ? 'danger' : 'warning'
+            );
+            const cancelButton = document.getElementById('cancelButton');
+            if (cancelButton) {
+                cancelButton.classList.add('d-none');
+            }
+
+            const resultsDiv = document.getElementById('analysisResults');
+            if (!resultsDiv) {
+                return;
+            }
+            const alert = document.createElement('div');
+            alert.className = failed ? 'alert alert-danger' : 'alert alert-secondary';
+            const heading = document.createElement('h4');
+            heading.textContent = failed ? 'Analysis Failed' : 'Analysis Cancelled';
+            const text = document.createElement('p');
+            text.textContent = failed
+                ? 'The job stopped before it finished, so it has no reports. The processing log above says where it stopped and why.'
+                : 'The job was cancelled before it finished, so it has no reports.';
+            alert.append(heading, text);
+            resultsDiv.replaceChildren(alert);
+            resultsDiv.classList.remove('d-none');
+            const workflowPanel = document.getElementById('workflowAnalysisPanel');
+            if (workflowPanel) {
+                workflowPanel.classList.add('d-none');
+            }
+        };
+
+        // A completed job's report links, keyed as showResults reads them, from
+        // GET /reports/job/{id}. Only one job_update carries them (the last one
+        // upload_router sends); an end learned any other way (another "completed"
+        // message, the status sent on reconnecting, the poll, the tab-visible
+        // refresh) has none. The endpoint returns the job's reports with
+        // generate_report's *_path keys or, in its fallback shape, *_url keys, where
+        // html_report_url is the interactive report.
+        window.fetchReportLinks = async function(jobId) {
+            const response = await fetch(`/reports/job/${encodeURIComponent(jobId)}`);
+            if (!response.ok) {
+                throw new Error(`GET /reports/job answered ${response.status}`);
+            }
+            const reports = (await response.json()).reports || {};
+            const pathKeys = {
+                pdf_report_url: 'pdf_path',
+                interactive_html_report_url: 'interactive_html_path',
+                pharmcat_html_report_url: 'pharmcat_html_path',
+                pharmcat_json_report_url: 'pharmcat_json_path',
+                pharmcat_tsv_report_url: 'pharmcat_tsv_path',
+                mtdna_report_url: 'mtdna_report_path',
+                mtdna_haplogroups_url: 'mtdna_haplogroups_path',
+                mtdna_vcf_url: 'mtdna_vcf_path'
+            };
+            const links = { job_id: jobId };
+            Object.entries(pathKeys).forEach(([key, pathKey]) => {
+                let url = reports[pathKey] || reports[key];
+                if (!url && key === 'interactive_html_report_url') {
+                    url = reports.html_report_url;
+                }
+                // showResults puts these in href attributes as they are, as it does
+                // the job_update's; take only the report paths the server builds.
+                if (typeof url === 'string' && url.startsWith('/reports/')) {
+                    links[key] = url;
+                }
+            });
+            return links;
+        };
+
         window.monitorProgress = function(jobId) {
             console.log('Starting workflow monitoring for job:', jobId);
             
@@ -2824,7 +3087,35 @@
             
             // Initialize smooth progress manager
             const smoothProgress = window.initializeSmoothProgress();
-            
+
+            // How this job's end has been shown (see onComplete).
+            let endShown = null;
+            let linksShown = false;
+            const reportLinkKeys = [
+                'pdf_report_url', 'interactive_html_report_url', 'pharmcat_html_report_url',
+                'pharmcat_json_report_url', 'pharmcat_tsv_report_url', 'mtdna_report_url',
+                'mtdna_haplogroups_url', 'mtdna_vcf_url'
+            ];
+            // The results card, with whichever report links `links` has.
+            const showCompleted = (links) => {
+                // Extract patient_id from report URLs: any of them, not just
+                // the PDF's. A job with the custom report off has PharmCAT's
+                // links only, and lost its "Download All" button.
+                let patient_id = links.patient_id;
+                const reportUrl = reportLinkKeys
+                    .map(key => links[key])
+                    .find((url) => typeof url === 'string' && url);
+                if (!patient_id && reportUrl) {
+                    const match = reportUrl.match(/\/reports\/([^\/]+)\//);
+                    if (match) {
+                        patient_id = match[1];
+                    }
+                }
+                const resultsData = { job_id: links.job_id || links.workflow_id || jobId, patient_id: patient_id };
+                reportLinkKeys.forEach(key => { resultsData[key] = links[key]; });
+                window.showResults(resultsData);
+            };
+
             // Start workflow monitoring using the new system
             console.log('WorkflowMonitor available:', typeof WorkflowMonitor !== 'undefined');
             console.log('WorkflowMonitor class:', WorkflowMonitor);
@@ -2839,6 +3130,12 @@
                     workflowMonitor = new WorkflowMonitor(jobId, {
                         baseUrl: window.location.origin,
                     onProgress: (progress, data) => {
+                        // The socket goes on sending after the end is shown; those
+                        // messages restarted the stopped bar and replaced its final
+                        // status line ("Analysis failed") with theirs.
+                        if (endShown) {
+                            return;
+                        }
                         console.log('Workflow progress received:', progress, data);
                         console.log('Progress data:', {
                             progress_percentage: data.progress_percentage,
@@ -2864,8 +3161,34 @@
                     },
                     onComplete: (data) => {
                         console.log('Workflow completed:', data);
-                        
-                        
+
+                        // The monitor calls this however the job ended: completed,
+                        // failed or cancelled. Only "completed" is a success; a
+                        // failed job showed a green bar at 100% and "Analysis
+                        // Complete! ... completed successfully".
+                        //
+                        // And however the page learned it: a live job_update (several
+                        // say "completed", one of them with the report links), the
+                        // status sent on reconnecting, the poll or the tab-visible
+                        // refresh. A job ends once, so its first end is the one shown.
+                        // After that only a message with the links changes anything:
+                        // it draws a completed job's card again with them. One without
+                        // them used to redraw the card and wipe its links.
+                        const endedAs = String((data && data.status) || 'completed').toLowerCase();
+                        const hasLinks = reportLinkKeys.some(key => data && data[key]);
+                        if (endShown) {
+                            if (endShown === 'completed' && endedAs === 'completed' && hasLinks && !linksShown) {
+                                linksShown = true;
+                                showCompleted(data);
+                            }
+                            return;
+                        }
+                        endShown = endedAs;
+                        if (endedAs !== 'completed') {
+                            window.showJobEnded(endedAs, smoothProgress);
+                            return;
+                        }
+
                         // Use completion data directly from the API
                         if (smoothProgress) {
                             smoothProgress.updateProgress(100, 'completed', 'Analysis complete!');
@@ -2893,36 +3216,47 @@
                         }
                         
                         // Show results window with completion data (now includes report URLs)
-                        if (data && (data.job_id || data.workflow_id)) {
-                            // Extract patient_id from report URLs
-                            let patient_id = data.patient_id;
-                            if (!patient_id && data.pdf_report_url) {
-                                const match = data.pdf_report_url.match(/\/reports\/([^\/]+)\//);
-                                if (match) {
-                                    patient_id = match[1];
-                                }
-                            }
-                            
-                            // Create a data object that matches what showResults expects
-                            const resultsData = {
-                                job_id: data.job_id || data.workflow_id,
-                                patient_id: patient_id,
-                                pdf_report_url: data.pdf_report_url,
-                                interactive_html_report_url: data.interactive_html_report_url,
-                                pharmcat_html_report_url: data.pharmcat_html_report_url,
-                                pharmcat_json_report_url: data.pharmcat_json_report_url,
-                                pharmcat_tsv_report_url: data.pharmcat_tsv_report_url,
-                                mtdna_report_url: data.mtdna_report_url,
-                                mtdna_haplogroups_url: data.mtdna_haplogroups_url,
-                                mtdna_vcf_url: data.mtdna_vcf_url
-                            };
-                            
-                            // Call the existing showResults function
-                            window.showResults(resultsData);
+                        if (hasLinks) {
+                            linksShown = true;
+                            showCompleted(data);
+                            return;
                         }
+                        // A fetch still out when another job is monitored drew this
+                        // job's card over that one's view.
+                        const stillMonitored = () => workflowMonitor && workflowMonitor.workflowId === jobId;
+                        window.fetchReportLinks(jobId).then(links => {
+                            // The message with the links may have come meanwhile; if
+                            // these have links, a later one need not draw them again.
+                            if (stillMonitored() && !linksShown) {
+                                linksShown = reportLinkKeys.some(key => links[key]);
+                                showCompleted(links);
+                            }
+                        }, error => {
+                            if (!stillMonitored() || linksShown) {
+                                return;
+                            }
+                            console.warn('Could not load the report links:', error);
+                            showCompleted({});
+                            window.addLogMessage(`Could not load the report links: ${error.message}`, 'warning');
+                            // A card that says "complete" and offers nothing reads as
+                            // a job without reports; say where they are instead.
+                            const resultsDiv = document.getElementById('analysisResults');
+                            if (resultsDiv) {
+                                const note = document.createElement('p');
+                                note.className = 'mt-3 mb-0';
+                                note.textContent = 'The report links could not be loaded. This job\'s reports are on the host in '
+                                    + `data/reports/<patient_id>/${jobId}/.`;
+                                (resultsDiv.querySelector('.alert') || resultsDiv).append(note);
+                            }
+                        });
                     },
                     onError: (error) => {
                         console.error('Workflow error:', error);
+                        // After the end is shown nothing is left to report: a late
+                        // connection error reset the stage row the end had marked.
+                        if (endShown) {
+                            return;
+                        }
                         // Update stage indicators using simple glyph system
                         window.GlyphManager.updateStageIndicators('Error', 'failed');
                         window.addLogMessage(`Workflow error: ${error.message}`, 'danger');

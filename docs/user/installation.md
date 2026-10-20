@@ -14,7 +14,8 @@ title: Installation
 - Memory: no minimum is enforced. A VCF needs little; alignments need much more, and the
   stack allows the GATK service up to 28 GB and PyPGx up to 20 GB.
 - Disk: about 2.5 GB of reference genomes, 5.3 GB for the CRAM reference cache, the images,
-  and room for your inputs and reports. The FASTQ lane needs another 8-9 GB for its index.
+  and room for your inputs and reports. The FASTQ lane needs another 8-9 GB for its index,
+  and about 9 times the FASTQ's size free while it aligns.
 - A network connection for the first start, which pulls the images and downloads the
   reference data.
 

@@ -5,8 +5,9 @@ Two gaps between the server's number and the screen:
 - The page only heard from the server when a step reported, over the WebSocket. A
   step that reports nothing (a CRAM's 33-minute conversion) left the bar frozen
   though the server paces such a step by its elapsed time. WorkflowMonitor now polls
-  /progress every few seconds while the job runs -- progress only: completion stays
-  with the WebSocket message, which carries the report links /progress lacks.
+  /progress every few seconds while the job runs, and the poll reports the job's end
+  too (the page fetches the report links /progress lacks; see
+  test_ui_job_end_without_socket.py).
 - SmoothProgressManager ignored a new target while an animation ran. The old
   animation ran on to its old target and then set the new value without drawing it,
   so the bar sat on the old number until the next update.
@@ -142,12 +143,15 @@ def test_the_poll_moves_the_bar_while_the_job_runs():
     assert state["progress"] == [42, 47], state
 
 
-def test_the_poll_leaves_completion_to_the_websocket():
-    """/progress has no report links; the results panel needs them."""
+@pytest.mark.parametrize("ended", ["completed", "failed", "cancelled"])
+def test_the_poll_reports_the_end_once_and_stops(ended):
+    """With the socket down no job_update says the job ended; the bar just stopped."""
     state = _monitor(
-        [{"status": "completed", "progress_percentage": 100}], "await pollTick();"
+        [{"status": ended, "progress_percentage": 100}],
+        "await pollTick(); await pollTick();",
     )
-    assert state["progress"] == [] and state["completions"] == 0, state
+    assert state["progress"] == [100] and state["completions"] == 1, state
+    assert state["fetches"] == 1 and not state["polling"], state
 
 
 def test_the_poll_stops_with_the_monitor_and_skips_a_hidden_tab():

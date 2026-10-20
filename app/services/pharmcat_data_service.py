@@ -19,6 +19,7 @@ from app.pharmcat.pharmcat_parser import (
     PharmCATParser,
     _as_float,
     get_pharmcat_summary,
+    position_coverage,
 )
 from app.pharmcat.report_json import (
     annotation_genes,
@@ -404,6 +405,8 @@ class PharmCATDataService:
                 "combination": primary_diplotype.get("combination", False),
                 "uncalled_haplotypes": list(gene.get("uncalled_haplotypes") or []),
                 "unread_variants": list(gene.get("unread_variants") or []),
+                "n_positions": gene.get("n_positions"),
+                "missing_positions": list(gene.get("missing_positions") or []),
             }
             if unresolved is not None:
                 # No one pair of alleles to name, nor a match score for "the" call.
@@ -481,6 +484,7 @@ class PharmCATDataService:
                 "uncalled_haplotypes": list(
                     block.gene_data.get("uncalledHaplotypes") or []
                 ),
+                **position_coverage(block.gene_data),
             }
             for key in ("diplotype_display", "diplotype_candidates"):
                 if call.get(key):
