@@ -302,9 +302,10 @@ class FakeTools:
                     encoding="utf-8",
                 )
             elif "-T" in argv:
-                targets = self._flag_value(argv, "-T").lstrip("^")
-                listed = Path(targets).read_text(encoding="utf-8")
+                targets = self._flag_value(argv, "-T")
+                listed = Path(targets.lstrip("^")).read_text(encoding="utf-8")
                 if not listed.strip():
+                    # As bcftools 1.24 words it, the argument with its "^".
                     return subprocess.CompletedProcess(
                         argv,
                         255,
