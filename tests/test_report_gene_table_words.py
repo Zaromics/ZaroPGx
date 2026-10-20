@@ -146,10 +146,15 @@ def _gene_table_cells(document):
 def _may_break(source, end):
     """Whether a line may end at ``end`` of the cell's text: at a space, after a
     hyphen, "/", ",", "_" or "+", or at a break point the filters give -- before
-    ">", before a word of a code (Del1|Hom), before an HGVS del, ins or dup."""
+    ">", before a word of a code (Del1|Hom), before an HGVS del, ins or dup.
+
+    Also after an HGVS prefix ("c." before its position). The line breaker itself
+    may break there: CI's (Ubuntu's Pango) broke "c." / "7042_7044del" where the
+    app image's (Debian 13) does not, and either reads as the name it is."""
     before, after = source[:end], source[end:]
     return (
         after.startswith(" ")
+        or bool(re.search(r"(^|[^A-Za-z])[cgmnpr]\.$", before) and after[:1].isdigit())
         or before[-1] in "-/,_+"
         or after.startswith(">")
         or bool(re.match(r"[A-Z][a-z]", after) and re.search(r"[a-z0-9]$", before))
