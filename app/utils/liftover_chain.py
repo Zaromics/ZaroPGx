@@ -23,6 +23,13 @@ from typing import Dict, Optional, Tuple
 # docker/genome-downloader/downloader_api.py for where it comes from.
 CHAIN_SHA256 = "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d"
 
+# PharmCAT's position list, per release, as genome-downloader pins it
+# (PHARMCAT_SHA256 in its downloader_api.py; a test keeps the two equal). gatk-api's
+# /gvcf-to-vcf reads it from the same shared /reference.
+PHARMCAT_POSITIONS_SHA256 = {
+    "3.4.0": "63f49b9004b6a5ca921deebe8ec59f8e45f6990543e07b7890c0d6201f5e69fc",
+}
+
 _verified: Dict[Tuple[str, str], Tuple[int, int, int, int, int]] = {}
 _lock = threading.Lock()
 

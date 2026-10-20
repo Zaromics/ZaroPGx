@@ -29,6 +29,7 @@ recorded fake, because neither exists in the unit-test environment.
 """
 
 import gzip
+import hashlib
 import importlib.util
 import logging
 import os
@@ -155,6 +156,11 @@ def gatk_api(tmp_path_factory):
         module = importlib.util.module_from_spec(spec)
         mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
+        # /gvcf-to-vcf checks the position list against its pin; this stand-in is
+        # pinned here.
+        module.PHARMCAT_POSITIONS_PIN = hashlib.sha256(
+            (reference / "pharmcat" / "pharmcat_positions.vcf").read_bytes()
+        ).hexdigest()
         yield module
 
     for handler in list(logging.root.handlers):
@@ -836,6 +842,35 @@ def test_a_position_list_that_is_present_but_unusable_is_a_400(
     assert "no variant records" in detail
     assert "pgx_pharmcat" in detail, "the operator needs somewhere to get a good copy"
     assert tools.argvs() == [], "nothing may run against an unusable interval list"
+
+
+def test_a_position_list_that_fails_its_pin_is_a_400(
+    client, tools, gatk_api, monkeypatch, tmp_path
+):
+    """A usable list that is not PharmCAT's (tampered, or another release's) is
+    refused before anything runs."""
+    other = tmp_path / "pharmcat_positions.vcf"
+    other.write_text(_positions_text(PHARMCAT_POSITION_ROWS[:1]))
+    monkeypatch.setattr(gatk_api, "PHARMCAT_POSITIONS_PATH", str(other))
+
+    resp = _post(client)
+
+    assert resp.status_code == 400, resp.text
+    assert "does not match its pinned SHA-256" in resp.json()["detail"]
+    assert tools.argvs() == [], "nothing may run against an unverified interval list"
+
+
+def test_the_position_list_pin_is_genome_downloaders(gatk_api):
+    from app.utils.liftover_chain import PHARMCAT_POSITIONS_SHA256
+
+    downloader = (
+        REPO_ROOT / "docker" / "genome-downloader" / "downloader_api.py"
+    ).read_text(encoding="utf-8")
+    for version, pin in PHARMCAT_POSITIONS_SHA256.items():
+        assert f'"{version}"' in downloader and f'"{pin}"' in downloader
+    compose = (REPO_ROOT / "compose.yml").read_text(encoding="utf-8")
+    gatk = compose[compose.index("\n  gatk-api:") : compose.index("\n  pypgx:")]
+    assert "PHARMCAT_VERSION=${PHARMCAT_VERSION:-3.4.0}" in gatk
 
 
 def test_a_missing_reference_fasta_is_a_400(client, tools, gatk_api, monkeypatch):

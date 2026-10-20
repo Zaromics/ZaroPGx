@@ -70,6 +70,21 @@ fi
 echo "Verifying reference files in /pharmcat/:"
 ls -la /pharmcat/reference.fna.bgz* 2>/dev/null || echo "No reference files found in /pharmcat/"
 
+# Zenodo record 7288118's GRCh38_reference_fasta.tar: the SHA-256 genome-downloader
+# pins it by (REFERENCE_SHA256["pharmcat_grch38"] in its downloader_api.py; Zenodo's
+# API gives its MD5 as a4047175ae90e2df36900f039f1cf260). A download that does not
+# match is discarded rather than unpacked.
+PHARMCAT_REFERENCE_TAR_SHA256="7aeb9c9b7ddb262aab32fe97a48317a4a54d97680dea27b81af4561cf502f839"
+_verify_reference_tar() {
+    if echo "$PHARMCAT_REFERENCE_TAR_SHA256  GRCh38_reference_fasta.tar" | sha256sum -c - >/dev/null 2>&1; then
+        echo "✓ GRCh38_reference_fasta.tar matches its pinned SHA-256"
+        return 0
+    fi
+    echo "✗ GRCh38_reference_fasta.tar does not match its pinned SHA-256; discarded. Restart the container to retry; if it repeats, something between this host and zenodo.org is altering downloads."
+    rm -f GRCh38_reference_fasta.tar
+    return 1
+}
+
 # If reference files are still missing, try to download them into the cache, then link.
 if [ ! -f "/pharmcat/reference.fna.bgz" ] || [ ! -f "/pharmcat/reference.fna.bgz.gzi" ]; then
     echo "Reference files missing, attempting to download..."
@@ -77,7 +92,7 @@ if [ ! -f "/pharmcat/reference.fna.bgz" ] || [ ! -f "/pharmcat/reference.fna.bgz
     if command -v wget >/dev/null 2>&1; then
         echo "Downloading reference files using wget..."
         wget -O GRCh38_reference_fasta.tar "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar"
-        if [ -f "GRCh38_reference_fasta.tar" ]; then
+        if [ -f "GRCh38_reference_fasta.tar" ] && _verify_reference_tar; then
             echo "Extracting reference files..."
             tar -xf GRCh38_reference_fasta.tar
             rm GRCh38_reference_fasta.tar
@@ -100,7 +115,7 @@ if [ ! -f "/pharmcat/reference.fna.bgz" ] || [ ! -f "/pharmcat/reference.fna.bgz
     elif command -v curl >/dev/null 2>&1; then
         echo "Downloading reference files using curl..."
         curl -L -o GRCh38_reference_fasta.tar "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar"
-        if [ -f "GRCh38_reference_fasta.tar" ]; then
+        if [ -f "GRCh38_reference_fasta.tar" ] && _verify_reference_tar; then
             echo "Extracting reference files..."
             tar -xf GRCh38_reference_fasta.tar
             rm GRCh38_reference_fasta.tar
