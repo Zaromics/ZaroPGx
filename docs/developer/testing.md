@@ -44,6 +44,7 @@ turns the mtDNA step and the CRAM reference cache off.
 | Test | Input | Runs when |
 |---|---|---|
 | `test_vcf_pipeline` | `test_data/pharmcat.example.vcf` | always |
+| `test_ui_smoke` | the same VCF, sent through the web page in Chromium | always |
 | `test_bam_pipeline`, `test_alignment_conversion_pipeline` | BAM, CRAM, SAM | `ZAROPGX_E2E_REFERENCE=1` |
 | `test_bam_hla_pipeline` | BAM with HLA reads | `ZAROPGX_E2E_REFERENCE=1` |
 | `test_grch37_liftover_pipeline` | GRCh37 VCF | `ZAROPGX_E2E_REFERENCE=1` |
@@ -51,6 +52,13 @@ turns the mtDNA step and the CRAM reference cache off.
 The reference lanes need a populated `./reference` (the genome downloader's). Each test also
 checks that every report link the job returns resolves. FASTQ and mtDNA have no end-to-end
 test.
+
+`test_ui_smoke` uses the page the way a person does: it opens every stage's popup in the
+light and the dark theme and requires each text to meet WCAG AA contrast against the card
+it sits on, switches the theme with the header button, uploads through the file input,
+requires the progress bar to move and finish at 100, and fetches every link the finished
+page offers. It needs Playwright's Chromium (`uv run playwright install chromium`); on
+failure it saves a screenshot to `e2e-logs/ui/failure.png`.
 
 PharmCAT downloads its 844 MB GRCh38 reference on first start, into a volume the harness
 deletes on success. To skip the download, point `E2E_PHARMCAT_REFERENCE` at a directory that
@@ -62,5 +70,6 @@ holds `reference.fna.bgz` and its `.fai` and `.gzi`.
 
 - **Lint**: black, isort and flake8 at the versions in {doc}`development-setup`.
 - **Tests**: the unit suite, with Node 22, Pango and the Liberation fonts installed.
-- **E2E (compose)**: the VCF lane. It keeps PharmCAT's reference in the Actions cache and
-  downloads it from Zenodo only when the cache is empty.
+- **E2E (compose)**: the VCF lane, through the API and through the web page in Chromium.
+  It keeps PharmCAT's reference in the Actions cache and downloads it from Zenodo only
+  when the cache is empty.

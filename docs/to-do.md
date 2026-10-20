@@ -145,13 +145,13 @@ curated: true
 - Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
 - Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
 - Unify/clean redundant text
-- **Front-end test harness — nothing renders the page today.** What exists is
+- **Front-end test harness.** Until Oct 2026 nothing rendered the page. What existed was
   Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
   `tests/test_upload_story_coherence.py` pull the inline `<script>` out of
   `index.html`, run it against real API JSON, and assert on the HTML string (CI
   installs Node 22 so they cannot silently skip). Everything else is source-text
-  assertions. There is no `package.json`, no jsdom, and no browser driver, so
-  nothing computes a style, clicks anything, or looks at the page.
+  assertions. There was no `package.json`, no jsdom, and no browser driver, so
+  nothing computed a style, clicked anything, or looked at the page.
   That gap produced three bugs in one sitting on 2026-08-29, each invisible to
   the 1700-test suite:
   - PharmCAT popup text unreadable in dark mode (a white card inheriting the
@@ -162,9 +162,12 @@ curated: true
     the report links actually resolve.
   Cheapest useful order: (1) [DONE Oct 2026] every compose E2E lane fetches each
   `/reports/` link its completed job lists and requires a 200 with a body
-  (`tests/e2e/report_links.py`); (2) Playwright smoke over upload → progress →
-  report in both themes, with a contrast assertion on the popups; (3) only then
-  consider visual snapshots.
+  (`tests/e2e/report_links.py`); (2) [DONE Oct 2026] Playwright smoke over upload →
+  progress → report in both themes, with a contrast assertion on the popups and the
+  results card (`tests/e2e/test_ui_smoke.py`; with the 08-29 popup CSS put back, the
+  dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, so the liftover
+  freeze above still needs a GRCh37 run watched); (3) only then consider visual
+  snapshots.
 
 ## Data & Database
 
