@@ -346,6 +346,7 @@ services:
       # discards). Keeping it off ./data lets a host put it on a larger disk --
       # set ZAROPGX_SCRATCH. Unset, it resolves to ./data/temp as before.
       - HLA_TEMP_DIR=/scratch
+      - ZAROHLA_SAMTOOLS_THREADS=${ZAROHLA_SAMTOOLS_THREADS:-4}
     volumes:
       - ./data:/data
       - ${ZAROPGX_SCRATCH:-./data/temp}:/scratch

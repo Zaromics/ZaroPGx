@@ -74,6 +74,7 @@ Where a template ships a different value from the code's default, both are given
 | Variable | Default | |
 |---|---|---|
 | `ZAROPGX_SCRATCH` | `./data/temp` | Where ZaroHLA works. HLA typing a whole genome needs tens of GB; point this at a large disk if `data/` is small |
+| `ZAROHLA_SAMTOOLS_THREADS` | `4` | Threads samtools uses as ZaroHLA extracts the HLA reads and converts them for OptiType. A genome with tens of millions of unplaced reads spends most of its HLA time there |
 | `ZAROPGX_ALIGN_REFERENCE` | `./reference/pypgx` | Where the FASTQ alignment index is read from |
 | `LOG_LEVEL` | `DEBUG` (`.env.production`: `INFO`) | The app's log level |
 
