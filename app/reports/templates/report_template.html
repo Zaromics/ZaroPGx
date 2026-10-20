@@ -927,6 +927,19 @@
                 page-break-inside: avoid;
                 break-inside: avoid;
             }
+            /* A gVCF's genotyping paragraph is six lines, and with it page 1 could
+               not hold the disclaimer: the box moved whole to page 2, Alerts to
+               page 3 and the Executive Summary (recto) to page 5. The run's own
+               Methodology paragraphs (provenance, the gVCF one, PharmCAT
+               positions, assume-reference) are fine print in the PDF like the
+               provenance line, the spacing above them is tighter, and the
+               section's bottom spacing gives way to the disclaimer's own margin.
+               The opening paragraph keeps body size. */
+            .header h1 { margin-top: 0; }
+            .header p { margin: 8px 0 0; }
+            .methodology { margin-bottom: 0; padding-bottom: 0; }
+            .methodology h2 { margin-bottom: 12px; }
+            .methodology > p + p { font-size: 0.85em; margin: 10px 0 0; }
             
             /* PDF-specific body padding reduction */
             body {
@@ -1201,7 +1214,7 @@
         {% if liftover_provenance %}<p><strong>Reference build:</strong> {{ liftover_provenance }}</p>{% endif %}
     </div>
 
-    <div class="section">
+    <div class="section methodology">
         <h2>Methodology</h2>
         <p>The sample's genetic data were analyzed with the ZaroPGx pipeline, composed of several analytic tools, culminating in recommendation matching by PharmCAT (the Pharmacogenomics Clinical Annotation Tool), which references clinical guidelines published by CPIC (Clinical Pharmacogenetics Implementation Consortium), DPWG (Dutch Pharmacogenetics Working Group), and FDA (U.S. Food and Drug Administration). Notable pharmacogenetic variants were identified to determine star alleles and diplotypes, which were mapped to phenotypes and ultimately matched with associated recommendations.</p>
         {# Tooling provenance, moved here from the Executive Summary. It was
