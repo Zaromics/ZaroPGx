@@ -52,9 +52,16 @@ rcrs_mutserve.fasta are copied from mtDNA-Server 2 v2.1.16
 Institute of Genetic Epidemiology, Medical University of Innsbruck. The FASTA
 is the revised Cambridge Reference Sequence (NC_012920.1).
 
-test_data/ and app/static/demo/ hold PharmCAT's example VCFs and the reports
-PharmCAT produced from them (https://github.com/PharmGKB/PharmCAT, MPL-2.0).
-The guidance text in those reports is ClinPGx content (CC BY-SA 4.0, below).
+test_data/ holds PharmCAT's example VCFs and the reports PharmCAT produced from
+them (https://github.com/PharmGKB/PharmCAT, MPL-2.0). The guidance text in those
+reports is ClinPGx content (CC BY-SA 4.0, below).
+
+app/static/demo/NA12878.pgx-demo.cram is cut from the 1000 Genomes Project's 30x
+whole genome of NA12878 (run ERR3239334; Byrska-Bishop et al., Cell 2022,
+doi:10.1016/j.cell.2022.08.004). The NA12878 cell line and DNA were obtained from
+the NIGMS Human Genetic Cell Repository at the Coriell Institute for Medical
+Research. These data were generated at the New York Genome Center with funds
+provided by NHGRI Grant 3UM1HG008901-03S1.
 
 lexicon/allele-table.csv, gene-table.csv and phenotype-table.csv are copied
 from PyPGx (https://github.com/sbslee/pypgx, MIT). lexicon/phenotypes.tsv lists

@@ -1,4 +1,4 @@
-"""416 — demo VCF path must start upload progress via uploadProgressManager."""
+"""416 — the demo path must start upload progress via uploadProgressManager."""
 
 from pathlib import Path
 

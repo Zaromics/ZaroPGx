@@ -21,7 +21,10 @@ blank, the job gets a random identifier.
 analysis: the format, reference build, samples and contigs, and the steps the analysis will
 run, or why the file will be refused.
 
-**Run Demo** analyses PharmCAT's example VCF.
+**Run Demo** analyses NA12878's reads, from the 1000 Genomes Project's 30x whole genomes,
+cut to the reads its calls depend on (30 MB). It runs every stage, takes several minutes, and
+its results can be checked against NA12878's published ones: `app/static/demo/README.md`
+lists them, and `scripts/make-demo-cram.sh` makes the file.
 
 ## Options
 

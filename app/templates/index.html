@@ -780,8 +780,8 @@
                                         <i class="bi bi-eye"></i> View Header
                                     </button>
 
-                                    <!-- Demo button for PharmCAT example -->
-                                    <button type="button" class="btn btn-secondary" id="demoButton" onclick="runPharmCatDemo()" title="Run Demo with PharmCAT VCF">
+                                    <!-- Demo: the server analyses its bundled NA12878 reads (POST /upload/demo) -->
+                                    <button type="button" class="btn btn-secondary" id="demoButton" onclick="runDemo()" title="Analyse NA12878's reads from the 1000 Genomes Project through every stage">
                                         <i class="bi bi-play-fill"></i> Run Demo
                                     </button>
                                 </div>
@@ -1903,10 +1903,11 @@
         
 
 
-        // Function to download and use PharmCAT example VCF for demo
-        async function runPharmCatDemo() {
+        // The demo: NA12878's reads (1000 Genomes, 30x), cut to what the pipeline reads
+        // (scripts/make-demo-cram.sh). The server holds the file and starts the job, so
+        // the browser no longer downloads the demo only to upload it back.
+        async function runDemo() {
             try {
-                // Show that we're fetching the demo file
                 const logMessages = document.getElementById('logMessages');
                 const progressContainer = document.getElementById('progressContainer');
                 
@@ -1916,7 +1917,7 @@
                 }
                 
                 // Add to log
-                window.addLogMessage("Loading PharmCAT example VCF file...", "info");
+                window.addLogMessage("Starting the demo: NA12878's reads through every stage. It takes several minutes.", "info");
 
                 // Hide upload progress bar when workflow monitoring starts
                 if (window.uploadProgressManager && typeof window.uploadProgressManager.hideUploadProgress === 'function') {
@@ -1935,7 +1936,7 @@
                 // Update progress status
                 const progressStatus = document.getElementById('progressStatus');
                 if (progressStatus) {
-                    progressStatus.textContent = "Preparing PharmCAT example VCF...";
+                    progressStatus.textContent = "Starting the demo...";
                 }
                 
                 // Disable the upload button
@@ -1944,24 +1945,8 @@
                 if (uploadButton) uploadButton.disabled = true;
                 if (demoButton) demoButton.disabled = true;
                 
-                // Instead of creating a VCF in memory, fetch the sample file
-                // Add cache-busting parameter to ensure we get the latest version
-                const response = await fetch(`/static/demo/pharmcat.example.vcf?t=${Date.now()}`);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch example VCF: ${response.status}`);
-                }
-
-                const vcfContent = await response.text();
-                
-                // Create a File object from the fetched VCF content
-                const demoFile = new File([vcfContent], 'pharmcat-demo.vcf', { type: 'text/plain' });
-                
-                // Create FormData object just like a regular file upload
+                // The stage switches apply to the demo as to an upload
                 const formData = new FormData();
-                formData.append('files', demoFile);
-                formData.append('sample_identifier', 'PharmCAT-Demo');
-                
-                // Add service toggle states to demo upload
                 if (window.getStageToggleStates) {
                     const toggleStates = window.getStageToggleStates();
                     const serviceMapping = {
@@ -1978,29 +1963,27 @@
                     });
                 }
                 
-                // Mark this as a VCF file for consistent handling
-                window.isVcfFile = true;
-                
                 // Start progress tracking
                 if (window.uploadProgressManager && typeof window.uploadProgressManager.startProgressTracking === 'function') {
                     window.uploadProgressManager.startProgressTracking();
                 }
                 
-                // Make the request to the same endpoint used for regular uploads
-                const uploadResponse = await fetch('/upload/genomic-data', {
+                const uploadResponse = await fetch('/upload/demo', {
                     method: 'POST',
                     body: formData
                 });
                 
                 if (!uploadResponse.ok) {
-                    throw new Error(`Failed to upload demo file: ${uploadResponse.status}`);
+                    // The server says why (a missing demo file, its reference not cached yet).
+                    const body = await uploadResponse.json().catch(() => ({}));
+                    throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${uploadResponse.status}`);
                 }
                 
                 const result = await uploadResponse.json();
-                console.log("Demo upload result:", result);
+                console.log("Demo result:", result);
                 
-                // Process the response just like a regular upload
-                window.addLogMessage("Demo file uploaded successfully", "success");
+                // From here the demo is a job like any upload's
+                window.addLogMessage("Demo started", "success");
                 
                 // Update file analysis display
                 if (window.updateFileAnalysis) {
@@ -2018,7 +2001,7 @@
 
                 
             } catch (error) {
-                console.error("Error running PharmCAT demo:", error);
+                console.error("Error running the demo:", error);
                 window.addLogMessage(`Error running demo: ${error.message}`, "danger");
                 
                 // Re-enable buttons
