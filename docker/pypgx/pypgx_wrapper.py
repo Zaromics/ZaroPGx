@@ -1584,11 +1584,11 @@ def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
     """PyPGx genes with no confidently placed read in the alignment.
 
     Regions come from PyPGx itself (create_regions_bed), so this asks about exactly the
-    genes and spans PyPGx genotypes rather than a hand-kept list. A read counts only at
-    MAPQ >= 1 and when it is a primary, mapped alignment: a MAPQ-0 multi-mapper aligned
-    equally well elsewhere and says nothing about this gene -- the same rule zarohla's
-    HLA probe uses, for the same reason. One qualifying read is enough to call a gene
-    covered; the question is "was anything sequenced here", not "how well".
+    genes and spans PyPGx genotypes rather than a hand-kept list. A read counts only as
+    PyPGx's caller counts it (_has_placed_read): at MAPQ >= 1, so a MAPQ-0 multi-mapper,
+    aligned equally well elsewhere, says nothing about this gene. One qualifying read is
+    enough to call a gene covered; the question is "was anything sequenced here", not
+    "how well".
     """
     import pysam
     from pypgx.api import utils as pypgx_utils
@@ -1612,13 +1612,23 @@ def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
 
 
 def _has_placed_read(bam, contig: str, start: int, end: int) -> bool:
-    """Whether a confidently placed read (uncovered_genes_in_alignment's rule) overlaps
-    [start, end) on ``contig``, 0-based."""
+    """Whether a read PyPGx's caller would use overlaps [start, end) on ``contig``,
+    0-based.
+
+    PyPGx calls from an alignment through fuc's pyvcf.call: pysam's bcftools mpileup
+    with -q 1 and its default filters. Measured in the pypgx image (pysam 0.24.1, one
+    read per flag): it uses an unpaired read, a properly paired one and a supplementary
+    alignment, and skips MAPQ 0, a secondary alignment, a duplicate, a QC failure and an
+    anomalous pair (paired without the proper-pair flag, -A not given; a read whose mate
+    is unmapped is one). A read it skips says nothing PyPGx can hear.
+    """
     return any(
         read.mapping_quality >= 1
         and not read.is_unmapped
         and not read.is_secondary
-        and not read.is_supplementary
+        and not read.is_duplicate
+        and not read.is_qcfail
+        and (not read.is_paired or read.is_proper_pair)
         for read in bam.fetch(contig, start, end)
     )
 

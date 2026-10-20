@@ -260,6 +260,33 @@ def test_a_gene_is_covered_at_its_own_positions(tmp_path):
     }
 
 
+def test_a_position_is_read_as_pypgxs_caller_reads_it(tmp_path):
+    """PyPGx calls through fuc's pyvcf.call, pysam's bcftools mpileup -q 1 with its
+    default filters. Measured in the pypgx image, one read per flag: it uses an
+    unpaired read, a properly paired one and a supplementary alignment; it skips a
+    duplicate, a QC failure and an anomalous pair (paired, not properly; mate unmapped
+    is one). A position under only skipped reads has no reads PyPGx can use."""
+    flags = {
+        "UNPAIRED": 0,
+        "PROPER_PAIR": 0x1 | 0x2 | 0x40,
+        "SUPPLEMENTARY": 0x800,
+        "DUPLICATE": 0x400,
+        "QC_FAIL": 0x200,
+        "IMPROPER_PAIR": 0x1 | 0x40,
+        "MATE_UNMAPPED": 0x1 | 0x8 | 0x40,
+    }
+    starts = {gene: 100 + 200 * i for i, gene in enumerate(flags)}
+    bam = _bam(tmp_path, [(starts[g], 30, flag) for g, flag in flags.items()])
+    ns = _load(
+        ["alignment_positions_without_reads", "_has_placed_read", "_canonical_contig"]
+    )
+    ns["pypgx_gene_positions"] = lambda assembly: {
+        gene: [("1", start + 10, start + 11)] for gene, start in starts.items()
+    }
+    without = ns["alignment_positions_without_reads"](bam, "GRCh38")
+    assert sorted(without) == ["DUPLICATE", "IMPROPER_PAIR", "MATE_UNMAPPED", "QC_FAIL"]
+
+
 def test_no_reads_on_a_commonly_deleted_gene_is_not_called_a_gap():
     """GSTM1/GSTT1/UGT2B17 *0/*0 is a real, common genotype, and its alignment has no
     reads over PyPGx's whole region for the gene. "Not sequenced" alone would report a
