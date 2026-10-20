@@ -131,7 +131,8 @@ def test_stored_gene_rows_carry_the_recommendation_diplotypes():
     """The diplotypes table holds source calls only; the DB lane reads the
     recommendation call from the stored gene JSON."""
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = [
+    # get_gene_summary reads the rows in the order they were written (order_by).
+    session.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
         SimpleNamespace(
             gene_symbol="DPYD",
             call_source="MATCHER",

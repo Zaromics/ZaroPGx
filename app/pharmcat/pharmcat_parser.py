@@ -413,6 +413,20 @@ def position_coverage(gene_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _written_order(model) -> tuple:
+    """ORDER BY for a run's rows of ``model`` in the order the parser wrote them.
+
+    The parser walks PharmCAT's report.json in order and each row's created_at is
+    set as it is written, so this is PharmCAT's order: its genes, each gene's
+    diplotypes and messages, its unannotated calls, its drugs. Without an ORDER
+    BY, Postgres returns rows in the order they lie in the table, and a row goes
+    wherever the free space map finds room for it; PharmCAT's example report's
+    gene rows and annotations already lie out of the order they were written in.
+    id only breaks a tie.
+    """
+    return (model.created_at, model.id)
+
+
 class PharmCATParser:
     """Parse and load PharmCAT JSON results into PostgreSQL using SQLAlchemy 2"""
 
@@ -998,6 +1012,7 @@ class PharmCATParser:
         results = (
             self.db_session.query(PharmCATUnannotatedGeneCall)
             .filter(PharmCATUnannotatedGeneCall.run_id == run_id)
+            .order_by(*_written_order(PharmCATUnannotatedGeneCall))
             .all()
         )
         return [dict(r.gene_call_data) for r in results if r.gene_call_data]
@@ -1007,6 +1022,7 @@ class PharmCATParser:
         results = (
             self.db_session.query(PharmCATGeneSummary)
             .filter(PharmCATGeneSummary.run_id == run_id)
+            .order_by(*_written_order(PharmCATGeneSummary))
             .all()
         )
 
@@ -1052,7 +1068,9 @@ class PharmCATParser:
         if gene_symbol:
             query = query.filter(PharmCATDiplotype.gene_symbol == gene_symbol)
 
-        results = query.all()
+        # PharmCAT's order: a gene's first diplotype is the one the report shows
+        # when PharmCAT gives no recommendation diplotype.
+        results = query.order_by(*_written_order(PharmCATDiplotype)).all()
 
         return [
             {
@@ -1079,6 +1097,7 @@ class PharmCATParser:
                 PharmCATDrugGeneMap.run_id == run_id,
                 PharmCATDrugGeneMap.gene_symbol == gene_symbol,
             )
+            .order_by(*_written_order(PharmCATDrugGeneMap))
             .all()
         )
 
@@ -1098,10 +1117,7 @@ class PharmCATParser:
         results = (
             self.db_session.query(PharmCATDrugRecommendation)
             .filter(PharmCATDrugRecommendation.run_id == run_id)
-            .order_by(
-                PharmCATDrugRecommendation.created_at,
-                PharmCATDrugRecommendation.id,
-            )
+            .order_by(*_written_order(PharmCATDrugRecommendation))
             .all()
         )
 
@@ -1138,7 +1154,7 @@ class PharmCATParser:
         if gene_symbol:
             query = query.filter(PharmCATMessage.gene_symbol == gene_symbol)
 
-        results = query.all()
+        results = query.order_by(*_written_order(PharmCATMessage)).all()
 
         return [
             {
