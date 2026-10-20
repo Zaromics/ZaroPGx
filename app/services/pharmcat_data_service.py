@@ -32,7 +32,7 @@ from app.reports.evidence import (
     classify_evidence,
     prescribing_changes,
 )
-from app.reports.provenance import resolve_called_by, resolve_guideline_source
+from app.reports.provenance import resolve_called_by
 from app.utils.literature import format_literature_reference
 
 logger = logging.getLogger(__name__)
@@ -386,7 +386,6 @@ class PharmCATDataService:
                     "diplotype": primary_diplotype.get("diplotype_label") or "",
                 }
             )
-            guideline_source = resolve_guideline_source(gene)
 
             report_gene = {
                 "gene": gene_symbol,
@@ -430,9 +429,6 @@ class PharmCATDataService:
 
             report_gene["called_by"] = provenance.letter
             report_gene["called_by_label"] = provenance.label
-
-            if guideline_source:
-                report_gene["guideline_source"] = guideline_source
 
             # Add all diplotypes for this gene
             if len(diplotype_data) > 1:

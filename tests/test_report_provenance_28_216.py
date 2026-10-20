@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import app.reports.generator as generator_module
+import app.reports.provenance as provenance_module
 from app.reports.provenance import (
     CALLED_BY_NO_CALL,
     CALLED_BY_OUTSIDE,
@@ -17,7 +18,6 @@ from app.reports.provenance import (
     CALLED_BY_PYPGX,
     CALLED_BY_UNKNOWN,
     resolve_called_by,
-    resolve_guideline_source,
 )
 from app.services.pharmcat_data_service import PharmCATDataService
 
@@ -97,18 +97,12 @@ def test_every_provenance_carries_a_label():
         assert resolve_called_by(row).label.strip()
 
 
-def test_guideline_source_letters():
-    assert resolve_guideline_source({"phenotype_source": "DPWG"}) == "D"
-    assert resolve_guideline_source({"guideline_source": "CPIC"}) == "C"
-    assert resolve_guideline_source({"guideline_source": "FDA"}) == "F"
-    assert resolve_guideline_source({"guideline_source": "PharmGKB"}) == "P"
-    assert resolve_guideline_source({"guideline_source": "C"}) == "C"
-
-
-def test_guideline_source_blank_when_not_recorded():
-    assert resolve_guideline_source({}) == ""
-    assert resolve_guideline_source({"phenotype_source": None}) == ""
-    assert resolve_guideline_source({"guideline_source": "Whatever"}) == ""
+def test_no_guideline_letter_is_resolved_per_gene():
+    """The per-gene guideline letter fed the Guide column, dropped because
+    PharmCAT 3.1 and later record no guideline per gene. Its resolver went with
+    it; the guideline behind each recommendation is a recommendation's own."""
+    assert not hasattr(provenance_module, "resolve_guideline_source")
+    assert not hasattr(generator_module, "resolve_guideline_source")
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +126,8 @@ def test_db_lane_outside_gene_is_outside_not_pharmcat():
         ]
     )
     assert rows[0]["called_by"] == CALLED_BY_OUTSIDE
-    assert rows[0]["guideline_source"] == "C"
+    # No per-gene guideline letter: nothing reads one (the Guide column is gone).
+    assert "guideline_source" not in rows[0]
 
 
 def test_db_lane_no_call_gene_is_no_call():
@@ -263,9 +258,10 @@ def test_canonical_placeholder_rows_are_no_call_not_a_tool():
     assert {r["called_by"] for r in rows} == {CALLED_BY_NO_CALL}
 
 
-def test_canonical_rows_blank_an_unrecorded_guideline_source():
+def test_canonical_rows_get_no_guideline_letter():
     """The file lane used to render the word "CPIC" (straight from block.source)
-    into a letter column, and to guess "C" whenever it guessed the caller."""
+    into a letter column, and to guess "C" whenever it guessed the caller. The
+    column is gone, and so is the letter it was given."""
     rows = generator_module._build_canonical_diplotypes(
         raw_gene_entries=[
             {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"},
@@ -280,8 +276,8 @@ def test_canonical_rows_blank_an_unrecorded_guideline_source():
         workflow_config=None,
     )
     by_gene = {r["gene"]: r for r in rows}
-    assert by_gene["CYP2C19"].get("guideline_source", "") == ""
-    assert by_gene["CYP2C9"]["guideline_source"] == "D"
+    assert "guideline_source" not in by_gene["CYP2C19"]
+    assert by_gene["CYP2C9"].get("guideline_source") != "D"
 
 
 def test_pypgx_only_row_keeps_its_tool_attribution():

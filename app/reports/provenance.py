@@ -1,9 +1,5 @@
 """Per-gene provenance for the report's Call column.
 
-``resolve_guideline_source`` read a guideline source per gene for the Guide
-column, since dropped: PharmCAT 3.1 and later record none. It and the code that
-stamps ``guideline_source`` on gene rows are no longer read by a template.
-
 The product rule: report what the run recorded. Every value here traces to
 something a tool actually emitted -- PharmCAT's ``callSource``, the TSV
 ``Outside Call`` column, or a tool marker written by a ZaroPGx merge path that
@@ -50,16 +46,6 @@ _TOOL_LABELS = {
 _LABEL_OUTSIDE = "Outside call - producing tool not recorded by this run"
 _LABEL_NO_CALL = "No call made for this gene"
 _LABEL_UNKNOWN = "Calling tool not recorded by this run"
-
-_GUIDELINE_LETTERS = {
-    "FDA": "F",
-    "F": "F",
-    "DPWG": "D",
-    "D": "D",
-    "CPIC": "C",
-    "C": "C",
-    "PHARMGKB": "P",
-}
 
 
 @dataclass(frozen=True)
@@ -120,9 +106,3 @@ def resolve_called_by(gene_row: Mapping[str, Any]) -> CallProvenance:
         return CallProvenance(CALLED_BY_NO_CALL, _LABEL_NO_CALL, True)
 
     return CallProvenance(CALLED_BY_UNKNOWN, _LABEL_UNKNOWN, False)
-
-
-def resolve_guideline_source(gene_row: Mapping[str, Any]) -> str:
-    """Letter for the guideline source the run recorded, or '' when it recorded none."""
-    raw = gene_row.get("guideline_source") or gene_row.get("phenotype_source") or ""
-    return _GUIDELINE_LETTERS.get(str(raw).strip().upper(), "")
