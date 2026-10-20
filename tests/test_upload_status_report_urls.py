@@ -14,7 +14,9 @@ with this test's ids and processed_data cut down to its links.
 
 import pytest
 
+import app.api.routes.upload_router as upload_router
 from app.api.models import JobCreate, JobStatus, JobUpdate, WorkflowOptions
+from tests.mtdna_outputs import write_na12878_run
 
 PATIENT = "f39cb25a-3f5b-49e2-bc8a-e7a280bccc0d"
 
@@ -70,8 +72,14 @@ def make_job(job_service):
     return make
 
 
-def test_a_completed_job_gives_its_report_links(client, make_job):
+def test_a_completed_job_gives_its_report_links(
+    client, make_job, monkeypatch, tmp_path
+):
     job_id = make_job(JobStatus.COMPLETED, _stored_reports)
+    # Its mtDNA files on disk, each holding a result: a stored mtDNA link is checked
+    # against its file on read (tests/test_ui_old_job_mtdna_links.py).
+    monkeypatch.setattr(upload_router, "REPORTS_DIR", str(tmp_path))
+    write_na12878_run(tmp_path / PATIENT / job_id)
 
     resp = client.get(f"/upload/status/{job_id}")
 
