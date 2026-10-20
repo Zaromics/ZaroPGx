@@ -195,6 +195,14 @@ def test_upload_progress_and_report_in_both_themes(e2e_client, e2e_base_url):
                     state="visible", timeout=120_000
                 )
                 seen = _wait_for_result(page, time.time() + JOB_TIMEOUT_S)
+                # A VCF job has no HLA typing and, on GRCh38, no GATK step: those
+                # stages are faded, not left looking like stages still to come.
+                faded = page.evaluate(
+                    "[...document.querySelectorAll('.stage-indicator.disabled')]"
+                    ".map(s => s.id)"
+                )
+                assert {"stageHLA", "stageGATK"} <= set(faded), faded
+                assert "stagePharmcat" not in faded, faded
                 # A bar that sat still and jumped to 100 at the end.
                 moving = [v for v in seen if 0 < v < 100]
                 assert len(set(moving)) >= 2, f"the bar did not move: {seen}"

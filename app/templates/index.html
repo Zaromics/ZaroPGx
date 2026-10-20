@@ -987,6 +987,12 @@
             // Update the file upload handler to work without auth token
             const form = document.getElementById('uploadForm');
             const fileInput = document.getElementById('genomicFile');
+            // A new file is a new job: stop fading the stages the last job left out.
+            if (fileInput) {
+                fileInput.addEventListener('change', function() {
+                    if (window.GlyphManager) window.GlyphManager.clearJobSteps();
+                });
+            }
             const fileAnalysis = document.getElementById('fileAnalysis');
             const fileTypeInfo = document.getElementById('fileTypeInfo');
             const vcfInfo = document.getElementById('vcfInfo');
@@ -2729,6 +2735,9 @@
         window.GlyphManager = {
             // Track completed stages to preserve their state
             completedStages: new Set(),
+            // Stages the current job has no step for (loadJobSteps): faded, as
+            // stages that will not run.
+            notInJob: new Set(),
             
             // Map workflow stages to stage indicators
             stepMapping: {
@@ -2812,6 +2821,15 @@
                 
                 const classes = newClasses.split(' ');
                 classes.forEach(cls => stageElement.classList.add(cls));
+
+                // A stage that will not run stays faded, whatever state it is set to:
+                // one switched off (data-enabled="false"), or one this job has no
+                // step for. Every progress update resets the row through here, and
+                // it took the fade off a switched-off stage, which then looked on
+                // while the next upload still left it out.
+                if (stageElement.getAttribute('data-enabled') === 'false' || this.notInJob.has(stageElement.id)) {
+                    stageElement.classList.add('disabled');
+                }
                 
                 console.log('Set stage state:', stageElement.id, '->', state, '(classes:', newClasses, ')');
             },
@@ -2941,6 +2959,56 @@
             clearCompletedStages: function() {
                 this.completedStages.clear();
                 console.log('Cleared completed stages for new workflow');
+            },
+
+            /**
+             * Fade the stages a job has no step for: OptiType for a VCF, GATK for a
+             * GRCh38 VCF, Report with the report off. They will not run, and left as
+             * they were they looked like stages still to come. Upload has no step row
+             * and always applies.
+             */
+            markJobSteps: function(stepNames) {
+                this.clearJobSteps();
+                const inJob = new Set(['stageUpload']);
+                (stepNames || []).forEach(name => {
+                    const stageId = this.stepMapping[String(name).toLowerCase()];
+                    if (stageId) inJob.add(stageId);
+                });
+                Object.values(this.stepMapping).forEach(stageId => {
+                    if (inJob.has(stageId)) return;
+                    this.notInJob.add(stageId);
+                    const stage = document.getElementById(stageId);
+                    if (stage) stage.classList.add('disabled');
+                });
+            },
+
+            /**
+             * Stop fading the last job's left-out stages (a new file, a new job). A
+             * stage switched off stays faded.
+             */
+            clearJobSteps: function() {
+                this.notInJob.forEach(stageId => {
+                    const stage = document.getElementById(stageId);
+                    if (stage && stage.getAttribute('data-enabled') !== 'false') {
+                        stage.classList.remove('disabled');
+                    }
+                });
+                this.notInJob = new Set();
+            },
+
+            /**
+             * Read a job's steps, minted when it was created, and fade the stages it
+             * has none for. Nothing read, nothing faded.
+             */
+            loadJobSteps: function(jobId) {
+                this.clearJobSteps();
+                return fetch(`/upload/status/${encodeURIComponent(jobId)}`)
+                    .then(response => (response.ok ? response.json() : null))
+                    .then(body => {
+                        const steps = (((body || {}).data || {}).steps || []).map(step => step.name);
+                        if (steps.length) this.markJobSteps(steps);
+                    })
+                    .catch(error => console.warn('Could not read the job\'s steps:', error));
             },
             
             /**
@@ -3087,6 +3155,11 @@
             
             // Initialize smooth progress manager
             const smoothProgress = window.initializeSmoothProgress();
+
+            // Fade the stages this job will not run.
+            if (window.GlyphManager && typeof window.GlyphManager.loadJobSteps === 'function') {
+                window.GlyphManager.loadJobSteps(jobId);
+            }
 
             // How this job's end has been shown (see onComplete).
             let endShown = null;
