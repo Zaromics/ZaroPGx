@@ -769,6 +769,53 @@ def test_a_neighbours_reads_do_not_call_a_gene(genotype, positions38):
     assert "positions_note" not in body["results"]["UGT1A1"].get("details", {})
 
 
+@pytest.mark.parametrize("measured_on", [None, "gVCF"])
+def test_no_reads_where_pypgx_counts_a_deletion_says_it_may_be_one(
+    genotype, positions38, measured_on
+):
+    """CYP2D6 *5/*5 leaves CYP2D7's and CYP2D8's reads in CYP2D6's region, GSTM1 *0/*0
+    a paralog's in GSTM1's, and none at the gene's own positions. Without whole-genome
+    depth (a panel; a gVCF never has it) that is not only a gap: the note says the two
+    cannot be told apart. UGT1A4, whose only homozygous SV in PyPGx is non-coding, gets
+    no such clause."""
+    seen, post = genotype
+    body = post(
+        [(*UGT1A1_38, "0/0")],
+        header=_unread(
+            positions38,
+            {"CYP2D6": None, "GSTM1": None, "UGT1A4": None},
+            measured_on=measured_on,
+        ),
+        genes="CYP2D6,GSTM1,UGT1A1,UGT1A4",
+    )
+    where = measured_on or "alignment"
+    assert seen["genes"] == ["UGT1A1"]
+    for gene in ("CYP2D6", "GSTM1"):
+        assert body["results"][gene]["details"]["note"] == (
+            f"No reads at any of PyPGx's positions for this gene in the {where}: "
+            f"either not sequenced, or both copies deleted, which this {where} "
+            "cannot tell apart"
+        )
+    assert body["results"]["UGT1A4"]["details"]["note"] == (
+        f"No reads at any of PyPGx's positions for this gene in the {where}"
+    )
+
+
+def test_the_deletion_genes_are_pypgxs_homozygous_deletions(pypgx):
+    """PyPGx 0.27's cnv-table.csv names WholeDel1Hom for CYP2A6, CYP2D6, GSTM1, GSTT1,
+    SULT1A1 and UGT2B17 (and WholeDel2Hom for CYP2A6); the genes whose region the
+    common deletion covers whole are among them."""
+    assert pypgx.WHOLE_GENE_DELETION_GENES <= pypgx.HOMOZYGOUS_DELETION_GENES
+    assert pypgx.HOMOZYGOUS_DELETION_GENES == {
+        "CYP2A6",
+        "CYP2D6",
+        "GSTM1",
+        "GSTT1",
+        "SULT1A1",
+        "UGT2B17",
+    }
+
+
 def test_a_gene_with_reads_at_some_positions_is_called_with_a_count(
     genotype, positions38
 ):

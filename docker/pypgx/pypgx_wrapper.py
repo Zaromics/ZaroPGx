@@ -1047,16 +1047,40 @@ def no_reads_note(gene: str, measured_on: str = "alignment") -> str:
     return note
 
 
-def no_reads_at_positions_note(measured_on: str = "alignment", no_calls: int = 0) -> str:
+# Genes PyPGx can call with both copies deleted: those with a whole-gene deletion
+# homozygote (WholeDel1Hom, WholeDel2Hom) in PyPGx 0.27's cnv-table.csv, read from the
+# shipped image. Another PyPGx version needs this checked again (the lexicon's digest
+# tests fail first).
+HOMOZYGOUS_DELETION_GENES = frozenset(
+    {"CYP2A6", "CYP2D6", "GSTM1", "GSTT1", "SULT1A1", "UGT2B17"}
+)
+
+
+def no_reads_at_positions_note(
+    gene: str, measured_on: str = "alignment", no_calls: int = 0
+) -> str:
     """What to say about a gene with reads in its region but none at its own positions
-    (POSITIONS_WITHOUT_READS_HEADER_KEY), or there only no-calls. Not "no reads over this
-    gene": a neighbour's reads lie in its region. Nor a deletion: reads were there."""
+    (POSITIONS_WITHOUT_READS_HEADER_KEY), or there only no-calls.
+
+    Not "no reads over this gene": a neighbour's reads lie in its region. And for a gene
+    PyPGx can call with both copies deleted, not only a gap: the deletion leaves its
+    region's other reads in place (CYP2D6 *5/*5 beside CYP2D7's and CYP2D8's, GSTM1
+    *0/*0 with a paralog's), and without whole-genome depth (a panel, a gVCF) nothing
+    here tells the two apart.
+    """
     if no_calls:
-        return (
+        note = (
             "No reads, or only no-calls (./.), at PyPGx's positions for this gene in "
             f"the {measured_on}"
         )
-    return f"No reads at any of PyPGx's positions for this gene in the {measured_on}"
+    else:
+        note = f"No reads at any of PyPGx's positions for this gene in the {measured_on}"
+    if gene in HOMOZYGOUS_DELETION_GENES:
+        note += (
+            ": either not sequenced, or both copies deleted, which this "
+            f"{measured_on} cannot tell apart"
+        )
+    return note
 
 
 def step_gene_counts(
@@ -3039,7 +3063,7 @@ async def genotype(
                 continue
             if n["no_reads"]:
                 # Reads in its region, none at its positions: as a gene with no reads.
-                note = no_reads_at_positions_note(measured_on, n["no_calls"])
+                note = no_reads_at_positions_note(gene, measured_on, n["no_calls"])
                 bucket = not_sequenced
             else:
                 note = no_genotype_note(gene, n["positions"], n["no_calls"])
