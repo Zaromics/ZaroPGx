@@ -79,11 +79,14 @@ def test_the_column_widths_sum_to_one_hundred_percent():
     assert sum(widths) == 100, f"widths sum to {sum(widths)}%, not 100: {widths}"
 
 
-def test_every_declared_column_is_used_in_the_markup():
+@pytest.mark.parametrize("table", ["gene-table", "mtdna-table"])
+def test_every_declared_column_is_used_in_the_markup(table):
     """A colgroup that does not match the header row silently misaligns."""
     source = _source()
-    declared = set(re.findall(r"\.gene-table col\.(c-[a-z]+)", source))
-    used = set(re.findall(r'<col class="(c-[a-z]+)"', source))
+    declared = set(re.findall(rf"\.{table} col\.(c-[a-z]+)", source))
+    markup = source[source.index(f'<table class="{table}">') :]
+    colgroup = re.search(r"<colgroup>(.*?)</colgroup>", markup, re.S).group(1)
+    used = set(re.findall(r'<col class="(c-[a-z]+)"', colgroup))
     assert declared == used, f"declared {declared - used}, used {used - declared}"
 
 
