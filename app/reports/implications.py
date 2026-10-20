@@ -89,11 +89,12 @@ _METABOLIZER = {
 # gene_result). TPMT: one no-function allele and one of uncertain, unknown or
 # decreased function, "not likely to be any higher than that of an intermediate
 # metabolizer ... may be even lower"; NUDT15: one no-function and one
-# uncertain-function allele, so the same bound. CYP3A5: one normal-function allele
+# uncertain-function allele, which by the same reasoning is likely bounded the
+# same way (CPIC's NUDT15 text states no bound). CYP3A5: one normal-function allele
 # and one of uncertain or unknown function (*1/*8).
 _POSSIBLE_INTERMEDIATE = {
-    "TPMT": f"Reduced drug metabolism, no higher than intermediate and possibly lower; {RECS}",
-    "NUDT15": f"Reduced drug metabolism, no higher than intermediate and possibly lower; {RECS}",
+    "TPMT": f"Reduced drug metabolism, likely no higher than intermediate, possibly lower; {RECS}",
+    "NUDT15": f"Reduced drug metabolism, likely no higher than intermediate, possibly lower; {RECS}",
     "CYP3A5": (
         "Possibly reduced drug metabolism (one allele's function uncertain or"
         f" unknown); {RECS}"
@@ -187,6 +188,11 @@ _RESPONSE = {
         "No ivacaftor-responsive variant detected (F508del on both copies);"
         " relevant only in cystic fibrosis"
     ),
+    # PyPGx gives CFTR Reference/Reference and Reference/F508del "Indeterminate";
+    # neither carries an ivacaftor-responsive variant.
+    ("CFTR", "indeterminate"): (
+        "No ivacaftor-responsive variant detected; relevant only in cystic fibrosis"
+    ),
     ("F5", "favorable response"): "Factor V Leiden not detected",
     ("F5", "unfavorable response"): f"Factor V Leiden detected; {RECS}",
     ("IFNL3", "favorable response"): (
@@ -230,6 +236,12 @@ def phenotype_implication(
     if unresolved:
         # Candidates, one phenotype: what that phenotype means, said of them all.
         line = phenotype_implication(text, gene)
+        if text.lower() in ("", "n/a", "unknown", "indeterminate"):
+            # No phenotype to share: the line holds for each candidate as it is.
+            return line
+        if line[1:2].isupper() or line[1:2].isdigit():
+            # A line opening with a symbol or code ("G6PD activity ...") keeps its case.
+            return SHARED + line
         return SHARED + line[0].lower() + line[1:]
     key = text.lower()
     gene_key = str(gene or "").strip().upper()

@@ -9,8 +9,8 @@ and list every candidate. Rows carry "diplotype_candidates" only when unresolved
 {% macro summary_legend(rows) -%}
 {%- if rows|selectattr('diplotype_candidates')|list %}
 <p class="header-note"><strong>"or"</strong>: the input is unphased, so for this gene
-PharmCAT found more than one diplotype that fits, each with its own phenotype and
-guidance. Every possibility is listed under Genetic Results.</p>
+PharmCAT found more than one diplotype that fits, whose phenotype and guidance may
+differ. Every possibility is listed under Genetic Results.</p>
 {%- endif %}
 {%- endmacro %}
 

@@ -258,8 +258,8 @@ def test_cpic_terms():
     # CPIC's "possible intermediate" by gene (api.cpicpgx.org gene_result).
     for gene in ("TPMT", "NUDT15"):
         assert say("Possible Intermediate Metabolizer", gene) == (
-            "Reduced drug metabolism, no higher than intermediate and possibly lower;"
-            " see recommendations"
+            "Reduced drug metabolism, likely no higher than intermediate, possibly"
+            " lower; see recommendations"
         )
     assert say("Possible Intermediate Metabolizer", "CYP3A5") == (
         "Possibly reduced drug metabolism (one allele's function uncertain or"
@@ -416,3 +416,21 @@ def test_the_interactive_genes_table_and_panels(monkeypatch, tmp_path):
         re.findall(r'data-gene="([^"]+)"[^>]*?data-implication="([^"]*)"', page, re.S)
     )
     assert unescape(found["SLCO1B1"]) == rows["SLCO1B1"]
+
+
+def test_a_shared_phenotype_line_reads_right_when_there_is_none_or_it_opens_with_a_symbol():
+    """Review: the "Every diplotype that fits" prefix is for a phenotype the
+    candidates share; with none to share the line stands as it is, and a line that
+    opens with a gene symbol keeps its capitals."""
+    for none in ("Indeterminate", "N/A", "Unknown", ""):
+        line = phenotype_implication(none, "CYP4F2", unresolved=True)
+        assert not line.startswith(SHARED), (none, line)
+    g6pd = phenotype_implication("Variable", "G6PD", unresolved=True)
+    assert g6pd.startswith(SHARED + "G6PD activity"), g6pd
+    im = phenotype_implication("Intermediate Metabolizer", "CYP2B6", unresolved=True)
+    assert im.startswith(SHARED + "r"), im
+
+
+def test_pypgx_cftr_indeterminate_says_no_responsive_variant():
+    line = phenotype_implication("Indeterminate", "CFTR")
+    assert line.startswith("No ivacaftor-responsive variant detected"), line
