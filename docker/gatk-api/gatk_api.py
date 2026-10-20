@@ -5121,20 +5121,25 @@ def drop_zaropgx_header_lines(job_label, vcf_gz, work_dir):
     """Remove the ##ZaroPGx_ lines from a bgzipped VCF's header, in place; how many.
 
     `bcftools reheader`, so the records are untouched. Nothing runs when there are none.
+    In bytes, so every other header byte is kept as it was: read as text, a sample name
+    that is not UTF-8 (a latin-1 one in the #CHROM line) would lose its byte.
     """
+    prefix = ZAROPGX_HEADER_PREFIX.encode('ascii')
+    with open(vcf_gz, 'rb') as probe:
+        opener = gzip.open if probe.read(2) == b'\x1f\x8b' else open
     header = []
-    with _open_vcf_text(vcf_gz) as handle:
+    with opener(vcf_gz, 'rb') as handle:
         for line in handle:
-            if not line.startswith('#'):
+            if not line.startswith(b'#'):
                 break
             header.append(line)
-            if line.startswith('#CHROM'):
+            if line.startswith(b'#CHROM'):
                 break
-    kept = [line for line in header if not line.startswith(ZAROPGX_HEADER_PREFIX)]
+    kept = [line for line in header if not line.startswith(prefix)]
     if len(kept) == len(header):
         return 0
     header_path = os.path.join(work_dir, 'staged.header.txt')
-    with open(header_path, 'w', encoding='utf-8') as fh:
+    with open(header_path, 'wb') as fh:
         fh.writelines(kept)
     clean = os.path.join(work_dir, 'staged.reheadered.vcf.gz')
     _run_tool(

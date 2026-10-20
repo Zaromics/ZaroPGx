@@ -371,7 +371,7 @@ class FakeTools:
                 ]
                 self._write(out, merged, [] if self.concat_drops_headers else kept)
         elif tool == "bcftools" and sub == "reheader":
-            header = Path(self._flag_value(argv, "-h")).read_text(encoding="utf-8")
+            header = Path(self._flag_value(argv, "-h")).read_bytes().decode("latin-1")
             self._write(
                 self._flag_value(argv, "-o"),
                 self.rows_by_path.get(argv[-1], []),
@@ -1753,6 +1753,25 @@ def test_an_uploads_own_zaropgx_lines_do_not_reach_the_output(client, tools):
     assert len(keys) == len(set(keys)) == 5, header
     assert "##ZaroPGx_positions_measured_for=MT-RNR1" not in header
     assert "##ZaroPGx_uncovered_genes=." not in header
+
+
+def test_dropping_the_lines_keeps_every_other_header_byte(gatk_api, tools, tmp_path):
+    """A sample name that is not UTF-8 (latin-1 here) in the #CHROM line: the header
+    handed to bcftools reheader keeps it byte for byte, without the ZaroPGx line."""
+    header = (
+        b"##fileformat=VCFv4.2\n"
+        b"##ZaroPGx_uncovered_genes=.\n"
+        b"##contig=<ID=chr1>\n"
+        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tJos\xe9\n"
+    )
+    staged = tmp_path / "staged.vcf.gz"
+    staged.write_bytes(gzip.compress(header + b"chr1\t1\t.\tG\t.\t.\t.\t.\tGT\t0/0\n"))
+
+    assert gatk_api.drop_zaropgx_header_lines("job", str(staged), str(tmp_path)) == 1
+
+    (reheader,) = tools.ran("bcftools", "reheader")
+    written = Path(reheader[reheader.index("-h") + 1]).read_bytes()
+    assert written == header.replace(b"##ZaroPGx_uncovered_genes=.\n", b"")
 
 
 def test_an_upload_without_zaropgx_lines_is_not_reheadered(client, tools):
