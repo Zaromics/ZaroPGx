@@ -151,7 +151,9 @@ risk for an HLA risk allele found, ...) and sent as text where none does (Likely
 G6PD's terms, hedged and uncertain calls); {doc}`../samples/README` has the table. High
 and Low risk (HLA risk alleles, MT-RNR1, malignant hyperthermia) follow CPIC's EHR priority
 for the result, since the IG has no term for the result itself; such a phenotype carries a
-note saying so, and the mapping is provisional. The bundle validates against those
+note saying so, and the mapping is provisional. A gene the run did not call, including
+one no tool reported (HLA from a VCF), has the genotype "Unknown", since the IG's
+genotype profile requires a value. The bundle validates against those
 profiles with no errors (HAPI FHIR's
 `$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.
 Bundles written before then do not validate, and their XML is not readable as FHIR. The

@@ -9,6 +9,7 @@ Reference: https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.htm
 
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -70,6 +71,24 @@ RESOURCE_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:zaropgx:fhir-resourc
 
 # The HLA-B alleles PharmCAT screens, each reported as its own result.
 HLA_B_SCREENED_ALLELES = ("*15:02", "*57:01", "*58:01")
+
+# The genotype of a gene the run did not call, as the calling tools state it
+# ("Unknown"; app/reports/generator.py gene_was_called).
+UNCALLED_GENOTYPE = "Unknown"
+
+
+def _text(value: Any) -> Optional[str]:
+    """The value as FHIR text: stripped, or None when it says nothing.
+
+    FHIR has no empty elements: a string holds something besides whitespace, and
+    an element needs a value or children (ele-1). HAPI's $validate rejects an
+    empty string, and on a write drops it without a word, along with a value
+    made of it. The builders leave an element out, or say "Unknown", instead.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 class FHIRExportService:
@@ -524,7 +543,7 @@ class FHIRExportService:
             )
             genotype_ref = {
                 "reference": f"urn:uuid:{genotype_obs['id']}",
-                "display": f"{gene_data.get('gene', 'Unknown')} {gene_data.get('diplotype', '')}",
+                "display": f"{gene_data.get('gene', 'Unknown')} {self._genotype_text(gene_data)}",
             }
             observation_references.append(genotype_ref)
 
@@ -547,7 +566,7 @@ class FHIRExportService:
                 phenotype_references.append(
                     {
                         "reference": f"urn:uuid:{phenotype_obs['id']}",
-                        "display": f"{gene_data.get('gene', 'Unknown')} {phenotype}",
+                        "display": f"{gene_data.get('gene', 'Unknown')} {_text(phenotype)}",
                     }
                 )
                 phenotype_citations.append(
@@ -582,7 +601,7 @@ class FHIRExportService:
                 implication_references.append(
                     {
                         "reference": f"urn:uuid:{implication_obs['id']}",
-                        "display": f"Therapeutic implication for {drug_rec.get('drug', 'Unknown')}",
+                        "display": f"Therapeutic implication for {_text(drug_rec.get('drug')) or 'Unknown'}",
                     }
                 )
 
@@ -687,7 +706,7 @@ class FHIRExportService:
         /fhir/save/workflow/{job}) named a Patient after the job, and pushing it
         then made a second Patient and moved the report onto it.
         """
-        patient_identifier = patient_info.get("id") or patient_id or run_id
+        patient_identifier = _text(patient_info.get("id")) or patient_id or run_id
         patient_id = self._stable_id("Patient", patient_identifier)
 
         resource = {
@@ -704,27 +723,32 @@ class FHIRExportService:
             ],
         }
 
-        # Add name if provided
+        # Add name if provided: the parts given, no blank family or given name
+        # (a family name alone was sent with "given": [""]).
         name = patient_info.get("name", {})
         if name:
-            resource["name"] = [
-                {
-                    "family": name.get("family", ""),
-                    "given": (
-                        name.get("given", [])
-                        if isinstance(name.get("given"), list)
-                        else [name.get("given", "")]
-                    ),
-                }
+            given = name.get("given")
+            human_name = {}
+            family = _text(name.get("family"))
+            if family:
+                human_name["family"] = family
+            given_names = [
+                text
+                for text in map(_text, given if isinstance(given, list) else [given])
+                if text
             ]
+            if given_names:
+                human_name["given"] = given_names
+            if human_name:
+                resource["name"] = [human_name]
 
-        # Add gender if provided
-        if patient_info.get("gender"):
-            resource["gender"] = patient_info["gender"]
-
-        # Add birthDate if provided
-        if patient_info.get("birthDate"):
-            resource["birthDate"] = patient_info["birthDate"]
+        # Add gender and birthDate if provided (a blank one is left out)
+        gender = _text(patient_info.get("gender"))
+        if gender:
+            resource["gender"] = gender
+        birth_date = _text(patient_info.get("birthDate"))
+        if birth_date:
+            resource["birthDate"] = birth_date
 
         patient_ref = f"urn:uuid:{patient_id}"
         return resource, patient_ref
@@ -742,14 +766,17 @@ class FHIRExportService:
         Following the Genotype profile from HL7 Genomics Reporting IG.
         """
         obs_id = resource_id or str(uuid.uuid4())
-        gene_symbol = gene_data.get("gene", "Unknown")
-        diplotype = gene_data.get("diplotype", "Unknown")
+        gene_symbol = _text(gene_data.get("gene")) or "Unknown"
+        diplotype = self._genotype_text(gene_data)
         activity_score = gene_data.get("activity_score")
         activity_value = None
         if activity_score not in (None, "", "n/a"):
             try:
                 activity_value = float(activity_score)
             except (ValueError, TypeError):
+                activity_value = None
+            # float("nan") and "inf" parse, but JSON has no NaN or Infinity.
+            if activity_value is not None and not math.isfinite(activity_value):
                 activity_value = None
 
         observation = {
@@ -823,8 +850,8 @@ class FHIRExportService:
             )
 
         # Add allele information if available
-        allele1 = gene_data.get("allele1")
-        allele2 = gene_data.get("allele2")
+        allele1 = _text(gene_data.get("allele1"))
+        allele2 = _text(gene_data.get("allele2"))
         if allele1:
             observation["component"].append(
                 {
@@ -867,11 +894,28 @@ class FHIRExportService:
         return observation
 
     @staticmethod
+    def _genotype_text(gene_data: Dict[str, Any]) -> str:
+        """The genotype a gene's observation states: its diplotype, or "Unknown"
+        for a gene the run did not call.
+
+        A gene a tool reported but could not call comes as "Unknown" (or
+        "Unknown/Unknown"). One no tool reported -- HLA from a VCF, a gene
+        outside the input -- comes as the placeholder row app/reports/generator.py
+        _build_canonical_diplotypes adds, with diplotype "". That went out as
+        valueCodeableConcept.text "", which $validate rejects ("value cannot be
+        empty") and a push to HAPI stored as a genotype with no value. It is the
+        same fact as "Unknown" and is stated the same way: the IG's genotype
+        profile requires the value (1..1), so dataAbsentReason, which may stand
+        only where there is none (obs-6), cannot replace it.
+        """
+        return _text(gene_data.get("diplotype")) or UNCALLED_GENOTYPE
+
+    @staticmethod
     def _states_a_phenotype(phenotype: Any) -> bool:
         """Whether the row has a phenotype to state. "N/A" (app/reports/
         generator.py) says the calling tool defines none for the gene; "Unknown"
         that none was reported."""
-        return bool(phenotype) and phenotype not in ("Unknown", "N/A")
+        return _text(phenotype) not in (None, "Unknown", "N/A")
 
     def _create_phenotype_implication(
         self,
@@ -892,7 +936,7 @@ class FHIRExportService:
         for travels as text (_phenotype_concept); a risk coded after CPIC's EHR
         priority carries a note that says so.
         """
-        gene_symbol = gene_data.get("gene", "Unknown")
+        gene_symbol = _text(gene_data.get("gene")) or "Unknown"
         concept = self._phenotype_concept(gene_data.get("phenotype"))
         observation = {
             "resourceType": "Observation",
@@ -1016,16 +1060,16 @@ class FHIRExportService:
         saying them again.
         """
         obs_id = resource_id or str(uuid.uuid4())
-        drug_name = drug_data.get("drug", "Unknown")
+        drug_name = _text(drug_data.get("drug")) or "Unknown"
         genes = drug_data.get("genes", [])
         recommendations = drug_data.get("recommendations", [])
 
         # Get the first recommendation for the main implication
         primary_rec = recommendations[0] if recommendations else {}
-        recommendation_text = primary_rec.get(
-            "recommendation", "See report for details"
+        recommendation_text = (
+            _text(primary_rec.get("recommendation")) or "See report for details"
         )
-        guideline_source = primary_rec.get("guideline_source", "")
+        guideline_source = _text(primary_rec.get("guideline_source")) or ""
 
         observation = {
             "resourceType": "Observation",
@@ -1147,8 +1191,11 @@ class FHIRExportService:
         Following the Medication Recommendation profile from HL7 Genomics Reporting IG.
         """
         task_id = resource_id or str(uuid.uuid4())
-        rec_text = recommendation.get("recommendation", "See report for details")
-        classification = recommendation.get("classification", "")
+        drug_name = _text(drug_name) or "Unknown"
+        rec_text = (
+            _text(recommendation.get("recommendation")) or "See report for details"
+        )
+        classification = _text(recommendation.get("classification"))
 
         # No Task.code: the profile binds it (required) to LOINC's medication
         # usage suggestions (LL4049-4: consider alternative, decrease dose, ...).
@@ -1189,7 +1236,7 @@ class FHIRExportService:
         # sent as text, under a text type, since no LOINC code names it. Sent as
         # LOINC 93044-6 "Level of evidence" before. "Unknown" is the readers'
         # default when PharmCAT gave nothing, so it is left out.
-        if classification and classification.strip().lower() != "unknown":
+        if classification and classification.lower() != "unknown":
             task["input"].append(
                 {
                     "type": {"text": "Strength of recommendation"},
@@ -1339,6 +1386,10 @@ class FHIRExportService:
                 f"actionable finding{'' if actionable_count == 1 else 's'} identified."
             ),
         }
+
+        # No results (no genes, no drugs): no result, not an empty list.
+        if not report["result"]:
+            del report["result"]
 
         # Add reference to genomic study
         report["extension"] = report.get("extension", [])
