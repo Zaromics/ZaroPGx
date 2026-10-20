@@ -210,9 +210,10 @@ curated: true
   default)?
 - [DONE Oct 2026, feat/fhir-coded-implications] Phenotypes are therapeutic implications of
   their genotypes, coded from the IG's LOINC answers where one says the same thing, text
-  elsewhere (table in docs/samples/README.md). Open: also repeat each gene's phenotype in
-  its drugs' implications, as the IG's examples do (needs labelling which gene each is
-  for); codes for G6PD's terms and the hedged calls, if LOINC or the IG adds them.
+  elsewhere (table in docs/samples/README.md). Each drug's implication cites its genes'
+  phenotype implications in `derivedFrom` rather than repeating them as the IG's examples
+  do (decided Oct 2026). Open: codes for G6PD's terms and the hedged calls, if LOINC or the
+  IG adds them.
 - Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
   an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
 - Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.

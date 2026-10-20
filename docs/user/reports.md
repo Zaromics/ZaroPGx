@@ -108,7 +108,8 @@ JSON, TSV and HTML, and the PDF, whichever were written.
 
 `<job_id>_pgx_fhir_report.json` and `.xml` hold the run's results as a FHIR R4 bundle,
 written with every report while `FHIR_EXPORT_ENABLED=true`: each gene's genotype and
-phenotype, each drug's implication and recommendations, on the profiles of the HL7 Genomics
+phenotype, each drug's implication, citing its genes' genotypes and phenotypes, and its
+recommendations, on the profiles of the HL7 Genomics
 Reporting IG 3.0.0. A phenotype is a therapeutic implication of its genotype, coded from the
 IG's LOINC answers where one says the same thing (Poor metabolizer, Decreased function, High
 risk for an HLA risk allele found, ...) and sent as text where none does (Likely Wild Type,
