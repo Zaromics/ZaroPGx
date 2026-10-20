@@ -62,7 +62,9 @@ from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
     alt_locus_flags,
+    alt_realignment_diagram_line,
     annotate_alt_locus,
+    realigned_alt_loci,
 )
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
@@ -480,11 +482,13 @@ def workflow_run_facts(
             )
 
     # Kept apart from the positions line above: a fact about the reads, not a count.
-    alt_line = alt_locus_diagram_line(
-        alt_locus_flags((by_name.get("pypgx_bam2vcf") or {}).get("output"))
-    )
-    if alt_line:
-        facts.details.setdefault("pypgx_bam2vcf", []).append(alt_line)
+    bam2vcf_output = (by_name.get("pypgx_bam2vcf") or {}).get("output")
+    for alt_line in (
+        alt_realignment_diagram_line(bam2vcf_output),
+        alt_locus_diagram_line(alt_locus_flags(bam2vcf_output)),
+    ):
+        if alt_line:
+            facts.details.setdefault("pypgx_bam2vcf", []).append(alt_line)
 
     if outputs:
         facts.details["report_generation"] = list(outputs)
@@ -543,6 +547,18 @@ def credit_run_for_job(
         if records
         else None
     )
+    # Not a step of its own: pypgx_bam2vcf aligned some reads again (BWA-MEM via
+    # GATK; app/reports/alt_locus.py), which the credits name as if it were one.
+    bam2vcf = next(
+        (r.get("output") for r in records or () if r["name"] == "pypgx_bam2vcf"),
+        None,
+    )
+    if (
+        completed is not None
+        and isinstance(bam2vcf, dict)
+        and realigned_alt_loci(bam2vcf)
+    ):
+        completed = completed | {"alt_realignment"}
     pypgx = next(
         (r.get("output") for r in records or () if r["name"] == "pypgx_analysis"),
         None,

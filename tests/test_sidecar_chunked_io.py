@@ -257,11 +257,11 @@ def test_gatk_api_upload_sites_no_longer_buffer_whole_file(gatk_api_source):
         "await file.read(); every save site must stream via UPLOAD_CHUNK_BYTES"
     )
     # /variant-call, /cram-to-bam, /sam-to-bam, /liftover-vcf, /bcf-to-vcf,
-    # /gvcf-to-vcf, /align-fastq: one chunked read loop each. /align-fastq streams
-    # for a second reason on top of the memory one -- it is the only route with a
-    # byte cap, and the cap is enforced per chunk so an oversized upload costs the
+    # /gvcf-to-vcf, /align-fastq, /realign-reads: one chunked read loop each.
+    # /align-fastq and /realign-reads stream for a second reason on top of the memory
+    # one -- they have byte caps, enforced per chunk so an oversized upload costs the
     # bytes already written rather than all of them.
-    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 7
+    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 8
 
 
 def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
@@ -699,10 +699,11 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
             ):
                 guarded_to_thread_calls.append(call)
 
-    assert len(guarded_to_thread_calls) == 9, (
-        f"expected 9 semaphore-guarded asyncio.to_thread() calls "
-        f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf, and "
-        f"align_fastq's index warm-up plus its three GATK steps), "
+    assert len(guarded_to_thread_calls) == 12, (
+        f"expected 12 semaphore-guarded asyncio.to_thread() calls "
+        f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf, "
+        f"align_fastq's index warm-up plus its three GATK steps, and "
+        f"realign_reads' warm-up plus its two), "
         f"found {len(guarded_to_thread_calls)}"
     )
     # The audited set of heavy workers each guarded call may drive. Anything

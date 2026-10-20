@@ -81,6 +81,19 @@ curated: true
   PharmCAT stays the source of the phenotype for every gene it covers, and PyPGx's
   calls reach it as diplotype-only outside calls.
 
+- [DONE Oct 2026, feat/realign-alt-loci] Reads on GRCh38's ALT contigs. An alignment
+  made against a GRCh38 that has them (NCBI's full GRCh38, for one) without ALT-awareness
+  puts many CYP2D6 and UGT2B17/UGT2B15 reads there as their primary alignment (on
+  NA12878, 529 of CYP2D6's 1,570 stayed on chr22), where PyPGx never reads. ALT-aware,
+  BWA keeps a read with a hit on the main chromosomes there and writes its ALT hit as a
+  supplementary copy; only a read with no such hit is primary on the ALT (1 in
+  NA12878's BAM).
+  On NA12878 aligned so, CYP2D6 came out *1/*1 (truth *3/*68+*4) with no flag, at 48%
+  MAPQ 0. Those loci's reads are now aligned again to the main contigs (gatk-api
+  /realign-reads, BwaSpark) before PyPGx and PharmCAT's positions read them; the 66
+  PyPGx calls then match the published ALT-aware BAM's. Needs the alignment index;
+  without it the genes are flagged with the reason.
+
 ## Calling & Tools
 
 ### PharmCAT

@@ -50,6 +50,7 @@ actually running in the image.
 
 import ast
 import re
+import shutil
 import subprocess
 import sys
 import types
@@ -485,6 +486,11 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             # tests/test_pypgx_alignment_without_read_groups.py.
             alignment_sample_name=lambda *a, **k: "SAMPLE",
             name_vcf_sample=lambda *a, **k: False,
+            # Re-aligning the ALT-covered loci, before the conversion, only when the
+            # alignment has reads on their ALT contigs; its sinks are pysam and an
+            # HTTP post (tests/test_realign_alt_loci.py). The upload, unchanged.
+            realign_alt_loci=lambda path, *a, **k: (path, None),
+            shutil=shutil,
         ),
     )
 
