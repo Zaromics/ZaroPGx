@@ -12,7 +12,8 @@ curated: true
   automatically before analysis (GATK Picard `LiftoverVcf` in gatk-api, UCSC hg19→hg38
   chain). Unliftable variants are dropped and counted; an implausibly high reject rate
   fails the run instead of producing a near-empty result.
-- **Priority 2   (Testing)**: BAM, CRAM, SAM, BCF, gVCF (NGS-derived, GRCh38). A GRCh38 GATK gVCF
+- **Priority 2   (Testing)**: BAM, CRAM, SAM, BCF, gVCF (NGS-derived; GRCh38, except that a
+  GRCh37 BCF is converted and then lifted over like a VCF). A GRCh38 GATK gVCF
   is genotyped into a plain VCF by gatk-api's `/gvcf-to-vcf` (two `GenotypeGVCFs` passes,
   the first `--include-non-variant-sites` over `pharmcat_positions.vcf`) before analysis.
 - **Not accepted**: gVCFs whose reference blocks are `<*>` rather than GATK's `<NON_REF>`
@@ -67,9 +68,10 @@ curated: true
   index itself is not used (`app/api/utils/file_processor.py`).
 - [DONE Oct 2026] Index files: a current index beside an alignment is reused, otherwise the
   service indexes it (`app/utils/shared_input.py`). Unaligned reads (FASTQ) are aligned to
-  GRCh38's main contigs plus chr22_KI270879v1_alt, cut from Broad's
-  Homo_sapiens_assembly38.fasta (`scripts/build-align-index.sh`).
-- [DONE Sep 2026] Preprocessing beside PyPGx's VCF: for aligned reads and gVCFs, ZaroPGx
+  GRCh38's main contigs plus chr22_KI270879v1_alt, cut from the hg38 FASTA the genome
+  downloader stages (UCSC's hg38, saved as `reference/hg38/Homo_sapiens_assembly38.fasta`;
+  `scripts/build-align-index.sh`).
+- [DONE Sep-Oct 2026] Preprocessing beside PyPGx's VCF: for aligned reads and gVCFs, ZaroPGx
   genotypes every PharmCAT position itself (1f4d8a2); reads on GRCh38's ALT contigs are
   aligned again to the main contigs (below).
 - [DONE] Add mtdna-server-2: mutserve, haplogrep3 and haplocheck in the `mtdna` sidecar,
