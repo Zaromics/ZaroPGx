@@ -10,10 +10,11 @@ from a patched alignment: the uploaded reads over every region it reads, with th
 loci's reads replaced by their new alignments. The report says what was done, and
 when it could not be done flags the genes whatever their MAPQ 0 share.
 
-A read on an ALT contig is one whose primary alignment is there. An ALT-aware
-alignment (NA12878's published BAM) keeps every read on the main chromosomes and
-writes its ALT hit as a supplementary record; the first version counted those from
-the index, and re-aligned (or flagged) both loci of NA12878's published BAM and of any
+A read on an ALT contig is one whose primary alignment is there. BWA in ALT-aware
+mode (NA12878's published BAM) keeps a read with a hit on the main chromosomes there
+and writes its ALT hit as a supplementary record; only a read with no such hit is
+primary on the ALT. The first version counted the supplementary records from the
+index, and re-aligned (or flagged) both loci of NA12878's published BAM and of any
 alignment made so.
 """
 
@@ -257,9 +258,10 @@ def _alt_aware_reads(n=30, copy=0x800, rg="L1"):
 
 @pytest.mark.parametrize("copy", [0x800, 0x100], ids=["supplementary", "secondary"])
 def test_an_alt_aware_alignment_is_left_alone_and_not_flagged(tmp_path, copy):
-    """Its reads are on the main chromosomes, where PyPGx reads them; the ALT hits are
-    copies. Counted from the index, as the first version did, both loci went to be
-    re-aligned (or, without the index image, were flagged)."""
+    """Its reads are on the main chromosomes, where PyPGx reads them, but for one
+    primary read on GL000257v2; the ALT hits are copies. Counted from the index, as
+    the first version did, both loci went to be re-aligned (or, without the index
+    image, were flagged)."""
     aln = _alignment(tmp_path, _alt_aware_reads(copy=copy))
     with pysam.AlignmentFile(aln) as bam:
         index = {s.contig: s.mapped for s in bam.get_index_statistics()}
@@ -337,7 +339,10 @@ def test_primary_reads_on_an_alt_contig_are_flagged_when_not_realigned(
     assert flags["CYP2D6"]["alt_reads"] == 50
     assert flags["CYP2D6"]["percent"] < 50
     alert = alt_locus_alert(output)
-    assert "CYP2D6 (50 reads on its ALT contigs)" in alert
+    assert (
+        "CYP2D6 (50 of its locus's reads with their primary alignment on ALT contigs)"
+        in alert
+    )
     assert "reads on the ALT contigs by their primary alignment too" in alert
     assert "could not (the bwa-mem index image is not built)" in alert
 
@@ -783,10 +788,15 @@ def test_loci_left_on_their_alt_contigs_are_flagged_whatever_their_mapq0():
     assert flags["UGT2B15"]["percent"] == 68 and flags["UGT2B15"]["alt_reads"] == 67754
     assert "UGT2B17" not in flags, "its reads do not go to GL000257, which lacks it"
     alert = alt_locus_alert(output)
-    assert "Reads on ALT contigs or with mapping quality 0: CYP2D6 (32,700 reads" in (
+    assert "Reads on ALT contigs or with mapping quality 0: CYP2D6 (32,700 of its " in (
         alert
     )
-    assert "UGT2B15 (68% of 2,428 reads at mapping quality 0; 67,754 reads" in alert
+    assert (
+        "UGT2B15 (68% of 2,428 reads at mapping quality 0; 67,754 of its locus's reads "
+        "with their primary alignment on ALT contigs)"
+    ) in alert
+    assert "kept 529 of the 1,570 reads over CYP2D6, 48% of them" in alert
+    assert "keeps each read" not in alert
     assert "could not (the bwa-mem index image is not built)" in alert
     assert "Re-aligned before genotyping" not in alert
     assert alt_locus_diagram_line(flags).startswith("reads on ALT contigs, not re-al")
@@ -795,6 +805,10 @@ def test_loci_left_on_their_alt_contigs_are_flagged_whatever_their_mapq0():
     assert genes[0]["alt_locus"]["note"].startswith(
         "32,700 reads from this gene's locus had their primary alignment on GRCh38's "
         "ALT contigs"
+    )
+    assert genes[0]["alt_locus"]["call_note"] == (
+        "32,700 of its locus's reads had their primary alignment on ALT contigs: this "
+        "call may be wrong (see Alerts)"
     )
     assert realigned_alt_loci(output) is False
 

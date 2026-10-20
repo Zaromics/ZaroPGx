@@ -1271,20 +1271,25 @@ def alt_locus_mapq0(alignment_path: str, assembly: str) -> Optional[Dict[str, Di
 #
 # PyPGx reads main contigs only (and chr22_KI270879v1_alt, GSTT1's): that is the whole
 # of reference/pypgx/pypgx_grch38.fasta. An alignment made against a GRCh38 that has
-# the ALT contigs, by an aligner that is not ALT-aware, puts about half of these loci's
-# reads on them as their primary alignment, where PyPGx never looks, and leaves most of
-# the rest at MAPQ 0. An ALT-aware one (bwa mem with the reference's .alt file) keeps a
-# read's primary alignment on the main chromosome and writes its ALT hit beside it as a
-# supplementary record: PyPGx reads that read where it is, and nothing here is needed.
-# Measured 2026-10-20 on NA12878's published 1000 Genomes BAM (bwa mem 0.7.15,
-# ALT-aware, GRCh38_full_analysis_set_plus_decoy_hla): 16,405 records on the four ALT
-# contigs below, all supplementary but one, a primary at MAPQ 0 on GL000257v2; by
-# their SA tags, 16,241 of those reads have their primary alignment on chr22 or chr4,
-# and 15,222 have it at MAPQ 60.
-# Measured 2026-10-16 on NA12878's reads from these loci realigned with plain bwa mem
-# 0.7.18 to GRCh38 with its ALT contigs: 526 reads over CYP2D6's gene body, 254 at
-# MAPQ 0, so PyPGx would read CYP2D6 from 272 reads where the published, ALT-aware BAM
-# gives it 1,479 -- and at 48% MAPQ 0 the report's flag (over half) did not fire.
+# the ALT contigs, by an aligner that is not ALT-aware, puts many of these loci's reads
+# on them as their primary alignment, where PyPGx never looks, and many of the rest at
+# MAPQ 0. Measured 2026-10-20 on NA12878's published 1000 Genomes BAM with these loci's
+# reads aligned again (2026-10-16) by plain bwa mem 0.7.18 to GRCh38 with its ALT
+# contigs: over CYP2D6's gene body 529 primary reads stay of the published BAM's 1,570,
+# 254 of them (48%) at MAPQ 0; over UGT2B15's, 2,460 of 5,106, 1,656 (67%) at MAPQ 0.
+# PyPGx would read CYP2D6 from 275 reads where the published BAM gives it 1,479 (272
+# on the loci's reads alone, 2026-10-16) -- and at 48% MAPQ 0 the report's flag (over
+# half) did not fire.
+#
+# An ALT-aware aligner does not do this. bwa mem with the reference's .alt file makes a
+# read's hit on the main chromosomes its primary alignment whenever it has one, and
+# writes its ALT hit as a supplementary record (0x800); only a read with no hit off the
+# ALT contigs is written there as primary, its best ALT hit (bwa's README-alt.md).
+# PyPGx reads the first kind where it is. Measured 2026-10-20 on NA12878's published
+# BAM (bwa mem 0.7.15, ALT-aware, GRCh38_full_analysis_set_plus_decoy_hla): 16,405
+# records on the four ALT contigs below, all supplementary but one, a primary at MAPQ 0
+# on GL000257v2; by their SA tags, 16,241 of those reads have their primary alignment
+# on chr22 or chr4, and 15,222 have it at MAPQ 60.
 #
 # So where reads have their primary alignment on a locus's ALT contigs, the locus's
 # reads -- every read on its primary span and on its ALT contigs, with its mate (primary
@@ -1334,7 +1339,7 @@ def alt_loci_to_realign(alignment_path: str, assembly: str) -> List[Dict[str, An
     secondary, not supplementary).
 
     Counted record by record. The index's counts take every record, and an ALT-aware
-    alignment's records on these contigs are supplementary copies of reads PyPGx
+    alignment's records on these contigs are mostly supplementary copies of reads PyPGx
     reads on the main chromosome: NA12878's published BAM has 16,405 there, 1 of them
     primary, and by the index both loci went to be re-aligned (BwaSpark's 5.4 GB index
     load and ~100 s) or, without the index image, were flagged. Only what lies on the
