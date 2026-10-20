@@ -85,5 +85,6 @@ def test_the_interactive_report_is_written_after_the_files_it_lists():
     source = inspect.getsource(generator.generate_report)
     interactive = source.index("create_interactive_html_report(")
     assert source.index("pdf_path = os.path.join(report_dir") < interactive
-    assert source.index('pharmcat_tsv_filename = f"{report_id}') < interactive
+    # PharmCAT's and mtDNA-Server 2's own files, linked by native_report_paths.
+    assert source.index("native_report_paths(report_dir") < interactive
     assert source.index("fhir_service.save_fhir_export(") < interactive

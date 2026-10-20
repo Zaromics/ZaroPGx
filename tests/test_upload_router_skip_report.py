@@ -134,3 +134,54 @@ def test_report_generation_defaults_to_on_when_the_flag_is_absent(final_stage):
     _, report_calls = final_stage({})
 
     assert len(report_calls) == 1
+
+
+def test_reports_off_still_offers_pharmcat_and_mtdna_reports(
+    final_stage, monkeypatch, tmp_path
+):
+    """The Report toggle turns off the custom report, not PharmCAT's own.
+
+    The page says so ("When disabled, only PharmCAT's native report is provided"),
+    but the skip branch linked nothing: the job finished offering no report at all,
+    though PharmCAT's files sat in its directory (found by the browser smoke test,
+    2026-10-18).
+    """
+    import app.reports.generator as generator
+
+    for flag in ("html", "json", "tsv"):
+        monkeypatch.setitem(
+            generator.REPORT_CONFIG, f"show_pharmcat_{flag}_report", True
+        )
+    job_dir = tmp_path / PATIENT_ID / JOB_ID
+    job_dir.mkdir(parents=True)
+    for name in (
+        f"{JOB_ID}_pgx_pharmcat.html",
+        f"{JOB_ID}_pgx_pharmcat.json",
+        f"{JOB_ID}_pgx_pharmcat.tsv",
+        "mtdna_result.json",
+    ):
+        (job_dir / name).write_text("x")
+    broadcasts = []
+    monkeypatch.setattr(ur, "schedule_coroutine", broadcasts.append)
+
+    service, report_calls = final_stage({"needs_report": False})
+
+    assert not report_calls
+    reports = [
+        u.metadata["reports"]
+        for u in service.updates
+        if getattr(u, "metadata", None) and "reports" in u.metadata
+    ][-1]
+    prefix = f"/reports/{PATIENT_ID}/{JOB_ID}"
+    assert reports["pharmcat_html_path"] == f"{prefix}/{JOB_ID}_pgx_pharmcat.html"
+    assert reports["pharmcat_json_path"] == f"{prefix}/{JOB_ID}_pgx_pharmcat.json"
+    assert reports["pharmcat_tsv_path"] == f"{prefix}/{JOB_ID}_pgx_pharmcat.tsv"
+    assert reports["mtdna_haplogroups_path"] == f"{prefix}/mtdna_result.json"
+    assert "pdf_path" not in reports and "mtdna_report_path" not in reports
+    # The completion message the page renders its links from carries them too.
+    final = [
+        b[2] for b in broadcasts if isinstance(b, tuple) and "pdf_report_url" in b[2]
+    ]
+    assert (
+        final and final[-1]["pharmcat_html_report_url"] == reports["pharmcat_html_path"]
+    )

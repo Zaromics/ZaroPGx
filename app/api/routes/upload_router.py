@@ -940,6 +940,18 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
             )
             job_service.log_job_event(job_id, log_data)
 
+            # The custom report is off, not PharmCAT's own: the page's Report toggle
+            # says "only PharmCAT's native report is provided". Those files, and
+            # mtDNA-Server 2's, are in patient_dir (found or reconciled above); without
+            # their links the job finished offering nothing at all.
+            from app.reports.generator import native_report_paths
+
+            response_data.update(
+                native_report_paths(
+                    str(patient_dir), str(job_id), f"/reports/{patient_id}/{job_id}"
+                )
+            )
+
         # Add provisional flag if the workflow was marked as provisional
         is_provisional = workflow_config.get("is_provisional", False)
 

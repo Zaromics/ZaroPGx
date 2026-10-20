@@ -2853,6 +2853,131 @@ def _applies_if(
     )
 
 
+# native_report_paths' keys (generate_report's report_paths keys) -> the keys its
+# template data and the web page read the same links under.
+NATIVE_REPORT_URL_KEYS = {
+    "pharmcat_html_path": "pharmcat_html_report_url",
+    "pharmcat_json_path": "pharmcat_json_report_url",
+    "pharmcat_tsv_path": "pharmcat_tsv_report_url",
+    "mtdna_report_path": "mtdna_report_url",
+    "mtdna_haplogroups_path": "mtdna_haplogroups_url",
+    "mtdna_vcf_path": "mtdna_vcf_url",
+}
+
+
+def native_report_paths(
+    report_dir: str, report_id: str, reports_url_prefix: str
+) -> Dict[str, str]:
+    """Served paths of the reports the pipeline publishes itself, by report_paths key.
+
+    PharmCAT's own HTML, JSON and TSV, each as INCLUDE_PHARMCAT_* allows, and
+    mtDNA-Server 2's files: all already in report_dir when the report step runs.
+    Only a file that exists gets a key, so the page never offers a dead link.
+
+    generate_report adds these to the reports it builds. A job whose custom report
+    was turned off gets these alone (upload_router), which is what the page's
+    Report toggle promises: "only PharmCAT's native report is provided".
+    """
+    paths: Dict[str, str] = {}
+
+    # PharmCAT HTML report
+    if REPORT_CONFIG["show_pharmcat_html_report"]:
+        logger.info(
+            "Processing PharmCAT HTML report (enabled via INCLUDE_PHARMCAT_HTML)"
+        )
+        pharmcat_html_filename = f"{report_id}_pgx_pharmcat.html"
+        if os.path.exists(os.path.join(report_dir, pharmcat_html_filename)):
+            paths["pharmcat_html_path"] = (
+                f"{reports_url_prefix}/{pharmcat_html_filename}"
+            )
+            logger.info(
+                f"PharmCAT HTML report URL added: {paths['pharmcat_html_path']}"
+            )
+        else:
+            logger.warning("PharmCAT HTML report not found in report directory")
+    else:
+        logger.debug(
+            "PharmCAT HTML report processing disabled via INCLUDE_PHARMCAT_HTML environment variable"
+        )
+
+    # PharmCAT JSON report
+    if REPORT_CONFIG["show_pharmcat_json_report"]:
+        logger.info(
+            "Processing PharmCAT JSON report (enabled via INCLUDE_PHARMCAT_JSON)"
+        )
+        pharmcat_json_filename = f"{report_id}_pgx_pharmcat.json"
+        pharmcat_json_path = os.path.join(report_dir, pharmcat_json_filename)
+        pharmcat_json_file = os.path.join(report_dir, f"{report_id}.report.json")
+
+        if os.path.exists(pharmcat_json_file):
+            if not os.path.exists(pharmcat_json_path):
+                shutil.copy(pharmcat_json_file, pharmcat_json_path)
+                logger.info(f"PharmCAT JSON report copied to: {pharmcat_json_path}")
+
+        if os.path.exists(pharmcat_json_path):
+            paths["pharmcat_json_path"] = (
+                f"{reports_url_prefix}/{pharmcat_json_filename}"
+            )
+            logger.info(
+                f"PharmCAT JSON report URL added: {paths['pharmcat_json_path']}"
+            )
+        else:
+            logger.warning("PharmCAT JSON report not found in report directory")
+    else:
+        logger.debug(
+            "PharmCAT JSON report processing disabled via INCLUDE_PHARMCAT_JSON environment variable"
+        )
+
+    # PharmCAT TSV report
+    if REPORT_CONFIG["show_pharmcat_tsv_report"]:
+        logger.info("Processing PharmCAT TSV report (enabled via INCLUDE_PHARMCAT_TSV)")
+        pharmcat_tsv_filename = f"{report_id}_pgx_pharmcat.tsv"
+        pharmcat_tsv_path = os.path.join(report_dir, pharmcat_tsv_filename)
+        pharmcat_tsv_file = os.path.join(report_dir, f"{report_id}.report.tsv")
+
+        if os.path.exists(pharmcat_tsv_file):
+            if not os.path.exists(pharmcat_tsv_path):
+                shutil.copy(pharmcat_tsv_file, pharmcat_tsv_path)
+                logger.info(f"PharmCAT TSV report copied to: {pharmcat_tsv_path}")
+
+        if os.path.exists(pharmcat_tsv_path):
+            paths["pharmcat_tsv_path"] = f"{reports_url_prefix}/{pharmcat_tsv_filename}"
+            logger.info(f"PharmCAT TSV report URL added: {paths['pharmcat_tsv_path']}")
+        else:
+            logger.warning("PharmCAT TSV report not found in report directory")
+    else:
+        logger.debug(
+            "PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable"
+        )
+
+    # mtDNA-Server 2 artifacts. MtdnaCall (pipelines/pgx/main.nf) publishDir
+    # -copies these straight into report_dir under fixed names -- no
+    # report_id-prefixed rename step, unlike the PharmCAT files above -- so
+    # existence is all there is to check.
+    #
+    # mtdna_report.html exists only on an alignment input (BAM/CRAM/FASTQ):
+    # upstream's report needs coverage and contamination metrics a VCF-only
+    # call cannot produce, so its absence here is expected, not an error
+    # (see mtdna-server-2's own report_unavailable_reason). Leaving the key
+    # unset when the file is absent is what keeps the frontend's "mtDNA
+    # Reports" group from offering a dead link.
+    #
+    # mtdna_result.json carries the haplogroup call, its quality, and the
+    # matched MT-RNR1 variants, on both input paths -- the closest thing to
+    # a "haplogroup report" this pipeline produces today. The normalised chrM
+    # VCF (bcftools norm output) is available on both input paths too.
+    for key, name, what in (
+        ("mtdna_report_path", "mtdna_report.html", "mtDNA-Server 2 report"),
+        ("mtdna_haplogroups_path", "mtdna_result.json", "mtDNA haplogroup result"),
+        ("mtdna_vcf_path", "mtdna_variants.vcf.gz", "mtDNA chrM VCF"),
+    ):
+        if os.path.exists(os.path.join(report_dir, name)):
+            paths[key] = f"{reports_url_prefix}/{name}"
+            logger.info(f"{what} URL added: {paths[key]}")
+
+    return paths
+
+
 def generate_report(
     pharmcat_results: Dict[str, Any],
     output_dir: str,
@@ -4098,141 +4223,10 @@ def generate_report(
 
             logger.info(f"=== PDF GENERATION END (Engine: {PDF_ENGINE}) ===")
 
-        # Include PharmCAT original reports if enabled
-        # Check if pharmacat report files already exist in the report directory
-        pharmcat_html_filename = f"{report_id}_pgx_pharmcat.html"
-        pharmcat_html_path = os.path.join(report_dir, pharmcat_html_filename)
-
-        # PharmCAT HTML report
-        if REPORT_CONFIG["show_pharmcat_html_report"]:
-            logger.info(
-                "Processing PharmCAT HTML report (enabled via INCLUDE_PHARMCAT_HTML)"
-            )
-            # Look for the original PharmCAT HTML report
-            pharmcat_html_file = os.path.join(
-                report_dir, f"{report_id}_pgx_pharmcat.html"
-            )
-            if os.path.exists(pharmcat_html_file):
-                # Copy it with our standardized naming if it doesn't already exist
-                if not os.path.exists(pharmcat_html_path):
-                    shutil.copy(pharmcat_html_file, pharmcat_html_path)
-                    logger.info(f"PharmCAT HTML report copied to: {pharmcat_html_path}")
-
-            # Add to report paths if the file exists
-            if os.path.exists(pharmcat_html_path):
-                server_pharmcat_html_path = (
-                    f"{reports_url_prefix}/{pharmcat_html_filename}"
-                )
-                report_paths["pharmcat_html_path"] = server_pharmcat_html_path
-                data["pharmcat_html_report_url"] = server_pharmcat_html_path
-                logger.info(
-                    f"PharmCAT HTML report URL added: {server_pharmcat_html_path}"
-                )
-            else:
-                logger.warning("PharmCAT HTML report not found in report directory")
-        else:
-            logger.debug(
-                "PharmCAT HTML report processing disabled via INCLUDE_PHARMCAT_HTML environment variable"
-            )
-
-        # PharmCAT JSON report
-        if REPORT_CONFIG["show_pharmcat_json_report"]:
-            logger.info(
-                "Processing PharmCAT JSON report (enabled via INCLUDE_PHARMCAT_JSON)"
-            )
-            pharmcat_json_filename = f"{report_id}_pgx_pharmcat.json"
-            pharmcat_json_path = os.path.join(report_dir, pharmcat_json_filename)
-            pharmcat_json_file = os.path.join(report_dir, f"{report_id}.report.json")
-
-            if os.path.exists(pharmcat_json_file):
-                if not os.path.exists(pharmcat_json_path):
-                    shutil.copy(pharmcat_json_file, pharmcat_json_path)
-                    logger.info(f"PharmCAT JSON report copied to: {pharmcat_json_path}")
-
-            if os.path.exists(pharmcat_json_path):
-                server_pharmcat_json_path = (
-                    f"{reports_url_prefix}/{pharmcat_json_filename}"
-                )
-                report_paths["pharmcat_json_path"] = server_pharmcat_json_path
-                data["pharmcat_json_report_url"] = server_pharmcat_json_path
-                logger.info(
-                    f"PharmCAT JSON report URL added: {server_pharmcat_json_path}"
-                )
-            else:
-                logger.warning("PharmCAT JSON report not found in report directory")
-        else:
-            logger.debug(
-                "PharmCAT JSON report processing disabled via INCLUDE_PHARMCAT_JSON environment variable"
-            )
-
-        # PharmCAT TSV report
-        if REPORT_CONFIG["show_pharmcat_tsv_report"]:
-            logger.info(
-                "Processing PharmCAT TSV report (enabled via INCLUDE_PHARMCAT_TSV)"
-            )
-            pharmcat_tsv_filename = f"{report_id}_pgx_pharmcat.tsv"
-            pharmcat_tsv_path = os.path.join(report_dir, pharmcat_tsv_filename)
-            pharmcat_tsv_file = os.path.join(report_dir, f"{report_id}.report.tsv")
-
-            if os.path.exists(pharmcat_tsv_file):
-                if not os.path.exists(pharmcat_tsv_path):
-                    shutil.copy(pharmcat_tsv_file, pharmcat_tsv_path)
-                    logger.info(f"PharmCAT TSV report copied to: {pharmcat_tsv_path}")
-
-            if os.path.exists(pharmcat_tsv_path):
-                server_pharmcat_tsv_path = (
-                    f"{reports_url_prefix}/{pharmcat_tsv_filename}"
-                )
-                report_paths["pharmcat_tsv_path"] = server_pharmcat_tsv_path
-                data["pharmcat_tsv_report_url"] = server_pharmcat_tsv_path
-                logger.info(
-                    f"PharmCAT TSV report URL added: {server_pharmcat_tsv_path}"
-                )
-            else:
-                logger.warning("PharmCAT TSV report not found in report directory")
-        else:
-            logger.debug(
-                "PharmCAT TSV report processing disabled via INCLUDE_PHARMCAT_TSV environment variable"
-            )
-
-        # mtDNA-Server 2 artifacts. MtdnaCall (pipelines/pgx/main.nf) publishDir
-        # -copies these straight into report_dir under fixed names -- no
-        # report_id-prefixed rename step, unlike the PharmCAT files above -- so
-        # existence is all there is to check.
-        #
-        # mtdna_report.html exists only on an alignment input (BAM/CRAM/FASTQ):
-        # upstream's report needs coverage and contamination metrics a VCF-only
-        # call cannot produce, so its absence here is expected, not an error
-        # (see mtdna-server-2's own report_unavailable_reason). Leaving the key
-        # unset when the file is absent is what keeps the frontend's "mtDNA
-        # Reports" group from offering a dead link.
-        mtdna_report_file = os.path.join(report_dir, "mtdna_report.html")
-        if os.path.exists(mtdna_report_file):
-            server_mtdna_report_path = f"{reports_url_prefix}/mtdna_report.html"
-            report_paths["mtdna_report_path"] = server_mtdna_report_path
-            data["mtdna_report_url"] = server_mtdna_report_path
-            logger.info(f"mtDNA-Server 2 report URL added: {server_mtdna_report_path}")
-
-        # mtdna_result.json carries the haplogroup call, its quality, and the
-        # matched MT-RNR1 variants, on both input paths -- the closest thing to
-        # a "haplogroup report" this pipeline produces today.
-        mtdna_haplogroups_file = os.path.join(report_dir, "mtdna_result.json")
-        if os.path.exists(mtdna_haplogroups_file):
-            server_mtdna_haplogroups_path = f"{reports_url_prefix}/mtdna_result.json"
-            report_paths["mtdna_haplogroups_path"] = server_mtdna_haplogroups_path
-            data["mtdna_haplogroups_url"] = server_mtdna_haplogroups_path
-            logger.info(
-                f"mtDNA haplogroup result URL added: {server_mtdna_haplogroups_path}"
-            )
-
-        # Normalised chrM VCF (bcftools norm output) -- available on both input
-        # paths, unlike the HTML report above.
-        mtdna_vcf_file = os.path.join(report_dir, "mtdna_variants.vcf.gz")
-        if os.path.exists(mtdna_vcf_file):
-            server_mtdna_vcf_path = f"{reports_url_prefix}/mtdna_variants.vcf.gz"
-            report_paths["mtdna_vcf_path"] = server_mtdna_vcf_path
-            data["mtdna_vcf_url"] = server_mtdna_vcf_path
-            logger.info(f"mtDNA chrM VCF URL added: {server_mtdna_vcf_path}")
+        # The reports the pipeline published itself: PharmCAT's own and mtDNA-Server 2's.
+        native_paths = native_report_paths(report_dir, report_id, reports_url_prefix)
+        report_paths.update(native_paths)
+        data.update({NATIVE_REPORT_URL_KEYS[k]: v for k, v in native_paths.items()})
 
         # FHIR Export - Generate FHIR R4 compliant exports if enabled.
         # Resolved here, per report, not read out of an import-time snapshot.
