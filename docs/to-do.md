@@ -12,8 +12,8 @@ curated: true
   automatically before analysis (GATK Picard `LiftoverVcf` in gatk-api, UCSC hg19→hg38
   chain). Unliftable variants are dropped and counted; an implausibly high reject rate
   fails the run instead of producing a near-empty result.
-- **Priority 1.5 (Development)**: BAM
-- **Priority 2   (Development)**: CRAM, SAM, BCF, gVCF (NGS-derived). A GRCh38 GATK gVCF
+- **Priority 2   (Testing)**: BAM, CRAM, SAM, BCF, gVCF (NGS-derived; GRCh38, except that a
+  GRCh37 BCF is converted and then lifted over like a VCF). A GRCh38 GATK gVCF
   is genotyped into a plain VCF by gatk-api's `/gvcf-to-vcf` (two `GenotypeGVCFs` passes,
   the first `--include-non-variant-sites` over `pharmcat_positions.vcf`) before analysis.
 - **Not accepted**: gVCFs whose reference blocks are `<*>` rather than GATK's `<NON_REF>`
@@ -27,15 +27,17 @@ curated: true
   NA12878's 30x reads (1.08 GB, 7.6 M pairs) alignment took 11 minutes and peaked at 6.1x
   the FASTQ's size in disk (Oct 2026), so a whole genome would take hours. Open: measure
   disk and MarkDuplicatesSpark's memory on one whole-genome FASTQ.
-- **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
-  pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
+- **Not accepted yet — support in development**: 23andMe, AncestryDNA. Detected by name
+  and refused for now. Converting the file is the easy part; support has to solve what
+  comes after it: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
-  deletion, and PyPGx reads the gaps as homozygous reference — so the report would be
-  confidently wrong rather than incomplete. See `docs/user/file-formats.md`.
-- **Not accepted**: T2T-CHM13, in any format. Detected from the file's own contig lengths
-  or `##reference=` line and refused. Building a liftover lane for it is a separate
-  decision, not a scheduled one: the T2T chains exclude GRCh38's ALT contigs (GSTT1 lives
-  on one), and CYP2D6's CHM13 representation is uncharacterised.
+  deletion, and PyPGx reads the gaps as homozygous reference — so today's pipeline would
+  report confidently wrong calls rather than incomplete ones. See
+  `docs/user/file-formats.md`.
+- **Not accepted yet — support in development**: T2T-CHM13, in any format. Detected from
+  the file's own contig lengths or `##reference=` line and refused for now. A liftover
+  lane for it has to solve two problems: the T2T chains exclude GRCh38's ALT contigs
+  (GSTT1 lives on one), and CYP2D6's CHM13 representation is uncharacterised.
 - **Priority 3   (Research)**: Other sequencing/genotyping formats
 - **Priority 4   (Research)**: BED, TXT formats
 
@@ -51,18 +53,33 @@ curated: true
 - Clarify workflow vs job IDs; define single source for workflow definition and per-run job state
 - Represent workflows as finite state matrix, each unique and deterministic workflow should have an assigned ID which can be quickly spot checked 
 - Nextflow orchestration
-  - Dynamic resource allocation (CPU/memory by attempt, file type+size, etc.)
-  - Track active tool/stage; reflect in UI icons and progress
+  - Dynamic resource allocation (CPU/memory by attempt, file type+size): moot as framed.
+    Every Nextflow process is a curl call to a service, so the services' compose limits
+    hold the resources; per-process cpus/memory were removed (968ec89, Oct 2026) and
+    `tests/test_nextflow_config_resources.py` keeps them out.
+  - [DONE, by the app rather than Nextflow] Track the active step in the page: each
+    service reports its step (`app/utils/job_client.py`), the page lights the running
+    stage's glyph, and the bar is weighted by step (below).
 - [DONE Oct 2026, fix/progress-bar-weighted-steps] Progress is a weighted sum of the
   steps a job runs, each weighted by its measured duration and paced by how long it has
   been running, so it reaches 100% across any input type; it used to freeze for minutes
   when steps ran in parallel.
-- Accept uploads by URL (streamed) and multi-file selects (main + index) with proper pairing
-- Recognize and/or regenerate index files as needed; map unaligned to appropriate reference: currently GRCh38.p14
-- Consider preprocessing complementing PyPGx-led VCF generation (evaluate necessity)
+- Accept uploads by URL (streamed). The upload takes files only.
+- Use the index uploaded with its data file. Multi-file selects work: an index chosen with
+  its file is paired by name and named on the page, FASTQ R1/R2 pairs are paired, but the
+  index itself is not used (`app/api/utils/file_processor.py`).
+- [DONE Oct 2026] Index files: a current index beside an alignment is reused, otherwise the
+  service indexes it (`app/utils/shared_input.py`). Unaligned reads (FASTQ) are aligned to
+  GRCh38's main contigs plus chr22_KI270879v1_alt, cut from the hg38 FASTA the genome
+  downloader stages (UCSC's hg38, saved as `reference/hg38/Homo_sapiens_assembly38.fasta`;
+  `scripts/build-align-index.sh`).
+- [DONE Sep-Oct 2026] Preprocessing beside PyPGx's VCF: for aligned reads and gVCFs, ZaroPGx
+  genotypes every PharmCAT position itself (1f4d8a2); reads on GRCh38's ALT contigs are
+  aligned again to the main contigs (below).
 - [DONE] Add mtdna-server-2: mutserve, haplogrep3 and haplocheck in the `mtdna` sidecar,
   supplying the MT-RNR1 outside call and the report's mtDNA section.
-- Finish wiring in ZaroHLA
+- [DONE Oct 2026] ZaroHLA (OptiType) is wired in: the `hla_typing` step types HLA-A, -B and
+  -C from every alignment input, and HLA-A and -B reach PharmCAT as outside calls.
 - Improve analysis, make better use of samtools and bcftools
 - [DONE Oct 2026, fix/discard-uploads-when-job-ends] A job's upload is deleted when the
   job completes, fails or is cancelled (`KEEP_UPLOADS=true` keeps it); it used to stay
@@ -97,15 +114,19 @@ curated: true
 ## Calling & Tools
 
 ### PharmCAT
-  - Implement translation layer (lexicon) to translate outside calls to recognized nomenclature
-  - Implement optional and intelligent switch to toggle assume reference when missing
+  - Implement translation layer (lexicon) to translate outside calls to recognized
+    nomenclature. In part: `app/utils/allele_translate.py` rewrites the synonym genes
+    (ABCG2, IFNL3, VKORC1) and CYP2D6's tandem spelling; other genes pass through.
+  - [DONE] Assume reference when missing: the upload page's two options (defaults from
+    `.env`) for VCF and BCF; forced off for alignments and gVCFs, where ZaroPGx genotypes
+    every PharmCAT position itself.
 ### PyPGx
   - Batch execution (done) and advanced parallelization controls (CPU/RAM/storage)
   - BAM-to-VCF preprocessing check
   - Evaluate imputation options; expose via advanced settings
 ### HLA Typing
-  - Use ZaroHLA (OptiType) for HLA-A/B/C when FASTQ; confirm BAM pathway
-  - Align to GRCh38 as part of HLA path
+  - [DONE Sep 2026] ZaroHLA types HLA-A/B/C from the aligned BAM on every alignment lane, a
+    FASTQ after its alignment to GRCh38; the raw-FASTQ OptiType route was removed (3f53a38).
 ### Ancillary and Future tools
   - Now included in Zaromics suite
 
@@ -114,7 +135,8 @@ curated: true
 - [DONE Oct 2026] Unified report: PharmCAT's recommendations with PyPGx's calls for the
   genes PharmCAT does not call ("P" in the Call column), and PyPGx's per-gene evidence
   (fix/pypgx-full-record).
-- Add demographics mini-section: mitochondrial lineage/haplogroup and variant rarity context
+- Variant rarity context (no allele frequencies are shown). The mitochondrial haplogroup
+  and its quality are in the report's mtDNA section (Aug 2026).
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
 - [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
@@ -151,12 +173,21 @@ curated: true
   page sooner (app/reports/pdf_fit.py; fix/report-exec-summary-one-page,
   fix/pdf-sections-fit-pages). F2 and F5 are read as called
   (fix/report-unannotated-gene-calls); score badges are legible.
-- Open: should "Decreased Function" get a warning colour (it is neutral grey)?
+- [DONE Oct 2026, fix/report-phenotype-colours] "Decreased Function" is amber, like
+  intermediate metabolism. Badge colours say what the phenotype means for function against
+  what is typical, not CPIC's EHR priority, which ranks the need to act (decided
+  2026-10-19; `app/reports/generator.py`).
 
 ## UI/UX
 
-- Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
-- Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
+- [DONE Oct 2026, fix/ui-stage-row-fits] The stage row and the header fit a phone: in a
+  form narrower than about 520px the stages sit four to a row (they ran off the card, and
+  the page scrolled sideways), and a stage's popup stays on screen
+  (`tests/e2e/test_ui_smoke.py` at 320, 375 and 768px). [DONE Oct 2026,
+  fix/ui-stage-row-shows-what-runs] The stages a job has no step for are faded while it
+  runs, and a stage switched off stays faded through a job's updates.
+- A glyph for preprocessing (e.g. liftover), which lights the GATK glyph now. mtDNA has its
+  own glyph (Aug 2026).
 - Unify/clean redundant text
 - **Front-end test harness.** Until Oct 2026 nothing rendered the page. What existed was
   Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
@@ -178,14 +209,15 @@ curated: true
   (`tests/e2e/report_links.py`); (2) [DONE Oct 2026] Playwright smoke over upload →
   progress → report in both themes, with a contrast assertion on the popups and the
   results card (`tests/e2e/test_ui_smoke.py`; with the 08-29 popup CSS put back, the
-  dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, so the liftover
-  freeze above still needs a GRCh37 run watched); (3) only then consider visual
-  snapshots.
+  dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, and a GRCh37 job
+  watched through the page on 2026-10-19 moved the bar through its 9-second liftover, 1 to
+  8%, and on to 100); (3) only then consider visual snapshots.
 
 ## Data & Database
 
 - PostgreSQL 18: add extensions; implement schemas
-- Adopt JSONB where appropriate; ensure escaping for special characters (done)
+- [DONE] JSONB where appropriate (job, step and result metadata); escaping for special
+  characters.
 - Begin persisting normalized results; build lexicon layer translating between caller spelling
 - Consolidating reference and sample material (FASTA/CPIC dumps) into a single `references/` area
 
@@ -238,7 +270,7 @@ curated: true
 
 ## Security & Privacy
 
-- Ensure self-hosted deployments never transmit genomic data externally. Audited
+- [DONE Oct 2026] Self-hosted deployments never transmit genomic data externally. Audited
   Oct 2026: every service URL the app and sidecars fall back to names a compose service
   (pinned by `tests/test_no_external_service_defaults.py`), and the only other outbound
   traffic is reference and bundle downloads. htslib's fallback of fetching a CRAM's
@@ -250,13 +282,14 @@ curated: true
 
 ## Docker & CI/CD
 
-- Publish new images before pointing new installs at them: `bootstrap.sh` pins
-  `ZAROPGX_TAG=0.3.2`, and that release's genome-downloader image fails two stages on a
-  fresh install, both fixed on main since (fix/downloader-reference-staging): grch37 is
-  fetched over `ftp://`, which `requests` cannot do (every host), and the PharmCAT
-  reference tarball's chown fails under rootless or userns-remapped Docker. Found by
-  running `bootstrap.sh` end to end on a clean daemon (Oct 2026); the rest of the
-  install and a VCF job were fine.
+- Publish 0.4.0 before installs reach for it: main's `bootstrap.sh` clones `v0.4.0` and
+  `compose.yml` pulls `0.4.0` images (3b1fc3a), and neither the tag nor the images are
+  published yet (Docker Hub ends at 0.3.2, Oct 2026), so an install from main fails until
+  they are. 0.3.2's genome-downloader fails two stages on a fresh install, both fixed
+  since (fix/downloader-reference-staging): grch37 is fetched over `ftp://`, which
+  `requests` cannot do (every host), and the PharmCAT reference tarball's chown fails
+  under rootless or userns-remapped Docker. Found by running `bootstrap.sh` end to end on
+  a clean daemon (Oct 2026); the rest of the install and a VCF job were fine.
 - [DONE Oct 2026, fix/sidecars-read-shared-inputs] Services read an alignment on the
   shared /data volume in place instead of each storing an upload copy: on 30x NA12878
   the 41.2 GB copies in `data/temp/mtdna/` and `data/temp/zarohla/` (about 124 GB at
@@ -293,6 +326,8 @@ curated: true
 ## Open Questions
 
 - Where should indexing responsibility live (always regenerate vs recognize existing)?
+  (Answered in practice, Oct 2026: a current index beside the file is reused, otherwise
+  made. Open: using the index uploaded with the file, above.)
 - How to unify pipeline progress across heterogeneous inputs (FASTQ/BAM/VCF)? (In
   part answered Oct 2026: steps weighted by measured duration per input path.)
 - Which schema to implement, ultimately?
