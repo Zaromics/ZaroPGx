@@ -141,10 +141,23 @@ with the reason (HTTP 502) and nothing is changed on the server. If the bundle w
 and no answer came back (the server took more than five minutes, or the connection
 dropped), the request fails the same way, but the server may have stored the bundle, or
 may still be storing it; pushing again once it has finished is safe, since a push updates
-the job's resources in place. The job is not affected either way. Credentials in
+the job's resources in place. The 502's `X-FHIR-Push-Outcome` header says which happened:
+`unreachable`, `refused` or `unknown`. The job is not affected either way. Credentials in
 `FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never shown. Nothing
-is pushed when a job ends, and the web page has no button for it yet. Sending to an
-outside health record system is not supported.
+is pushed when a job ends. Sending to an outside health record system is not supported.
+
+On the web page, a finished job's results have a **Push to FHIR server** button while
+`HAPI_FHIR_ENABLED` and `FHIR_EXPORT_ENABLED` are both on. It makes the same request: it
+sends that job's bundle to this installation's FHIR server (`FHIR_SERVER_URL`, the bundled
+HAPI server), then shows what the server did, per resource type, or why the push failed:
+the server could not be reached or did not accept the bundle, and nothing was pushed; or
+it was sent the bundle and gave no answer, and may have stored it. Pressing it again
+replaces what the job put on that server before: its resources are updated in place, and
+those the bundle no longer has are deleted. The page offers no other server. It names the
+server as this installation's FHIR server, and the report's and Patient's references
+(`DiagnosticReport/<id>`) are relative to its base: `FHIR_SERVER_URL` is the address
+ZaroPGx reaches it at, in Compose a container name the browser cannot open, while from the
+host the bundled server is at `127.0.0.1:8090/fhir`.
 
 ## Using the results
 

@@ -205,7 +205,13 @@ curated: true
   longer has (tagged `urn:zaropgx:job-id`). A server that is down gives 502; the job is
   untouched. `tests/test_fhir_push_hapi.py` runs it against a throwaway HAPI
   (`ZAROPGX_FHIR_TEST_URL`).
-- No UI for the push yet: an action on a finished job in the web page.
+- [DONE Oct 2026, feat/ui-fhir-push-button] A finished job's results on the web page have
+  a **Push to FHIR server** button (with `HAPI_FHIR_ENABLED` and `FHIR_EXPORT_ENABLED`
+  on). It calls the push endpoint for that job and shows what the server created,
+  updated and deleted, or why the push failed: the server unreachable, the bundle
+  refused, or no answer after the bundle was sent, when the server may have stored it
+  (`X-FHIR-Push-Outcome`). Bundled server only: the page does not choose or configure
+  another.
 - Push a finished job automatically when a deployment asks for it (a setting, off by
   default)?
 - [DONE Oct 2026, feat/fhir-coded-implications] Phenotypes are therapeutic implications of
