@@ -5135,7 +5135,14 @@ def drop_zaropgx_header_lines(job_label, vcf_gz, work_dir):
             header.append(line)
             if line.startswith(b'#CHROM'):
                 break
-    kept = [line for line in header if not line.startswith(prefix)]
+
+    def planted(line):
+        # A ##ZaroPGx_ line hidden behind a lone \r in another header line is a line
+        # of its own to whatever splits on universal newlines downstream, as the
+        # wrapper's readers do: the whole line goes.
+        return any(piece.startswith(prefix) for piece in line.split(b'\r'))
+
+    kept = [line for line in header if not planted(line)]
     if len(kept) == len(header):
         return 0
     header_path = os.path.join(work_dir, 'staged.header.txt')

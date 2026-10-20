@@ -1774,6 +1774,26 @@ def test_dropping_the_lines_keeps_every_other_header_byte(gatk_api, tools, tmp_p
     assert written == header.replace(b"##ZaroPGx_uncovered_genes=.\n", b"")
 
 
+def test_a_line_hidden_behind_a_lone_cr_is_dropped(gatk_api, tools, tmp_path):
+    """bcftools keeps a lone CR inside a header line, and GATK (htsjdk) ends a line
+    there: measured in the gatk-api image, `##foo=bar\\r##ZaroPGx_uncovered_genes=FAKE`
+    came out of GenotypeGVCFs as a ##ZaroPGx_ line of its own. The whole line goes."""
+    header = (
+        b"##fileformat=VCFv4.2\n"
+        b"##foo=bar\r##ZaroPGx_uncovered_genes=.\n"
+        b"##contig=<ID=chr1>\n"
+        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS\n"
+    )
+    staged = tmp_path / "staged.vcf.gz"
+    staged.write_bytes(gzip.compress(header + b"chr1\t1\t.\tG\t.\t.\t.\t.\tGT\t0/0\n"))
+
+    assert gatk_api.drop_zaropgx_header_lines("job", str(staged), str(tmp_path)) == 1
+
+    (reheader,) = tools.ran("bcftools", "reheader")
+    written = Path(reheader[reheader.index("-h") + 1]).read_bytes()
+    assert written == header.replace(b"##foo=bar\r##ZaroPGx_uncovered_genes=.\n", b"")
+
+
 def test_an_upload_without_zaropgx_lines_is_not_reheadered(client, tools):
     assert _post(client).status_code == 200
     assert tools.ran("bcftools", "reheader") == []
