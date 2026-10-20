@@ -181,11 +181,16 @@ class FakeTools:
       `span_records` for the gVCF's own records at PharmCAT's positions, and those in
       `gene_records` for its records over PyPGx's genes (OUT `pypgx_gene_records.txt`).
     * `bcftools view -T ^ROWS ... -o OUT IN` writes IN's rows minus those at a position
-      ROWS lists.
+      ROWS lists, and refuses an empty ROWS as bcftools 1.24 does (exit 255, "Failed to
+      read the targets"; measured on a chrM-only gVCF cut from the demo reads).
     * `bcftools concat -a ... -o OUT A B` writes the union of what A and B hold,
       header lines included (measured: bcftools 1.24 carries a header line of either
       input into its output).
     * `bcftools index -t X` touches `X.tbi`.
+    * `bcftools reheader -h HDR -o OUT IN` writes IN's rows under HDR's lines.
+    * The staging re-encode keeps the upload's `##contig` and `##ZaroPGx_` lines, and
+      GenotypeGVCFs carries the input's `##ZaroPGx_` lines into each pass's output (both
+      measured: bcftools 1.24, GATK 4.7.0.0, on a gVCF with such lines planted).
 
     EVERY INPUT PATH IS OPENED, and a missing one fails the call the way the real tool
     would (exit 2, stderr naming the file). Without that the fake decided its output
@@ -221,6 +226,8 @@ class FakeTools:
         # None means "write real gzip"; bytes are written verbatim by concat instead.
         self.payload = None
         self.concat_drops_headers = False
+        # Header lines starting with one of these are lost by concat, the others kept.
+        self.concat_drops_prefixes = ()
         self.index_writes_tbi = True
 
     def argvs(self):
@@ -259,6 +266,8 @@ class FakeTools:
             return side + [argv[-1]]
         if tool == "bcftools" and sub == "concat":
             return argv[argv.index("-o") + 2 :]
+        if tool == "bcftools" and sub == "reheader":
+            return [FakeTools._flag_value(argv, "-h"), argv[-1]]
         if tool == "bcftools" and sub == "index":
             return [argv[-1]]
         return []
@@ -288,7 +297,17 @@ class FakeTools:
                 if "--include-non-variant-sites" in argv
                 else self.variant_rows
             )
-            self._write(out, rows)
+            # Read off the file itself, not this fake's books: the staged copy may have
+            # been replaced since it was written (a reheader, then os.replace).
+            source = Path(self._flag_value(argv, "-V")).read_bytes()
+            if source[:2] == b"\x1f\x8b":
+                source = gzip.decompress(source)
+            carried = [
+                line
+                for line in source.decode("utf-8", "replace").splitlines()
+                if line.startswith("##ZaroPGx_")
+            ]
+            self._write(out, rows, carried)
         elif tool == "bcftools" and sub == "view":
             source = argv[-1]
             if "-R" in argv:
@@ -301,9 +320,16 @@ class FakeTools:
                     encoding="utf-8",
                 )
             elif "-T" in argv:
-                listed = Path(self._flag_value(argv, "-T").lstrip("^")).read_text(
-                    encoding="utf-8"
-                )
+                targets = self._flag_value(argv, "-T")
+                listed = Path(targets.lstrip("^")).read_text(encoding="utf-8")
+                if not listed.strip():
+                    # As bcftools 1.24 words it, the argument with its "^".
+                    return subprocess.CompletedProcess(
+                        argv,
+                        255,
+                        b"",
+                        f"Failed to read the targets: {targets}\n".encode("utf-8"),
+                    )
                 drop = {tuple(line.split("\t")) for line in listed.splitlines()}
                 self._write(
                     self._flag_value(argv, "-o"),
@@ -333,7 +359,7 @@ class FakeTools:
                 contigs = [
                     line
                     for line in raw.decode("utf-8", "replace").splitlines()
-                    if line.startswith("##contig=")
+                    if line.startswith(("##contig=", "##ZaroPGx_"))
                 ]
                 self._write(self._flag_value(argv, "-o"), [("chr1", 1)], contigs)
         elif tool == "bcftools" and sub == "concat":
@@ -346,7 +372,23 @@ class FakeTools:
                 for source in argv[argv.index("-o") + 2 :]:
                     merged.extend(self.rows_by_path.get(source, []))
                     extra.extend(self.headers_by_path.get(source, []))
-                self._write(out, merged, [] if self.concat_drops_headers else extra)
+                kept = [
+                    line
+                    for line in extra
+                    if not line.startswith(self.concat_drops_prefixes or ("\0",))
+                ]
+                self._write(out, merged, [] if self.concat_drops_headers else kept)
+        elif tool == "bcftools" and sub == "reheader":
+            header = Path(self._flag_value(argv, "-h")).read_bytes().decode("latin-1")
+            self._write(
+                self._flag_value(argv, "-o"),
+                self.rows_by_path.get(argv[-1], []),
+                [
+                    line
+                    for line in header.splitlines()
+                    if line.startswith(("##contig=", "##ZaroPGx_"))
+                ],
+            )
         elif tool == "bcftools" and sub == "index" and self.index_writes_tbi:
             Path(f"{argv[-1]}.tbi").write_bytes(b"TBI\x01")
 
@@ -841,6 +883,39 @@ def test_an_empty_conversion_is_a_loud_error(client, tools):
     detail = resp.json()["detail"].lower()
     assert "empty" in detail
     assert "no variants found" in detail
+
+
+def test_a_gvcf_with_no_record_at_pharmcats_positions_is_converted(client, tools):
+    """A gVCF over chrM alone (cut from the demo reads): the PGx pass writes no row, so
+    there is nothing for the variant pass to give up. bcftools refuses an empty targets
+    file, and the conversion answered 500. Now the variant pass is kept whole, and the
+    counts the report reads say that none of PharmCAT's positions carried a call."""
+    tools.pgx_rows = []
+    tools.variant_rows = [("chrM", 263, "1/1"), ("chrM", 750, "1/1")]
+
+    resp = _post(client)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["n_pgx_positions_called"] == 0
+    assert body["n_positions_absent"] == body["n_pharmcat_positions"] > 0
+    assert not [argv for argv in tools.ran("bcftools", "view") if "-T" in argv]
+    concat = tools.ran("bcftools", "concat")[0]
+    merged = tools.rows_by_path[concat[concat.index("-o") + 1]]
+    assert [row[:2] for row in merged] == [("chrM", 263), ("chrM", 750)]
+
+
+def test_a_gvcf_with_records_at_pharmcats_positions_still_drops_them_once(
+    client, tools
+):
+    """The other side: rows at PharmCAT's positions, the variant pass loses them."""
+    tools.variant_rows = [PHARMCAT_POSITION_ROWS[0], ("chrM", 750)]
+
+    resp = _post(client)
+
+    assert resp.status_code == 200, resp.text
+    (dropped,) = [argv for argv in tools.ran("bcftools", "view") if "-T" in argv]
+    assert tools.rows_by_path[dropped[dropped.index("-o") + 1]] == [("chrM", 750)]
 
 
 def test_a_discarded_output_does_not_survive_the_refusal(client, tools):
@@ -1684,6 +1759,87 @@ def test_a_merge_that_lost_the_line_is_refused(client, tools):
     assert "ZaroPGx_uncovered_genes" in resp.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "key", ["ZaroPGx_positions_measured_for", "ZaroPGx_positions_without_reads"]
+)
+def test_a_merge_that_lost_a_positions_line_is_refused(client, tools, key):
+    """Without either, the wrapper would trust every position of every gene it reads,
+    as for a VCF made before the lines existed."""
+    tools.concat_drops_prefixes = (f"##{key}=",)
+    resp = _post(client)
+    assert resp.status_code == 500, resp.text
+    detail = resp.json()["detail"]
+    assert key in detail and "ZaroPGx_uncovered_genes" not in detail
+
+
+def test_an_uploads_own_zaropgx_lines_do_not_reach_the_output(client, tools):
+    """A gVCF carrying its own coverage lines: GenotypeGVCFs copies them into both
+    passes, and bcftools concat keeps the first file's line of a key, the upload's
+    (measured on the demo's UGT1A1 exon 1: a planted measured-genes line replaced this
+    run's). They are dropped from the staged copy, so the output holds this run's."""
+    planted = GVCF_BYTES.replace(
+        b"#CHROM",
+        b"##ZaroPGx_uncovered_genes=.\n"
+        b"##ZaroPGx_positions_without_reads=.\n"
+        b"##ZaroPGx_positions_measured_for=MT-RNR1\n#CHROM",
+    )
+    tools.gene_records = [_block("chr2", 233759700, 233761100)]
+
+    resp = _post(client, body=planted)
+
+    assert resp.status_code == 200, resp.text
+    assert len(tools.ran("bcftools", "reheader")) == 1
+    header = [h for h in _merged_header(tools) if h.startswith("##ZaroPGx_")]
+    keys = [h.split("=", 1)[0] for h in header]
+    assert len(keys) == len(set(keys)) == 5, header
+    assert "##ZaroPGx_positions_measured_for=MT-RNR1" not in header
+    assert "##ZaroPGx_uncovered_genes=." not in header
+
+
+def test_dropping_the_lines_keeps_every_other_header_byte(gatk_api, tools, tmp_path):
+    """A sample name that is not UTF-8 (latin-1 here) in the #CHROM line: the header
+    handed to bcftools reheader keeps it byte for byte, without the ZaroPGx line."""
+    header = (
+        b"##fileformat=VCFv4.2\n"
+        b"##ZaroPGx_uncovered_genes=.\n"
+        b"##contig=<ID=chr1>\n"
+        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tJos\xe9\n"
+    )
+    staged = tmp_path / "staged.vcf.gz"
+    staged.write_bytes(gzip.compress(header + b"chr1\t1\t.\tG\t.\t.\t.\t.\tGT\t0/0\n"))
+
+    assert gatk_api.drop_zaropgx_header_lines("job", str(staged), str(tmp_path)) == 1
+
+    (reheader,) = tools.ran("bcftools", "reheader")
+    written = Path(reheader[reheader.index("-h") + 1]).read_bytes()
+    assert written == header.replace(b"##ZaroPGx_uncovered_genes=.\n", b"")
+
+
+def test_a_line_hidden_behind_a_lone_cr_is_dropped(gatk_api, tools, tmp_path):
+    """bcftools keeps a lone CR inside a header line, and GATK (htsjdk) ends a line
+    there: measured in the gatk-api image, `##foo=bar\\r##ZaroPGx_uncovered_genes=FAKE`
+    came out of GenotypeGVCFs as a ##ZaroPGx_ line of its own. The whole line goes."""
+    header = (
+        b"##fileformat=VCFv4.2\n"
+        b"##foo=bar\r##ZaroPGx_uncovered_genes=.\n"
+        b"##contig=<ID=chr1>\n"
+        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS\n"
+    )
+    staged = tmp_path / "staged.vcf.gz"
+    staged.write_bytes(gzip.compress(header + b"chr1\t1\t.\tG\t.\t.\t.\t.\tGT\t0/0\n"))
+
+    assert gatk_api.drop_zaropgx_header_lines("job", str(staged), str(tmp_path)) == 1
+
+    (reheader,) = tools.ran("bcftools", "reheader")
+    written = Path(reheader[reheader.index("-h") + 1]).read_bytes()
+    assert written == header.replace(b"##foo=bar\r##ZaroPGx_uncovered_genes=.\n", b"")
+
+
+def test_an_upload_without_zaropgx_lines_is_not_reheadered(client, tools):
+    assert _post(client).status_code == 200
+    assert tools.ran("bcftools", "reheader") == []
+
+
 SPANS = [
     ("22", 42116498, 42155810, "CYP2D6"),
     ("10", 133517362, 133549123, "CYP2E1"),
@@ -1768,7 +1924,7 @@ def test_a_position_under_a_block_without_reads_is_named(gatk_api):
     assert without == {}
 
 
-def test_the_merged_vcf_names_positions_without_reads(client, tools):
+def test_the_merged_vcf_names_positions_without_reads(client, tools, gatk_api):
     tools.gene_records = [_block("chr2", 233759700, 233761100)]
     resp = _post(client)
     assert resp.status_code == 200, resp.text
@@ -1781,6 +1937,16 @@ def test_the_merged_vcf_names_positions_without_reads(client, tools):
     assert unread["UGT1A6"] == "233693631"
     assert "UGT1A1" not in unread  # all four of its positions under the block
     assert "CYP2E1" not in unread  # no reads at all: an uncovered gene instead
+    # And the genes whose positions were measured: the lexicon's 85, not MT-RNR1,
+    # which it leaves out, so /genotype does not take MT-RNR1's for read.
+    line = next(
+        h
+        for h in _merged_header(tools)
+        if h.startswith("##ZaroPGx_positions_measured_for=")
+    )
+    measured = line.split("=", 1)[1].split(",")
+    assert measured == sorted(_lexicon_positions(gatk_api))
+    assert len(measured) == 85 and "UGT1A6" in measured and "MT-RNR1" not in measured
 
 
 def test_the_allele_table_is_found_beside_the_module_or_in_the_repo(gatk_api):

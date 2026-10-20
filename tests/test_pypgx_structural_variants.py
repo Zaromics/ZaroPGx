@@ -391,7 +391,8 @@ def _genotype(pypgx, monkeypatch, header_extra, genes="CYP2D6,GSTM1"):
     resp = TestClient(pypgx.app).post(
         "/genotype",
         files={"file": ("in.vcf", body, "text/plain")},
-        data={"genes": genes, "reference_genome": "hg38"},
+        # The alignment lane's own VCF: its coverage lines are believed.
+        data={"genes": genes, "reference_genome": "hg38", "upload_type": "bam"},
     )
     assert resp.status_code == 200, resp.text
     return seen, resp.json()

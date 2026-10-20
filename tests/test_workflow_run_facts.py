@@ -146,10 +146,11 @@ def test_genes_with_no_reads_are_counted_out_of_the_whole_panel():
 
 
 def test_genes_a_vcf_has_no_genotype_in_are_counted_as_such():
-    """The demo VCF (PharmCAT's example) with "Assume absent sites = reference" off,
-    measured in the shipped image: PyPGx called CYP2D6 (from 120 of its 121 positions)
-    and IFNL4, and no other of its 66 genes but GSTT1 and UGT2B17 had a genotype at any
-    of their positions. "With no reads" would be wrong: a VCF has no reads."""
+    """The old demo VCF (PharmCAT's example, test_data/pharmcat.example2.vcf) with
+    "Assume absent sites = reference" off, measured in the shipped image: PyPGx called
+    CYP2D6 (from 120 of its 121 positions) and IFNL4, and no other of its 66 genes but
+    GSTT1 and UGT2B17 had a genotype at any of their positions. "With no reads" would be
+    wrong: a VCF has no reads."""
     facts = _facts(
         [
             _record(

@@ -37,9 +37,12 @@ Every `zaromicsresearch/zaropgx-*` image must come from the same release, `pypgx
 `gatk-api` above all. gatk-api 0.4.0 writes a `##ZaroPGx_uncovered_genes` line into the VCF
 it makes from a gVCF, which pypgx 0.4.0 reads to tell which genes the gVCF covered; without
 that line, a gVCF loses the PyPGx call for every gene where the sample matches the reference.
-pypgx 0.4.0 also asks gatk-api to re-align reads (`/realign-reads`, below). The start
-scripts move every image together; this matters only with a custom tag, or after
-`docker compose build` of a single service.
+pypgx 0.4.0 also asks gatk-api to re-align reads (`/realign-reads`, below). `nextflow` and
+`pypgx` must match too: pypgx 0.4.0 believes that line only when nextflow 0.4.0 tells it
+the upload was a gVCF (`upload_type`). Behind an older nextflow, a gVCF loses its PyPGx
+calls wherever its genes have positions without a record. The start scripts move every
+image together; this matters only with a custom tag, or after `docker compose build` of a
+single service.
 
 ### The app binds to loopback in new installs
 
@@ -130,6 +133,10 @@ A VCF you analysed with 0.3.2 can therefore come back with most PyPGx genes not 
 Turn the option on only for a whole-genome call set, where a missing record does mean the
 reference (`docs/user/usage.md`, *Options*; `docs/user/file-formats.md`, *Variant Call
 Format*). For alignments and gVCFs the option does nothing for PyPGx, as before.
+This holds for a VCF ZaroPGx wrote, too (an alignment's or a gVCF's, downloaded and
+uploaded again): the `##ZaroPGx_…` lines in its header, which say which genes had reads,
+are not read from an upload, since a file can be filtered or edited after export. Upload the
+BAM, CRAM or gVCF itself to have its reads counted.
 
 ### PyPGx judges an alignment's or gVCF's genes at their own positions
 

@@ -4286,8 +4286,10 @@ def generate_report(
                     if record:
                         gene_entry["pypgx"] = record
                     # Why PyPGx made no call, where it says: no reads over the gene,
-                    # no genotype in the VCF (docker/pypgx's no_reads_note and
-                    # no_genotype_note), or no small-variant alleles to call.
+                    # no genotype in the VCF, reads not checked at its positions
+                    # (docker/pypgx's no_reads_note, no_reads_at_positions_note,
+                    # no_genotype_note and unmeasured_note), or no small-variant
+                    # alleles to call.
                     if not diplotype and details.get("note"):
                         gene_entry["no_call_note"] = str(details["note"])
                     # How many of the positions behind a call PyPGx read as the

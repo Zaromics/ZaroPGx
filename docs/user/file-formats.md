@@ -38,6 +38,13 @@ as reference and need no note; `./.` positions still do. Turn the option on only
 whole-genome call set. Even then, *GSTM1* is called present when both its copies are
 deleted, since a VCF does not record that deletion.
 
+The VCF ZaroPGx makes from an alignment or a gVCF carries header lines (`##ZaroPGx_…`)
+saying which genes and positions had reads. They are read only in the run that wrote them.
+An uploaded VCF's are ignored, a VCF ZaroPGx wrote included: a file can be edited or
+filtered after export (to `PASS` records, say, which drops the reference calls), and its
+header would then claim reads its records no longer show. To have the reads counted, upload
+the alignment or the gVCF itself.
+
 ### Processing path: VCF
 ```
 VCF → [liftover, if GRCh37] → PyPGx and [mtDNA] → PharmCAT → reports
@@ -58,7 +65,7 @@ BCF → bcftools (VCF conversion) → [liftover, if GRCh37] → PyPGx and [mtDNA
 ## Genomic VCF (gVCF)
 A gVCF records *reference-confidence blocks* alongside the variant calls. PharmCAT refuses a gVCF, so ZaroPGx genotypes it first with GATK `GenotypeGVCFs`: over PharmCAT's positions, then over everything else. Reference genotypes at the pharmacogene positions come from your file's reference blocks rather than being assumed, which makes a gVCF a better input than a plain VCF.
 
-PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls. PyPGx reads the genotyped VCF, which keeps no reference blocks, so the conversion also records which of PyPGx's genes, and which of the positions PyPGx defines their alleles at, the blocks show reads over; a gene with none at its positions is not called, and a call missing some says how many it read as the reference. A position the conversion leaves a no-call is not passed to PyPGx; under a call, it is counted in the call's note.
+PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls. PyPGx reads the genotyped VCF, which keeps no reference blocks, so the conversion also records which of PyPGx's genes, and which of the positions PyPGx defines their alleles at, the blocks show reads over; a gene with none at its positions is not called, and a call missing some says how many it read as the reference. The conversion measures the genes in ZaroPGx's copy of PyPGx's tables, which leaves out *MT-RNR1* (the mtDNA step calls it); a gene it did not measure is read as an uploaded VCF's, and not called without a genotype at its positions. A position the conversion leaves a no-call is not passed to PyPGx; under a call, it is counted in the call's note.
 
 The report states:
 

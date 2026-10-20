@@ -4828,6 +4828,11 @@ OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
 # reads at it (UGT1A4's and UGT1A6's regions span UGT1A1's exon 1). The wrapper reads
 # such a position as having no genotype (its position_evidence).
 POSITIONS_WITHOUT_READS_HEADER_KEY = "ZaroPGx_positions_without_reads"
+# The genes whose positions were measured here, "GENE,GENE": the line above says
+# nothing about a gene this side never measured, and the wrapper reads PyPGx's own
+# tables, which hold MT-RNR1, where this side reads the lexicon's, which do not. The
+# wrapper vouches for no position of a gene not named (its unmeasured_note).
+POSITIONS_MEASURED_HEADER_KEY = "ZaroPGx_positions_measured_for"
 
 
 def pypgx_gene_table_path():
@@ -4835,7 +4840,8 @@ def pypgx_gene_table_path():
 
     lexicon/gene-table.csv is PyPGx 0.27.0's own table without MT-RNR1, which no gene
     set asks PyPGx for (the mtDNA sidecar calls it); this image has no PyPGx to read
-    it from. Dockerfile.gatk-api copies it in.
+    it from. Dockerfile.gatk-api copies it in. MT-RNR1 is therefore not measured here,
+    and POSITIONS_MEASURED_HEADER_KEY says so.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     for candidate in (
@@ -5014,7 +5020,8 @@ def gvcf_reads_over(gvcf_record_lines, spans, positions):
 
 def gvcf_coverage(job_label, staged_gvcf, table_path, allele_table, work_dir):
     """gvcf_reads_over the staged gVCF's records in PyPGx's GRCh38 regions: the genes
-    with no reads, and the other genes' positions with none.
+    with no reads, the other genes' positions with none, and the genes whose positions
+    were measured (POSITIONS_MEASURED_HEADER_KEY).
 
     `bcftools view -R` with --regions-overlap record, so a block starting upstream is
     returned, through the tabix index. Each region is listed under both namings, `1`
@@ -5056,9 +5063,9 @@ def gvcf_coverage(job_label, staged_gvcf, table_path, allele_table, work_dir):
         "Reading the gVCF's records over PyPGx's genes (bcftools view)",
     )
     if not os.path.exists(overlapping):
-        return sorted({gene for _, _, _, gene in spans}), {}
+        return sorted({gene for _, _, _, gene in spans}), {}, sorted(positions)
     with _open_vcf_text(overlapping) as handle:
-        return gvcf_reads_over(handle, spans, positions)
+        return (*gvcf_reads_over(handle, spans, positions), sorted(positions))
 
 
 def vcf_header_contigs(path):
@@ -5098,6 +5105,61 @@ def with_header_lines(vcf_lines, extra):
         if line.startswith("#CHROM"):
             return vcf_lines[:i] + [f"{x}\n" for x in extra] + vcf_lines[i:]
     return vcf_lines
+
+
+# The prefix of every header line this module and the pypgx wrapper write for each
+# other. An uploaded gVCF may carry its own (a planted one, or one from another tool
+# run). GATK GenotypeGVCFs copies the input's header lines into both passes' output
+# (GATK 4.7.0.0), and `bcftools concat` keeps one line per key, the first file's: the
+# variant pass's, the upload's (bcftools 1.24). Measured on the demo's UGT1A1 exon 1
+# with such lines planted: a planted uncovered-genes line made the merge lose this
+# run's (a 500), and a planted measured-genes line replaced this run's without a word.
+ZAROPGX_HEADER_PREFIX = "##ZaroPGx_"
+
+
+def drop_zaropgx_header_lines(job_label, vcf_gz, work_dir):
+    """Remove the ##ZaroPGx_ lines from a bgzipped VCF's header, in place; how many.
+
+    `bcftools reheader`, so the records are untouched. Nothing runs when there are none.
+    In bytes, so every other header byte is kept as it was: read as text, a sample name
+    that is not UTF-8 (a latin-1 one in the #CHROM line) would lose its byte.
+    """
+    prefix = ZAROPGX_HEADER_PREFIX.encode('ascii')
+    with open(vcf_gz, 'rb') as probe:
+        opener = gzip.open if probe.read(2) == b'\x1f\x8b' else open
+    header = []
+    with opener(vcf_gz, 'rb') as handle:
+        for line in handle:
+            if not line.startswith(b'#'):
+                break
+            header.append(line)
+            if line.startswith(b'#CHROM'):
+                break
+
+    def planted(line):
+        # A ##ZaroPGx_ line hidden behind a lone \r in another header line is a line
+        # of its own to whatever splits on universal newlines downstream, as the
+        # wrapper's readers do: the whole line goes.
+        return any(piece.startswith(prefix) for piece in line.split(b'\r'))
+
+    kept = [line for line in header if not planted(line)]
+    if len(kept) == len(header):
+        return 0
+    header_path = os.path.join(work_dir, 'staged.header.txt')
+    with open(header_path, 'wb') as fh:
+        fh.writelines(kept)
+    clean = os.path.join(work_dir, 'staged.reheadered.vcf.gz')
+    _run_tool(
+        job_label,
+        ['bcftools', 'reheader', '-h', header_path, '-o', clean, vcf_gz],
+        "Dropping the upload's own ZaroPGx header lines (bcftools reheader)",
+    )
+    os.replace(clean, vcf_gz)
+    dropped = len(header) - len(kept)
+    logger.warning(
+        f"Job {job_label}: dropped {dropped} ZaroPGx header line(s) the upload carried"
+    )
+    return dropped
 
 
 def vcf_header_has(path, line):
@@ -5381,8 +5443,8 @@ def convert_gvcf_to_vcf(
        judge_pgx_pass into PharmCAT's own file (`<output>.pharmcat.vcf.gz`, returned as
        pharmcat_vcf_path) and the rows the merged output carries. The merged output's
        header also says which PyPGx genes, and which of the other genes' positions, the
-       gVCF has no reads over (gvcf_coverage), the one thing its reference blocks tell
-       PyPGx.
+       gVCF has no reads over, and which genes' positions were measured (gvcf_coverage),
+       the one thing its reference blocks tell PyPGx.
     3. The variant pass: everything OUTSIDE that list, variants only -- for PyPGx
        (which reads the whole call set, not just PharmCAT's positions) and for the
        mtDNA sidecar (pharmcat_positions.vcf carries no chrM at all; see
@@ -5421,6 +5483,9 @@ def convert_gvcf_to_vcf(
                 "gVCF; refusing to genotype a file that is not there."
             ),
         )
+    # The upload's own ##ZaroPGx_ lines go before either pass reads it (see
+    # ZAROPGX_HEADER_PREFIX): the coverage lines in the output are this run's alone.
+    drop_zaropgx_header_lines(job_label, staged, work_dir)
     _run_tool(
         job_label,
         ['bcftools', 'index', '-t', '-f', staged],
@@ -5472,7 +5537,7 @@ def convert_gvcf_to_vcf(
     # UNCOVERED_GENES_HEADER_KEY), in the header of the file the merge starts from.
     # `bcftools concat` carries a header line of either input into its output
     # (measured, bcftools 1.24); the output is checked for it below.
-    uncovered, without_reads = gvcf_coverage(
+    uncovered, without_reads, measured = gvcf_coverage(
         job_label, staged, pypgx_gene_table_path(), pypgx_allele_table_path(), work_dir
     )
     uncovered_line = f"##{UNCOVERED_GENES_HEADER_KEY}={','.join(uncovered) or '.'}"
@@ -5484,15 +5549,14 @@ def convert_gvcf_to_vcf(
         vcf_header_contigs(staged), pypgx_gene_spans_grch38(pypgx_gene_table_path())
     )
     listed = ",".join(f"{g}:{c}" for g, c in sorted(off_reference.items()))
-    general_lines = with_header_lines(
-        general_lines,
-        [
-            uncovered_line,
-            f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
-            f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
-            f"##{POSITIONS_WITHOUT_READS_HEADER_KEY}={unread or '.'}",
-        ],
-    )
+    coverage_lines = [
+        uncovered_line,
+        f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
+        f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
+        f"##{POSITIONS_WITHOUT_READS_HEADER_KEY}={unread or '.'}",
+        f"##{POSITIONS_MEASURED_HEADER_KEY}={','.join(measured) or '.'}",
+    ]
+    general_lines = with_header_lines(general_lines, coverage_lines)
     logger.info(
         f"Job {job_label}: {len(uncovered)} PyPGx gene(s) with no reads in the gVCF"
         + (f": {', '.join(uncovered)}" if uncovered else "")
@@ -5535,19 +5599,37 @@ def convert_gvcf_to_vcf(
     # passes (measured with GATK 4.7.0.0: TCAA>T 1/1 GQ 15 at a PharmCAT SNV), and
     # `concat -D` keeps the variant pass's copy -- undoing the no-call. So the variant
     # pass loses every record at those positions first.
-    pgx_rows = os.path.join(work_dir, 'pgx_positions.rows.tsv')
-    with open(pgx_rows, 'w', encoding='utf-8') as fh:
-        fh.writelines(
-            f"{f[0]}\t{f[1]}\n"
-            for f in (line.split('\t', 2) for line in general_lines)
-            if not f[0].startswith('#') and len(f) > 2
+    #
+    # A gVCF with no record at any PharmCAT position (one over chrM alone, say) leaves
+    # the PGx pass no row, and so nothing to drop. bcftools 1.24 refuses an empty
+    # targets file ("Failed to read the targets: ^<file>", exit 255), which turned that
+    # gVCF into a 500; the variant pass is then taken whole, and no targets file is
+    # written. Its PharmCAT positions are all no-calls, and the counts below say so (0
+    # of PharmCAT's positions carried a call).
+    rows = [
+        f"{f[0]}\t{f[1]}\n"
+        for f in (line.split('\t', 2) for line in general_lines)
+        if not f[0].startswith('#') and len(f) > 2
+    ]
+    if rows:
+        pgx_rows = os.path.join(work_dir, 'pgx_positions.rows.tsv')
+        with open(pgx_rows, 'w', encoding='utf-8') as fh:
+            fh.writelines(rows)
+        outside = os.path.join(work_dir, 'variants.outside_pgx.vcf.gz')
+        _run_tool(
+            job_label,
+            [
+                'bcftools', 'view', '-T', f'^{pgx_rows}',
+                '-O', 'z', '-o', outside, variant_vcf,
+            ],
+            'Dropping variant-pass records the PGx pass decides (bcftools view)',
         )
-    outside = os.path.join(work_dir, 'variants.outside_pgx.vcf.gz')
-    _run_tool(
-        job_label,
-        ['bcftools', 'view', '-T', f'^{pgx_rows}', '-O', 'z', '-o', outside, variant_vcf],
-        'Dropping variant-pass records the PGx pass decides (bcftools view)',
-    )
+    else:
+        logger.warning(
+            f"Job {job_label}: the gVCF has no record at any PharmCAT position; "
+            "keeping the whole variant pass"
+        )
+        outside = variant_vcf
     # `concat -a` opens every input through its index; GATK indexes its own outputs,
     # bcftools view does not.
     _run_tool(
@@ -5595,13 +5677,18 @@ def convert_gvcf_to_vcf(
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=422, detail=message)
 
-    # Without the line, PyPGx would take this file for a VCF with no coverage evidence
-    # and leave uncalled every gene the sample matches the reference over.
-    if not vcf_header_has(output_vcf, uncovered_line):
+    # Without the uncovered-genes line, PyPGx would take this file for a VCF with no
+    # coverage evidence and leave uncalled every gene the sample matches the reference
+    # over. Without the positions or measured-genes line it would fall back to trusting
+    # every position of every gene it reads (the wrapper's position_evidence). So every
+    # coverage line must have survived the merge.
+    lost = [line for line in coverage_lines if not vcf_header_has(output_vcf, line)]
+    if lost:
         _discard_output(output_vcf)
+        keys = ", ".join(line[2:].split("=", 1)[0] for line in lost)
         message = (
-            f"The merged VCF lost the {UNCOVERED_GENES_HEADER_KEY} header line "
-            "(bcftools concat), so PyPGx could not tell which genes the gVCF covered."
+            f"The merged VCF lost its {keys} header line(s) (bcftools concat), so "
+            "PyPGx could not tell which genes and positions the gVCF had reads over."
         )
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)

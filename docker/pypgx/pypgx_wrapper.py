@@ -883,11 +883,13 @@ def _reference_fasta_for_assembly(assembly: str) -> Path:
 #
 # Coverage can only be observed on the alignment, so it is measured in
 # /create-input-vcf and written into the VCF's own header, where it travels with the
-# file through Nextflow to /genotype without new plumbing. A gVCF records it too, in
-# its reference blocks' depth, which GenotypeGVCFs drops: gatk-api /gvcf-to-vcf
-# measures it on the blocks and writes the same line, with COVERAGE_MEASURED_ON_HEADER_KEY
-# saying where it came from. An uploaded VCF has no such line: it carries no coverage
-# evidence, and its genes are checked for genotypes instead (position_evidence).
+# file through Nextflow to /genotype. A gVCF records it too, in its reference blocks'
+# depth, which GenotypeGVCFs drops: gatk-api /gvcf-to-vcf measures it on the blocks and
+# writes the same line, with COVERAGE_MEASURED_ON_HEADER_KEY saying where it came from.
+# /genotype believes the line only when Nextflow's upload_type says this lane wrote it
+# (ZAROPGX_HEADER_PREFIX). An uploaded VCF's own is dropped: an upload carries no
+# coverage evidence, and its genes are checked for genotypes instead
+# (position_evidence).
 UNCOVERED_GENES_HEADER_KEY = "ZaroPGx_uncovered_genes"
 # "gVCF" when gatk-api wrote the line above; absent for an alignment's VCF. Only the
 # note's wording depends on it. gatk_api.py spells the keys again;
@@ -912,6 +914,15 @@ OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
 # with no record: not vouched for (position_evidence). Without the line (a VCF made
 # before it existed), every position is vouched for, as before.
 POSITIONS_WITHOUT_READS_HEADER_KEY = "ZaroPGx_positions_without_reads"
+# A gene the line above leaves out had reads at every position, but only if the
+# producer measured it, and the producers read different copies of PyPGx's tables:
+# the alignment lane PyPGx's own, in the pypgx image; gatk-api, which has no PyPGx,
+# lexicon/'s, which leave out MT-RNR1. So a gVCF's MT-RNR1 was never measured, and
+# every position of it with no record counted as read. The producers now also name
+# the genes whose positions they measured, "GENE,GENE" or "."; /genotype vouches only
+# for those (unmeasured_note). Without the line (a VCF made before it existed), every
+# gene is taken as measured, as before.
+POSITIONS_MEASURED_HEADER_KEY = "ZaroPGx_positions_measured_for"
 
 
 def uncovered_genes_header_line(genes) -> str:
@@ -961,6 +972,75 @@ def _header_value(vcf_path: str, key: str) -> Optional[str]:
     return None
 
 
+# Every coverage header line above (UNCOVERED_GENES_HEADER_KEY and the rest), and the
+# SV inputs line, starts with this. They are believed only from a lane that wrote them
+# in this job: the alignment lane's /create-input-vcf, gatk-api's /gvcf-to-vcf. An
+# uploaded VCF's own are not evidence: a file filtered after export (to PASS records
+# only, say, which drops the reference calls) keeps a header claiming reads its
+# records no longer show, and a planted "##ZaroPGx_uncovered_genes=." would have every
+# gene called as the reference from no data at all. An upload is judged by its own
+# records (position_evidence), and its lines are dropped before anything reads them
+# (without_zaropgx_header_lines). So a VCF ZaroPGx wrote, uploaded again, is read like
+# any other uploaded VCF.
+ZAROPGX_HEADER_PREFIX = "##ZaroPGx_"
+# The uploads whose lane writes those lines: what Nextflow sends as upload_type (the
+# run's own input type, params.input_type). Without upload_type (a Nextflow from before
+# it), input_type, which names the alignment lanes as they are but sends a gVCF as
+# "vcf": its lines are then not believed, and its genes are read as an upload's.
+ALIGNMENT_INPUT_TYPES = frozenset({"bam", "cram", "sam", "fastq"})
+COVERAGE_LANE_INPUT_TYPES = ALIGNMENT_INPUT_TYPES | {"gvcf"}
+
+
+def lane_wrote_coverage_lines(
+    upload_type: Optional[str], input_type: Optional[str]
+) -> bool:
+    """True when the VCF /genotype was handed comes from a lane that wrote its
+    ##ZaroPGx_ lines in this job (ZAROPGX_HEADER_PREFIX)."""
+    if upload_type and upload_type.strip():
+        return upload_type.strip().lower() in COVERAGE_LANE_INPUT_TYPES
+    return (input_type or "").strip().lower() in ALIGNMENT_INPUT_TYPES
+
+
+def without_zaropgx_header_lines(vcf_path: Path) -> Tuple[Path, int]:
+    """(the VCF without its ##ZaroPGx_ header lines, how many there were).
+
+    The same path when it has none, which is every upload but a planted or re-uploaded
+    one; otherwise a plain-text copy beside it, the original removed. Plain text,
+    streamed in Python: prepare_vcf_for_pypgx bgzips it as it does a plain upload, and
+    nothing here needs bcftools.
+
+    Lines split as the readers split them (_header_value: universal newlines), so a
+    ##ZaroPGx_ line hidden behind a lone \\r in another header line is found and
+    dropped; a \\n-only split would let it through. And the copy is otherwise exact:
+    newline="" keeps every line ending as it was (CRLF, a lone \\r in a record), and
+    surrogateescape every byte that is not UTF-8 (a latin-1 sample name).
+    """
+    with open(vcf_path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    exact = {"encoding": "utf-8", "errors": "surrogateescape", "newline": ""}
+    found = 0
+    with opener(vcf_path, "rt", **exact) as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith(ZAROPGX_HEADER_PREFIX):
+                found += 1
+    if not found:
+        return vcf_path, 0
+    stripped = vcf_path.with_name(f"{vcf_path.name}.own-records-only.vcf")
+    in_header = True
+    with opener(vcf_path, "rt", **exact) as src, open(stripped, "w", **exact) as out:
+        for line in src:
+            if in_header and not line.startswith("##"):
+                in_header = False
+            if in_header and line.startswith(ZAROPGX_HEADER_PREFIX):
+                continue
+            out.write(line)
+    os.remove(vcf_path)
+    return stripped, found
+
+
 def coverage_measured_on(vcf_path: str) -> str:
     """What the uncovered-genes line was measured on: "gVCF", or "alignment"."""
     measured_on = _header_value(vcf_path, COVERAGE_MEASURED_ON_HEADER_KEY)
@@ -1003,6 +1083,21 @@ def positions_without_reads_from_vcf(vcf_path: str) -> Optional[Dict[str, set]]:
         if gene.strip() and listed:
             genes[gene.strip().upper()] = listed
     return genes
+
+
+def positions_measured_header_line(genes) -> str:
+    """The header line naming the genes whose positions the producer measured."""
+    listed = ",".join(sorted(set(genes)))
+    return f"##{POSITIONS_MEASURED_HEADER_KEY}={listed or '.'}"
+
+
+def positions_measured_from_vcf(vcf_path: str) -> Optional[set]:
+    """The genes the VCF's POSITIONS_MEASURED_HEADER_KEY line names, or None when it
+    has none (an uploaded VCF, or one made before the line existed)."""
+    value = _header_value(vcf_path, POSITIONS_MEASURED_HEADER_KEY)
+    if value is None:
+        return None
+    return {g.strip().upper() for g in value.split(",") if g.strip() not in ("", ".")}
 
 
 def genes_off_reference(contigs, assembly: str) -> Dict[str, str]:
@@ -1084,6 +1179,30 @@ def no_reads_at_positions_note(
             f"{measured_on} cannot tell apart"
         )
     return note
+
+
+def unmeasured_note(
+    gene: str, measured_on: str = "alignment", no_calls_only: bool = False
+) -> str:
+    """What to say about a gene with no genotype at any of its positions in a VCF whose
+    producer did not check the reads at them (POSITIONS_MEASURED_HEADER_KEY). Not "no
+    reads": the reads may well be there (a gVCF over chrM has them at every one of
+    MT-RNR1's positions), nobody looked. And not the uploaded VCF's advice to switch on
+    "Assume absent sites = reference", which these lanes do not take. For a gene whose
+    both copies are commonly deleted, no_genotype_note's caveat: no record may be that
+    deletion."""
+    where = "PyPGx's positions for this gene"
+    if no_calls_only:
+        note = f"Only no-calls (./.) in the VCF at {where}"
+    else:
+        note = f"No genotype in the VCF at any of {where}"
+    note += f", and the {measured_on} conversion did not check the reads there"
+    if gene in WHOLE_GENE_DELETION_GENES:
+        return (
+            f"{note}: either not covered, or both copies deleted (common for {gene}), "
+            "which the VCF cannot tell apart"
+        )
+    return f"{note}, so nothing says they match the reference"
 
 
 def step_gene_counts(
@@ -2809,6 +2928,12 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         annotate_header_line(
             output_vcf_gz, positions_without_reads_header_line(without_reads)
         )
+        # The genes measured: every gene of PyPGx's own tables, the ones /genotype
+        # reads. See POSITIONS_MEASURED_HEADER_KEY.
+        annotate_header_line(
+            output_vcf_gz,
+            positions_measured_header_line(pypgx_gene_positions(str(assembly))),
+        )
         logger.info(
             "Coverage: positions with no reads in "
             f"{len(without_reads)} more PyPGx gene(s)"
@@ -2898,6 +3023,7 @@ async def genotype(
     step_name: Optional[str] = Form("pypgx_analysis"),
     input_type: Optional[str] = Form(None),
     absent_to_ref: Optional[str] = Form(None),
+    upload_type: Optional[str] = Form(None),
 ):
     """
     Run PyPGx on a VCF file to determine alleles
@@ -2912,6 +3038,10 @@ async def genotype(
             (or missing), a gene a VCF without coverage evidence has no genotype in,
             at its own positions, gets no call. On, positions with no record count
             as reference; no-calls still do not. See position_evidence.
+        upload_type: what the user uploaded (Nextflow's params.input_type). The
+            VCF's ##ZaroPGx_ coverage lines are read only when its lane wrote them in
+            this job (an alignment, a gVCF); an uploaded VCF's or BCF's are dropped.
+            See ZAROPGX_HEADER_PREFIX.
 
     Returns:
         Genotyping results
@@ -3036,6 +3166,17 @@ async def genotype(
         # Get file size for memory optimization
         file_size_gb = os.path.getsize(input_filepath) / (1024**3)
         memory_info = get_memory_usage()
+        # An upload's own coverage lines are not evidence; see ZAROPGX_HEADER_PREFIX.
+        # After the size: the copy without them is plain text, a bgzipped upload's
+        # decompressed size.
+        if not lane_wrote_coverage_lines(upload_type, input_type):
+            input_filepath, dropped = without_zaropgx_header_lines(input_filepath)
+            if dropped:
+                logger.warning(
+                    f"Ignoring {dropped} ZaroPGx header line(s) in an uploaded VCF "
+                    f"(upload_type={upload_type!r}, input_type={input_type!r}): it is "
+                    "judged by its own records"
+                )
         
         logger.info(f"Processing PyPGx genotyping for {len(requested_genes)} genes")
         logger.info(f"File size: {file_size_gb:.2f}GB, Available memory: {memory_info['available_gb']:.2f}GB")
@@ -3050,8 +3191,8 @@ async def genotype(
         
         # Genes the source alignment (or gVCF) never covered get no call -- see
         # UNCOVERED_GENES_HEADER_KEY. None is a VCF that carries no coverage evidence.
-        measured = uncovered_genes_from_vcf(str(input_filepath))
-        uncovered = set(measured or ())
+        coverage_evidence = uncovered_genes_from_vcf(str(input_filepath))
+        uncovered = set(coverage_evidence or ())
         measured_on = coverage_measured_on(str(input_filepath))
         off_reference = genes_off_reference_from_vcf(str(input_filepath))
         sv_inputs = sv_inputs_from_vcf(str(input_filepath), TEMP_DIR)
@@ -3083,17 +3224,23 @@ async def genotype(
             )
         # What the file holds at each gene's own positions. A gene with no genotype at
         # any gets no call, unless what has no record there is vouched for -- by reads
-        # (measured) or by the job's absent_to_ref. A called gene with positions read
-        # as reference unvouched says how many. See position_evidence. The file is
-        # prepared for PyPGx here, once, without its no-calls, and the batches below
-        # read the same one.
+        # (coverage_evidence) or by the job's absent_to_ref. A called gene with
+        # positions read as reference unvouched says how many. See position_evidence.
+        # The file is prepared for PyPGx here, once, without its no-calls, and the
+        # batches below read the same one.
         flag = str(absent_to_ref or "").strip().lower()
         assume_absent_is_reference = flag in ("1", "true", "yes", "on")
-        absence_vouched_for = measured is not None or assume_absent_is_reference
+        absence_vouched_for = (
+            coverage_evidence is not None or assume_absent_is_reference
+        )
         # Reads vouch only for the positions they were at (POSITIONS_WITHOUT_READS_
         # HEADER_KEY). Except, with whole-genome depth, at a gene PyPGx's copy-number
         # model reads (run_pypgx): no reads there is depth it counts, a deletion (*5/*5).
         without_reads = positions_without_reads_from_vcf(str(input_filepath)) or {}
+        # And only at the genes the producer measured (POSITIONS_MEASURED_HEADER_KEY):
+        # a gene it did not is read as an uploaded VCF's, absence vouched for by nothing.
+        # None (no such line) is a VCF made before the line existed: every gene, as before.
+        measured_genes = positions_measured_from_vcf(str(input_filepath))
         if sv_inputs and without_reads:
             copy_number_genes = sv_target_genes()
             without_reads = {
@@ -3112,9 +3259,20 @@ async def genotype(
         )
         no_genotype = {}
         read_as_reference = {}
+        unmeasured = set()
+        if coverage_evidence is not None and measured_genes is not None:
+            unmeasured = set(evidence) - measured_genes
+        if unmeasured:
+            logger.info(
+                f"Not measured in the {measured_on} at their positions: "
+                f"{', '.join(sorted(unmeasured))}; read as an uploaded VCF's genes"
+            )
         for gene, n in evidence.items():
             absent = n["positions"] - n["genotyped"] - n["no_calls"] - n["no_reads"]
-            known = n["genotyped"] + (absent if absence_vouched_for else 0)
+            vouched = assume_absent_is_reference or (
+                absence_vouched_for and gene not in unmeasured
+            )
+            known = n["genotyped"] + (absent if vouched else 0)
             if known == n["positions"]:
                 continue
             if known:
@@ -3128,6 +3286,11 @@ async def genotype(
                 # Reads in its region, none at its positions: as a gene with no reads.
                 note = no_reads_at_positions_note(gene, measured_on, n["no_calls"])
                 bucket = not_sequenced
+            elif gene in unmeasured:
+                note = unmeasured_note(
+                    gene, measured_on, n["no_calls"] == n["positions"]
+                )
+                bucket = no_genotype
             else:
                 note = no_genotype_note(gene, n["positions"], n["no_calls"])
                 bucket = no_genotype

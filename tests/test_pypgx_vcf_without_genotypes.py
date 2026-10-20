@@ -1,8 +1,9 @@
 """A gene a VCF has no genotype in gets no PyPGx call -- not a reference one.
 
-Found 2026-10-20, running PyPGx 0.27 from the shipped image on the app's own demo VCF
-(app/static/demo/pharmcat.example.vcf, PharmCAT's example: records at PharmCAT's
-positions only). Genes with no record anywhere in the file came back called:
+Found 2026-10-20, running PyPGx 0.27 from the shipped image on the app's demo VCF of
+the time (PharmCAT's example, v0.3.2's app/static/demo/pharmcat.example.vcf; the same
+file is test_data/pharmcat.example2.vcf: records at PharmCAT's positions only). Genes
+with no record anywhere in the file came back called:
 
     CYP2E1  *7/*7      ABCB1   *2/*2      GSTM1   *A/*A
     NAT1    *4/*4      APOE    Reference/Reference
@@ -21,7 +22,7 @@ UGT1A1's exon 1, and UGT1A1's records alone had made them *1/*1 and Reference/
 Reference. Given a VCF without coverage evidence and the job's absent_to_ref off, a
 gene with no genotype at any of its positions gets no call, and a gene with some gets a
 call that says how many of the rest PyPGx read as the reference. A ./. does not count:
-PyPGx hands it to Beagle, which fills it in (measured: the demo's 37 NAT2 records, all
+PyPGx hands it to Beagle, which fills it in (measured: that VCF's 37 NAT2 records, all
 0/0, set to ./. gave NAT2 *5/*5, against *12/*12), so no-calls are dropped from the
 file PyPGx reads, in every lane. main.nf sends the run's effective flag. A gVCF's
 converted VCF keeps no reference blocks, so gatk-api /gvcf-to-vcf writes the
@@ -165,7 +166,7 @@ def _vcf(path, records, prefix="chr", samples=("S",), form="plain"):
 
 FORMS = ["plain", "bgzip", "indexed"]
 
-# PyPGx's step on the demo VCF (app/static/demo/pharmcat.example.vcf), genes=ALL,
+# PyPGx's step on the old demo VCF (test_data/pharmcat.example2.vcf), genes=ALL,
 # input_type vcf, the option off, measured in the shipped image on 2026-10-20: genes
 # called, of them some positions read as reference, and genes with no genotype.
 DEMO_CALLED = 2
@@ -263,6 +264,7 @@ def test_both_sidecars_spell_the_header_keys_alike():
         "COVERAGE_MEASURED_ON_HEADER_KEY",
         "OFF_REFERENCE_HEADER_KEY",
         "POSITIONS_WITHOUT_READS_HEADER_KEY",
+        "POSITIONS_MEASURED_HEADER_KEY",
     ):
         values = [
             re.search(rf"^{key} = ['\"]([^'\"]+)['\"]", path.read_text(), re.M)
@@ -298,8 +300,9 @@ def test_a_record_in_the_region_but_at_none_of_its_positions_is_no_data(
 def test_a_neighbours_records_do_not_genotype_a_gene(
     pypgx, tmp_path, positions38, form
 ):
-    """Found on the demo VCF: UGT1A1's promoter and exon-1 records made UGT1A4 *1/*1
-    and UGT1A6 Reference/Reference through their regions alone."""
+    """Found on the old demo VCF (test_data/pharmcat.example2.vcf): UGT1A1's promoter
+    and exon-1 records made UGT1A4 *1/*1 and UGT1A6 Reference/Reference through their
+    regions alone."""
     genes = {g: positions38[g] for g in ("UGT1A1", "UGT1A4", "UGT1A6")}
     vcf = _vcf(tmp_path / "in.vcf", [(*UGT1A1_38, "0/0")], form=form)
     assert pypgx.genes_without_genotypes(vcf, genes) == ["UGT1A4", "UGT1A6"]
@@ -464,7 +467,7 @@ def test_the_note_offers_the_option_except_where_it_would_not_help(pypgx):
     assert "Assume absent" in pypgx.no_genotype_note("CYP2E1", 7, no_calls=3)
 
 
-def test_a_partial_call_says_how_many_positions_were_read_as_reference(pypgx):
+def test_the_partial_call_note_counts_positions_with_no_genotype(pypgx):
     assert pypgx.positions_read_as_reference_note(120, 121) == (
         "120 of 121 positions had no genotype in the file and were read as reference"
     )
@@ -531,7 +534,7 @@ def test_the_alignment_lane_names_the_genes_off_its_reference(pypgx, monkeypatch
 
 def test_the_step_counts_genes_without_a_genotype_apart(pypgx):
     """And genotyped means a diplotype came back: PyPGx's own no-call for GSTT1 (no
-    small-variant alleles) is a successful result, and the demo VCF read "66 of 66
+    small-variant alleles) is a successful result, and the old demo VCF read "66 of 66
     genes genotyped" of 40 calls."""
     panel = ["CYP2D6", "CYP2E1", "GSTM1", "GSTT1", "NAT1", "NAT2"]
     no_genotype = {g: {"success": True, "diplotype": None} for g in ("CYP2E1", "GSTM1")}
@@ -600,6 +603,11 @@ def genotype(pypgx, monkeypatch):
             body = body.replace(
                 "##fileformat=VCFv4.2\n", "##fileformat=VCFv4.2\n" + header
             )
+        if "##ZaroPGx_" in header and not {"upload_type", "input_type"} & set(data):
+            # A header with coverage lines is a lane's VCF, as Nextflow sends it, unless
+            # the test says what was uploaded (test_an_uploads_own_coverage_lines_...).
+            gvcf = "##ZaroPGx_coverage_measured_on=gVCF" in header
+            data["upload_type"] = "gvcf" if gvcf else "bam"
         fields = {"genes": genes, "reference_genome": "hg38", **data}
         resp = TestClient(pypgx.app).post(
             "/genotype", files={"file": ("in.vcf", body, "text/plain")}, data=fields
@@ -625,7 +633,7 @@ def test_with_the_option_off_a_gene_without_a_genotype_is_not_called(genotype):
     assert seen["vcf"] == seen["dropped"][0] and seen["vcf"].endswith(".gz")
 
 
-def test_a_partial_call_says_how_many_positions_were_read_as_reference(genotype):
+def test_a_call_from_some_positions_says_how_many_were_read_as_reference(genotype):
     """CYP2D6 from one genotyped position of its 121: called, and the call says so."""
     seen, post = genotype
     body = post([(*CYP2D6_38, "0/1")], absent_to_ref="false")
@@ -663,7 +671,7 @@ def test_with_the_option_on_absent_genes_are_called_as_before(genotype):
 
 def test_with_the_option_on_no_calls_are_still_not_vouched_for(genotype):
     """A ./. is not an absence: the option says nothing about it, and PyPGx would fill
-    it in from its panel (NAT2 *5/*5 from 37 ./. records on the demo VCF)."""
+    it in from its panel (NAT2 *5/*5 from 37 ./. records on the old demo VCF)."""
     seen, post = genotype
     body = post(
         [(*CYP2D6_38, "0/1"), (*CYP2D6_38_B, "./."), (*GSTM1_38, "./.")],
@@ -901,9 +909,55 @@ def test_the_positions_header_round_trips(pypgx, tmp_path):
     assert pypgx.positions_without_reads_from_vcf(str(vcf)) is None
 
 
-def test_both_sidecars_read_the_same_positions(pypgx):
-    """gatk-api has no PyPGx: it reads the lexicon's copy of PyPGx's allele table with
-    its own copy of load_gene_positions."""
+def test_the_measured_genes_header_round_trips(pypgx, tmp_path):
+    line = pypgx.positions_measured_header_line(["UGT1A6", "CYP2D6", "UGT1A6"])
+    assert line == "##ZaroPGx_positions_measured_for=CYP2D6,UGT1A6"
+    assert pypgx.positions_measured_header_line([]) == (
+        "##ZaroPGx_positions_measured_for=."
+    )
+    vcf = tmp_path / "h.vcf"
+    vcf.write_text(f"##fileformat=VCFv4.2\n{line}\n#CHROM\n", encoding="utf-8")
+    assert pypgx.positions_measured_from_vcf(str(vcf)) == {"CYP2D6", "UGT1A6"}
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n##ZaroPGx_positions_measured_for=.\n#CHROM\n",
+        encoding="utf-8",
+    )
+    assert pypgx.positions_measured_from_vcf(str(vcf)) == set()
+    vcf.write_text("##fileformat=VCFv4.2\n#CHROM\n", encoding="utf-8")
+    assert pypgx.positions_measured_from_vcf(str(vcf)) is None
+
+
+# What /genotype and the alignment lane read: load_gene_positions over PyPGx 0.27.0's
+# own tables (pypgx/api/data), GRCh38. Read 2026-10-20 inside zaropgx-pypgx:rc-final
+# with the wrapper's own function: 86 genes, 1,191 positions, this sha256 of
+# repr(sorted(items)). gatk-api's pypgx_gene_positions_grch38 over the copies in
+# zaropgx-gatk-api:rc-final (/app/pypgx-*-table.csv, from lexicon/): 85 genes, 1,169
+# positions, the same at every one but for MT-RNR1's 22. The suite has no PyPGx, so
+# the installed side is pinned here.
+PYPGX_0_27_0_POSITIONS_GRCH38_SHA256 = (
+    "070ca904010fc9d0b7f6db70f0300cf50e3e2653a3b0ad87efbdc7c992eef311"
+)
+# MT-RNR1's in PyPGx 0.27.0's allele table (M-663-A-G ... M-1556-C-T; m.960C>del is
+# M-955-AC-A and m.961T>del M-960-CT-C), as load_gene_positions spans them.
+MT_RNR1_POSITIONS = sorted(
+    [("M", 954, 956), ("M", 959, 961)]
+    + [
+        ("M", pos - 1, pos)
+        for pos in (663, 669, 747, 786, 807, 827, 839, 896, 930, 951, 961, 988)
+        + (1095, 1189, 1243, 1494, 1520, 1537, 1555, 1556)
+    ]
+)
+# The genes /genotype reads that the gVCF lane does not measure, and why. gatk-api
+# leaves them out of its ##ZaroPGx_positions_measured_for= line, so /genotype vouches
+# for none of their positions (test_a_gene_the_gvcf_lane_did_not_measure_is_not_called).
+NOT_MEASURED_IN_THE_GVCF_LANE = {
+    "MT-RNR1": "lexicon/ leaves it out; no gene set asks PyPGx for it (mtDNA-Server 2 "
+    "calls it)",
+}
+
+
+def _gatk_api_positions():
+    """gatk-api's own pypgx_gene_positions_grch38, over the copies its image carries."""
     tree = ast.parse(GATK_API.read_text(encoding="utf-8"))
     fn = next(
         n
@@ -912,9 +966,125 @@ def test_both_sidecars_read_the_same_positions(pypgx):
     )
     ns = {}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), str(GATK_API), "exec"), ns)
-    assert ns["pypgx_gene_positions_grch38"](
-        GENE_TABLE, ALLELE_TABLE
-    ) == pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38")
+    return ns["pypgx_gene_positions_grch38"](GENE_TABLE, ALLELE_TABLE)
+
+
+def test_both_sidecars_read_the_same_positions_but_the_documented_exceptions(pypgx):
+    """What each side reads: gatk-api its copy of the lexicon's tables; /genotype and
+    the alignment lane PyPGx's installed ones, pinned above. Every position of every
+    gene the same, but for NOT_MEASURED_IN_THE_GVCF_LANE. A lexicon refresh, a PyPGx
+    bump or a new exception fails here first."""
+    gatk = _gatk_api_positions()
+    # The two spellings of the reader agree on the same tables.
+    assert gatk == pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38")
+    installed = {**gatk, "MT-RNR1": MT_RNR1_POSITIONS}
+    assert len(installed) == 86
+    assert sum(len(v) for v in installed.values()) == 1191
+    assert (
+        hashlib.sha256(repr(sorted(installed.items())).encode()).hexdigest()
+        == PYPGX_0_27_0_POSITIONS_GRCH38_SHA256
+    )
+    assert set(installed) - set(gatk) == set(NOT_MEASURED_IN_THE_GVCF_LANE)
+    assert not set(gatk) - set(installed)
+    gatk_dockerfile = (REPO / "docker" / "gatk-api" / "Dockerfile.gatk-api").read_text()
+    assert "COPY lexicon/gene-table.csv /app/pypgx-gene-table.csv" in gatk_dockerfile
+    assert (
+        "COPY lexicon/allele-table.csv /app/pypgx-allele-table.csv" in gatk_dockerfile
+    )
+
+
+def _gvcf_lane_header(measured):
+    """The coverage lines gatk-api writes over a gVCF with reads at every position of
+    the genes it measured."""
+    return (
+        "##ZaroPGx_uncovered_genes=.\n##ZaroPGx_coverage_measured_on=gVCF\n"
+        "##ZaroPGx_positions_without_reads=.\n"
+        + (
+            f"##ZaroPGx_positions_measured_for={','.join(sorted(measured))}\n"
+            if measured is not None
+            else ""
+        )
+    )
+
+
+@pytest.fixture
+def installed_positions(pypgx, monkeypatch):
+    """/genotype reading PyPGx's installed tables: the lexicon's and MT-RNR1."""
+    installed = {
+        **pypgx.load_gene_positions(GENE_TABLE, ALLELE_TABLE, "GRCh38"),
+        "MT-RNR1": MT_RNR1_POSITIONS,
+    }
+    monkeypatch.setattr(pypgx, "pypgx_gene_positions", lambda assembly: installed)
+    return installed
+
+
+def test_a_gene_the_gvcf_lane_did_not_measure_is_not_called(
+    genotype, installed_positions
+):
+    """MT-RNR1: reads in its region (chrM:263, in front of its first position, as the
+    demo's chrM:1-500 cut has them), none at its positions, and gatk-api never looked.
+    It was called as the reference from positions nobody measured; now it is read as
+    an uploaded VCF's gene is, with a note saying why. UGT1A1, measured, as before."""
+    seen, post = genotype
+    measured = set(installed_positions) - set(NOT_MEASURED_IN_THE_GVCF_LANE)
+    body = post(
+        [(*UGT1A1_38, "0/0"), ("M", 263, "1/1")],
+        header=_gvcf_lane_header(measured),
+        genes="MT-RNR1,UGT1A1",
+    )
+    assert seen["genes"] == ["UGT1A1"]
+    result = body["results"]["MT-RNR1"]
+    assert result["success"] is True and result["diplotype"] is None
+    assert result["details"]["note"] == (
+        "No genotype in the VCF at any of PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there, so nothing says they match "
+        "the reference"
+    )
+
+
+def test_the_unmeasured_note_keeps_the_deletion_caveat(pypgx):
+    """As no_genotype_note: for a gene whose both copies are commonly deleted, no
+    record may be that deletion. Only no-calls, without "any of", as there too."""
+    assert pypgx.unmeasured_note("GSTM1", "gVCF") == (
+        "No genotype in the VCF at any of PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there: either not covered, or both "
+        "copies deleted (common for GSTM1), which the VCF cannot tell apart"
+    )
+    assert pypgx.unmeasured_note("MT-RNR1", "gVCF", no_calls_only=True) == (
+        "Only no-calls (./.) in the VCF at PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there, so nothing says they match "
+        "the reference"
+    )
+
+
+def test_an_unmeasured_gene_with_a_genotype_is_called_with_the_files_count(
+    genotype, installed_positions
+):
+    seen, post = genotype
+    measured = set(installed_positions) - set(NOT_MEASURED_IN_THE_GVCF_LANE)
+    body = post(
+        [(*UGT1A1_38, "0/0"), ("M", 1555, "0/0")],
+        header=_gvcf_lane_header(measured),
+        genes="MT-RNR1,UGT1A1",
+    )
+    assert sorted(seen["genes"]) == ["MT-RNR1", "UGT1A1"]
+    assert body["results"]["MT-RNR1"]["details"]["positions_note"] == (
+        "21 of 22 positions had no genotype in the file and were read as reference"
+    )
+    assert "positions_note" not in body["results"]["UGT1A1"].get("details", {})
+
+
+def test_without_the_measured_genes_line_every_gene_is_taken_as_measured(
+    genotype, installed_positions
+):
+    """A VCF from a producer older than the line: read as before."""
+    seen, post = genotype
+    post(
+        [(*UGT1A1_38, "0/0"), ("M", 263, "1/1")],
+        header=_gvcf_lane_header(None),
+        genes="MT-RNR1,UGT1A1",
+    )
+    assert sorted(seen["genes"]) == ["MT-RNR1", "UGT1A1"]
 
 
 # --------------------------------------------------------------------------
@@ -942,6 +1112,131 @@ def test_pypgx_is_sent_the_effective_flag_always():
     inputs = re.findall(r"^\s*(?:path|val) (\w+)", body[: body.index("output:")], re.M)
     assert len(args) == len(inputs)
     assert args[inputs.index("absent_to_ref")] == "pharmcat_absent_ch"
+
+
+def test_pypgx_is_told_what_was_uploaded():
+    """params.input_type, not the corrected input_type: a gVCF reaches PyPGx as a VCF,
+    and only the upload's type says its coverage lines are the lane's own."""
+    body = _process("PyPGxGenotypeAll")
+    assert re.search(r"^\s*val upload_type$", body, re.M)
+    assert "-F upload_type=!{upload_type}" in body
+    src = MAIN_NF.read_text(encoding="utf-8")
+    wf = src[src.index("\nworkflow {") :]
+    call = re.search(r"PyPGxGenotypeAll\(\s*(.*?)\s*\)\n", wf, re.S)
+    args = [a.strip() for a in call.group(1).split(",")]
+    inputs = re.findall(r"^\s*(?:path|val) (\w+)", body[: body.index("output:")], re.M)
+    assert args[inputs.index("upload_type")] == "Channel.value(params.input_type)"
+
+
+# --------------------------------------------------------------------------
+# An uploaded VCF's own coverage lines are not evidence
+# --------------------------------------------------------------------------
+# A file filtered after export (to PASS records, say, dropping the reference calls)
+# keeps a header claiming reads its records no longer show; a planted line would have
+# every gene called as the reference from no data. Only the lane that wrote the lines
+# in this job is believed.
+
+CLAIMS_EVERYTHING_READ = (
+    "##ZaroPGx_uncovered_genes=.\n"
+    "##ZaroPGx_positions_without_reads=.\n"
+    "##ZaroPGx_positions_measured_for=CYP2D6,CYP2E1,GSTM1\n"
+)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        {"upload_type": "vcf"},
+        {"upload_type": "bcf"},
+        {"input_type": "vcf"},  # a Nextflow from before upload_type
+        {"upload_type": ""},  # nothing said: a direct call
+    ],
+)
+def test_an_uploads_own_coverage_lines_are_not_believed(genotype, said):
+    """CYP2D6 has a record; CYP2E1 and GSTM1 none. The header says every position was
+    read: believed, they were called as the reference from nothing."""
+    seen, post = genotype
+    body = post(
+        [(*CYP2D6_38, "0/1")],
+        header=CLAIMS_EVERYTHING_READ,
+        absent_to_ref="false",
+        **said,
+    )
+    assert seen["genes"] == ["CYP2D6"]
+    for gene in ("CYP2E1", "GSTM1"):
+        result = body["results"][gene]
+        assert result["diplotype"] is None
+        assert result["details"]["note"].startswith("No genotype in the VCF")
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        {"upload_type": "bam"},
+        {"upload_type": "cram"},
+        {"upload_type": "fastq"},
+        {"upload_type": "gvcf", "input_type": "vcf"},  # as Nextflow sends a gVCF
+        {"input_type": "bam"},  # a Nextflow from before upload_type
+    ],
+)
+def test_a_lanes_own_coverage_lines_are_believed(genotype, said):
+    seen, post = genotype
+    post(
+        [(*CYP2D6_38, "0/1")],
+        header="##ZaroPGx_uncovered_genes=.\n##ZaroPGx_positions_without_reads=.\n",
+        absent_to_ref="false",
+        **said,
+    )
+    assert sorted(seen["genes"]) == ["CYP2D6", "CYP2E1", "GSTM1"]
+
+
+@pytest.mark.parametrize("form", ["plain", "bgzip"])
+def test_the_copy_is_exact_and_a_line_behind_a_lone_cr_is_dropped(
+    pypgx, tmp_path, form
+):
+    """Bytes that are not UTF-8 (latin-1 in the sample name and in INFO), CRLF line
+    ends and a lone CR inside a record come through as they were. A ##ZaroPGx_ line
+    hidden behind a lone CR in another header line is a line of its own to the
+    readers, which split on universal newlines: it is dropped too."""
+    kept_head = b"##fileformat=VCFv4.2\r\n##source=x\r"
+    hidden = b"##ZaroPGx_uncovered_genes=.\r\n"
+    rest = (
+        b"##contig=<ID=chr22>\r\n"
+        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tJos\xe9\r\n"
+        b"chr22\t42128945\t.\tC\tT\t50\tPASS\tNOTE=caf\xe9\rx\tGT\t0/1\r\n"
+    )
+    path = tmp_path / "in.vcf"
+    raw = kept_head + hidden + rest
+    path.write_bytes(gzip.compress(raw) if form == "bgzip" else raw)
+    # The readers do see the hidden line.
+    assert pypgx.uncovered_genes_from_vcf(str(path)) == set()
+
+    stripped, dropped = pypgx.without_zaropgx_header_lines(path)
+
+    assert dropped == 1
+    assert stripped.read_bytes() == kept_head + rest
+    assert pypgx.uncovered_genes_from_vcf(str(stripped)) is None
+
+
+@pytest.mark.parametrize("form", ["plain", "bgzip"])
+def test_the_lines_are_dropped_and_the_records_kept(pypgx, tmp_path, form):
+    vcf = _vcf(
+        tmp_path / "in.vcf", [(*CYP2D6_38, "0/1"), (*GSTM1_38, "1/1")], form=form
+    )
+    opener = gzip.open if form == "bgzip" else open
+    with opener(vcf, "rt", encoding="utf-8") as fh:
+        original = fh.read()
+    planted = original.replace(
+        "##fileformat=VCFv4.2\n", "##fileformat=VCFv4.2\n" + CLAIMS_EVERYTHING_READ
+    )
+    with (gzip.open if form == "bgzip" else open)(vcf, "wt", encoding="utf-8") as fh:
+        fh.write(planted)
+    stripped, dropped = pypgx.without_zaropgx_header_lines(Path(vcf))
+    assert dropped == 3 and not Path(vcf).exists()
+    assert stripped.read_text(encoding="utf-8") == original
+    # None to drop: the file as it is, untouched.
+    same, dropped = pypgx.without_zaropgx_header_lines(stripped)
+    assert same == stripped and dropped == 0
 
 
 # --------------------------------------------------------------------------

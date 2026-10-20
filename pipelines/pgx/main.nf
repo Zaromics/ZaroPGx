@@ -672,6 +672,12 @@ process PyPGxGenotypeAll {
     // call, where PyPGx would read it as the reference sequence; see
     // genotype_evidence in the pypgx wrapper.
     val absent_to_ref
+    // What the user uploaded: params.input_type, before the correction above. The
+    // wrapper reads the VCF's ##ZaroPGx_ coverage lines only when this lane wrote them
+    // (an alignment's /create-input-vcf, a gVCF's /gvcf-to-vcf); an uploaded VCF's or
+    // BCF's own are dropped, and it is judged by its records (ZAROPGX_HEADER_PREFIX in
+    // docker/pypgx/pypgx_wrapper.py).
+    val upload_type
     val outdir
 
     output:
@@ -695,6 +701,7 @@ process PyPGxGenotypeAll {
     fi
     # Always sent, even as 'false', like PharmCATRun's: the field decides, not a default.
     CURL_ARGS+=( -F absent_to_ref=!{absent_to_ref} )
+    CURL_ARGS+=( -F upload_type=!{upload_type} )
     if curl "${CURL_ARGS[@]}" http://pypgx:5000/genotype > pypgx_result.json 2>pypgx_stderr.log; then
       echo "PyPGx API call succeeded" >&2
       export PYPGX_SUCCESS=true
@@ -1125,6 +1132,7 @@ workflow {
             Channel.value(analysed_input_type),
             reference_ch,
             pharmcat_absent_ch,
+            Channel.value(params.input_type),
             outdir_ch
         )
         // Handle PyPGx results: if PyPGx completely failed (service unavailable),
