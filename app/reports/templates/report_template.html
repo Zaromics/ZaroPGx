@@ -321,8 +321,15 @@
             color: #555;
             margin-top: 2px;
         }
-        .alt-locus-note {
+        .alt-locus-note,
+        .copy-number-note {
             color: #8a4b00;
+        }
+        /* The Executive Summary row's pointer to its note overleaf. */
+        .exec-summary-diplotype .copy-number-note {
+            font-size: 0.75em;
+            font-weight: normal;
+            margin-top: 2px;
         }
 
         .evidence-legend {
@@ -1158,6 +1165,7 @@
     {% set called = rows|selectattr('called')|list %}
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
         {{ pypgx.na_legend(called) }}
         {% if called|selectattr('phenotype', 'equalto', 'Possibly Wild Type')|list %}
@@ -1171,6 +1179,9 @@
         {% endfor %}
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
+        {% endfor %}
+        {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
         {% endfor %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(rows|rejectattr('called')|list, missing_positions_not_assumed) }}
@@ -1193,7 +1204,7 @@
                         <td class="exec-summary-number">{{ loop.index }}.</td>
                         <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
-                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}</td>
+                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_genes %}<div class="copy-number-note">⚠ Copy number not assessed: see the notes</div>{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
                             {% set ph = r.phenotype %}
                             {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {{ ph|phenotype_badge_class }}">{{ ph|allele_results_unbroken }}</span>{% endif %}

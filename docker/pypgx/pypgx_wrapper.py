@@ -804,13 +804,15 @@ async def create_input_vcf(
             })
             # The PharmCAT-position counts go on the step row: the report states them
             # from what happened here, the way it states a gVCF's coverage. So do the
-            # MAPQ 0 counts over the ALT-covered genes (ALT_LOCUS_GENES_GRCH38).
+            # MAPQ 0 counts over the ALT-covered genes (ALT_LOCUS_GENES_GRCH38), and
+            # whether SV calling was on (prepare_sv_inputs).
             await job_client.complete_step(
                 "BAM to VCF conversion completed successfully",
                 {
                     "pharmcat_positions": res.get("pharmcat_positions"),
                     "alt_locus_mapq0": res.get("alt_locus_mapq0"),
                     "alt_realignment": res.get("alt_realignment"),
+                    "sv_calling": res.get("sv_calling"),
                 },
             )
 
@@ -827,6 +829,7 @@ async def create_input_vcf(
             "alt_locus_mapq0": res.get("alt_locus_mapq0"),
             "alt_realignment": res.get("alt_realignment"),
             "sv_inputs": res.get("sv_inputs"),
+            "sv_calling": res.get("sv_calling"),
             "assembly": pypgx_assembly,
         }
         if patient_id:
@@ -1041,19 +1044,30 @@ def sv_target_genes() -> frozenset:
 
 def prepare_sv_inputs(
     alignment_path: str, out_prefix: str, assembly: str
-) -> Optional[Tuple[str, str]]:
-    """(depth of coverage, control statistics) archives for SV calling, or None.
+) -> Tuple[Optional[Tuple[str, str]], Dict[str, Any]]:
+    """((depth of coverage, control statistics) archives for SV calling, or None;
+    what was decided, for the report).
 
     None when the alignment is not whole-genome-like (see WGS_PROBE_WINDOWS_GRCH38)
-    or when PyPGx fails: the genes then get the SNV-only call, as before.
+    or when PyPGx fails: the genes then get the SNV-only call, as before. The record
+    says which, as "status" ("on", "not_grch38", "low_depth" or "failed"), with the
+    median depth measured and the gate. The report reads it on the step row to say
+    why a gene's copy number was not assessed (app/reports/copy_number.py).
     """
     depth = whole_genome_depth(alignment_path, assembly)
+    record: Dict[str, Any] = {
+        # Rounded down: 14.96x, under the gate, rounded to 15.0x read "15.0x, under
+        # 15x" in the report.
+        "median_depth": None if depth is None else math.floor(depth * 10) / 10,
+        "min_median_depth": WGS_MIN_MEDIAN_DEPTH,
+    }
     if depth is None or depth < WGS_MIN_MEDIAN_DEPTH:
         logger.info(
             f"SV calling off: median depth {depth} at the whole-genome probe loci "
             f"(needs >= {WGS_MIN_MEDIAN_DEPTH} on GRCh38)"
         )
-        return None
+        status = "not_grch38" if depth is None else "low_depth"
+        return None, dict(record, status=status)
     depth_zip = out_prefix + SV_DEPTH_SUFFIX
     control_zip = out_prefix + SV_CONTROL_SUFFIX
     commands = (
@@ -1074,9 +1088,9 @@ def prepare_sv_inputs(
             for path in (depth_zip, control_zip):
                 if os.path.exists(path):
                     os.remove(path)
-            return None
+            return None, dict(record, status="failed")
     logger.info(f"SV calling on: median depth {depth:.1f}x at the whole-genome probe loci")
-    return depth_zip, control_zip
+    return (depth_zip, control_zip), dict(record, status="on")
 
 
 def sv_inputs_header_line(depth_zip: str, control_zip: str) -> str:
@@ -2295,7 +2309,8 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             alt_locus = None
 
         # SV inputs for /genotype, carried the same way: in the VCF's own header.
-        sv_inputs = prepare_sv_inputs(
+        # Whether they were made, and on what depth, goes to the report.
+        sv_inputs, sv_calling = prepare_sv_inputs(
             calls_from, output_vcf_gz[: -len(".vcf.gz")], str(assembly)
         )
         if sv_inputs:
@@ -2323,6 +2338,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             "alt_locus_mapq0": alt_locus,
             "alt_realignment": alt_realignment,
             "sv_inputs": list(sv_inputs) if sv_inputs else None,
+            "sv_calling": sv_calling,
             "pharmcat_vcf": pharmcat_vcf,
             "pharmcat_status": pharmcat_status,
             "pharmcat_positions": pharmcat_positions,
