@@ -1338,11 +1338,11 @@ class FileProcessor:
         # the same outcome PharmCAT already reports for MT-RNR1 with no outside
         # call.
         workflow["needs_mtdna"] = True
+        # One warning, two sentences: stored as two, the second had no mark and
+        # was a warning of its own in the report.
         workflow["warnings"].append(
-            "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>"
-        )
-        workflow["warnings"].append(
-            "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
+            "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis. "
+            "The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
         )
         workflow["warnings"].append(
             # FASTQ was dropped from this list when the format was refused; the
@@ -2740,7 +2740,8 @@ class FileProcessor:
                 except Exception as e:
                     logger.error(f"Error analyzing original WGS file: {str(e)}")
                     workflow["warnings"].append(
-                        f"Could not analyze original WGS file: {str(e)}. Using uploaded file instead."
+                        f"<p>⚠️ Could not analyze original WGS file: {html.escape(str(e))}. "
+                        "Using uploaded file instead.</p>"
                     )
 
             return {

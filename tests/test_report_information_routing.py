@@ -167,6 +167,66 @@ def test_a_standing_caveat_still_renders_in_the_report():
     assert "VCF datafiles lack the raw information" in html
 
 
+# What a VCF stored before its first warning's two sentences were made one: the
+# second a paragraph of its own, without the mark.
+LEGACY_VCF = [
+    "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete "
+    "pharmacogenomic analysis.</p>",
+    "<p>The analysis can proceed, however, the results will be incomplete and have "
+    "degraded accuracy.</p>",
+    "<p>⚠️ HLA typing can not be performed.</p>",
+    "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>",
+]
+
+
+def _lines(alert):
+    return re.findall(r"<p>(.*?)</p>", alert)
+
+
+def test_the_uploads_warnings_are_one_alert_a_line_each_every_line_marked():
+    """A VCF's seven warnings were seven boxes, one of them the second sentence of
+    the first, with no mark."""
+    from app.reports.generator import input_warnings_alert
+
+    (alert,) = input_warnings_alert(LEGACY_VCF)
+    assert alert.startswith('<div class="input-warnings">')
+    lines = _lines(alert)
+    assert len(lines) == 3, lines
+    assert all(line.startswith("⚠") for line in lines), lines
+    assert lines[0].endswith(
+        "analysis. The analysis can proceed, however, the results will be "
+        "incomplete and have degraded accuracy."
+    ), lines[0]
+
+
+def test_a_titled_alert_keeps_its_own_box_in_its_place():
+    """More than one paragraph (the TSV rescue) is an alert of its own; a warning
+    with nothing before it to continue is given the mark."""
+    from app.reports.generator import input_warnings_alert
+
+    rescue = (
+        "<p>⚠️ <strong>Report built from PharmCAT's TSV output</strong></p><p>Why.</p>"
+    )
+    alerts = input_warnings_alert(
+        ["Could not analyze original WGS file: x.", rescue, LEGACY_VCF[2], ""]
+    )
+    assert len(alerts) == 2, alerts
+    assert _lines(alerts[0]) == [
+        "⚠️ Could not analyze original WGS file: x.",
+        "⚠️ HLA typing can not be performed.",
+    ]
+    assert alerts[1] == rescue
+    assert input_warnings_alert([]) == []
+
+
+def test_every_vcf_warning_the_upload_stores_is_marked():
+    """At the source too: the second sentence is part of the first warning."""
+    source = FILE_PROCESSOR.read_text(encoding="utf-8")
+    assert (
+        '"<p>The analysis can proceed' not in source
+    ), "the VCF's second sentence is a warning of its own again"
+
+
 # --------------------------------------------------------------------------
 # Every renderer of this template must be able to compile it
 # --------------------------------------------------------------------------

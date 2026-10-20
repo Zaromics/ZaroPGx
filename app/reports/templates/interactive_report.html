@@ -114,16 +114,21 @@
             padding-bottom: 10px;
         }
         
+        /* The tabs wrap onto another row rather than run past the card: in one
+           row, eleven of them overran it at 1280px, "Acknowledgements" past its
+           right edge. */
         .tabs {
             display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
             margin-bottom: 20px;
             border-bottom: 2px solid var(--light-color);
         }
         
         .tab {
-            padding: 10px 20px;
+            padding: 10px 16px;
             cursor: pointer;
-            margin-right: 5px;
+            white-space: nowrap;
             border-radius: 5px 5px 0 0;
             background-color: var(--light-color);
         }
@@ -551,6 +556,10 @@
                 flex-direction: column;
             }
             
+            .tab {
+                padding: 8px 12px;
+            }
+            
             .report-info-item {
                 margin-bottom: 10px;
             }
@@ -654,6 +663,13 @@
             background-color: #d1ecf1;
             border-color: #bee5eb;
         }
+        /* An alert's first and last paragraphs sit on its own padding; the
+           upload's warnings are one box, a line each
+           (generator.input_warnings_alert). */
+        .alerts-container .alert > :first-child { margin-top: 0; }
+        .alerts-container .alert > :last-child { margin-bottom: 0; }
+        .input-warnings p { margin: 0 0 0.4em 0; padding-left: 1.3em; text-indent: -1.3em; }
+        .input-warnings p:last-child { margin-bottom: 0; }
         /* Monospaced file header styling */
         .file-header {
             font-family: 'Courier New', monospace;

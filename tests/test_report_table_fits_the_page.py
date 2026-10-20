@@ -67,10 +67,12 @@ def test_the_results_table_has_a_fixed_layout():
 
 
 def test_the_column_widths_sum_to_one_hundred_percent():
+    # In quarters of a percent: each column is its widest word wide (the
+    # template's comment), and whole percents were too coarse for that.
     widths = [
-        int(m)
+        float(m)
         for m in re.findall(
-            r"\.gene-table col\.c-[a-z]+\s*\{\s*width:\s*(\d+)%", _source()
+            r"\.gene-table col\.c-[a-z]+\s*\{\s*width:\s*(\d+(?:\.\d+)?)%", _source()
         )
     ]
     assert len(widths) == 7, f"expected 7 column widths, found {widths}"

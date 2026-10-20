@@ -1706,6 +1706,57 @@ def read_position_statuses(report_dir: str) -> Dict[str, str]:
         return {}
 
 
+# One warning the upload stored: a single plain paragraph, or plain text.
+_ONE_PARAGRAPH = re.compile(r"<p>(?P<body>(?:(?!</?p[\s>]).)*)</p>", re.S)
+_BLOCK_TAG = re.compile(r"</?(?:p|ul|ol|li|div|table|h[1-6])[\s>/]", re.I)
+_WARNING_MARK = "\u26a0\ufe0f"
+
+
+def input_warnings_alert(warnings: List[Any]) -> List[str]:
+    """The upload's standing warnings, one alert box for all of them, a line each,
+    every line opened by the warning mark.
+
+    The upload stores each as a paragraph of its own (file_processor), and the
+    report gave each a box of its own: a VCF's seven boxes filled most of a page,
+    and one of them was the second sentence of the first ("The analysis can
+    proceed, however, ..."), stored without the mark. A one-paragraph warning
+    without the mark continues the one before it; with none before it, it is
+    given the mark. A warning of more than one paragraph or a list (the TSV
+    rescue's) keeps a box of its own, in its place.
+    """
+    alerts: List[Optional[str]] = []
+    lines: List[str] = []
+    slot = None
+    for warning in warnings or []:
+        text = str(warning or "").strip()
+        if not text:
+            continue
+        match = _ONE_PARAGRAPH.fullmatch(text)
+        if match:
+            body = match.group("body").strip()
+        elif not _BLOCK_TAG.search(text):
+            body = text
+        else:
+            alerts.append(text)
+            continue
+        if slot is None:
+            slot = len(alerts)
+            alerts.append(None)
+        if body.startswith("\u26a0"):
+            lines.append(body)
+        elif lines:
+            lines[-1] = f"{lines[-1]} {body}"
+        else:
+            lines.append(f"{_WARNING_MARK} {body}")
+    if slot is not None:
+        alerts[slot] = (
+            '<div class="input-warnings">'
+            + "".join(f"<p>{line}</p>" for line in lines)
+            + "</div>"
+        )
+    return [a for a in alerts if a is not None]
+
+
 def partial_coverage_alert(
     genes,
     input_type: Optional[str] = None,
@@ -1813,7 +1864,7 @@ def partial_coverage_alert(
     if not lines:
         return None
     note = (
-        f"<p>⚠️ Positions {verb}: {intro} some of the positions that define these "
+        f"<p>⚠️ <strong>Positions {verb}:</strong> {intro} some of the positions that define these "
         "genes' alleles, and PharmCAT matched each gene on the rest. An allele defined "
         "only there could not be assessed; one defined at other positions too was "
         "assessed on those alone."
@@ -1958,7 +2009,9 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
     if not parts:
         return None
     return (
-        "<p>⚠️ Positions PharmCAT did not use as found. " + ". ".join(parts) + ".</p>"
+        "<p>⚠️ <strong>Positions PharmCAT did not use as found.</strong> "
+        + ". ".join(parts)
+        + ".</p>"
     )
 
 
@@ -2144,7 +2197,7 @@ def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
             f"has been verified against (verified series: {known})."
         )
     return (
-        "<p><strong>Unverified PharmCAT version</strong></p>"
+        "<p>⚠️ <strong>Unverified PharmCAT version</strong></p>"
         f"<p>{claim} The structural checks on the PharmCAT output passed, so the "
         f"calls below are readable and are reported as PharmCAT made them; but "
         f"they have not been confirmed to match this pipeline's expectations for "
@@ -2189,7 +2242,7 @@ def pharmcat_tsv_rescue_alert(schema_gate_reason: Optional[str]) -> str:
             "further detail"
         )
     return (
-        "<p><strong>Report built from PharmCAT's TSV output</strong></p>"
+        "<p>⚠️ <strong>Report built from PharmCAT's TSV output</strong></p>"
         f"<p>{refusal}. The genotypes and drug recommendations below were read "
         "instead from PharmCAT's tab-delimited (TSV) output for the same run -- "
         "a separate file, parsed by separate code -- so the results below are "
@@ -3196,13 +3249,16 @@ def generate_report(
                 # it is actionable in a finished report, and the last one is
                 # actively contradicted a page later by the liftover step's real
                 # counts. Everything unmarked is a standing caveat that still
-                # qualifies these results, and stays.
-                workflow_warnings = [
-                    w
-                    for w in (workflow_config.get("warnings", []) or [])
-                    if "class='preflight'" not in str(w)
-                    and 'class="preflight"' not in str(w)
-                ]
+                # qualifies these results, and stays, in one alert box
+                # (input_warnings_alert).
+                workflow_warnings = input_warnings_alert(
+                    [
+                        w
+                        for w in (workflow_config.get("warnings", []) or [])
+                        if "class='preflight'" not in str(w)
+                        and 'class="preflight"' not in str(w)
+                    ]
+                )
                 logger.info(
                     f"Retrieved {len(workflow_warnings)} workflow warnings from job metadata"
                 )

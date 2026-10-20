@@ -976,8 +976,9 @@ def _vcf_workflow(**analysis_kwargs):
 # build-detection copy from drifting apart; the risk it introduces is that the VCF half
 # changes while nobody is looking at it, which is what this list is here to catch.
 VCF_WARNINGS_BEFORE_THE_SPLIT = [
-    "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis.</p>",
-    "<p>The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>",
+    # Once two paragraphs, the second without the mark; one warning since.
+    "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis. "
+    "The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>",
     "<p class='preflight'>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>",
     "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>",
     "<p>⚠️ HLA typing can not be performed.</p>",
