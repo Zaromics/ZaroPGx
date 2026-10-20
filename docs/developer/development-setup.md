@@ -7,7 +7,8 @@ title: Development setup
 ## Requirements
 
 - Python 3.12 (exactly: `pyproject.toml` requires `>=3.12,<3.13`) and
-  [uv](https://docs.astral.sh/uv/).
+  [uv](https://docs.astral.sh/uv/) 0.12.23 or newer (`pyproject.toml`'s
+  `required-version`; CI and the images use exactly 0.12.23).
 - Docker with Compose v2.24 or later. The test suite starts a PostgreSQL container, and the
   stack runs in Docker.
 - Git.

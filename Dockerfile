@@ -50,8 +50,8 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv package manager
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+# uv from Astral's image, pinned by version and digest (tests/test_dockerfile_uv_pin.py).
+COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /uvx /usr/local/bin/
 
 # Install htslib + bcftools from pinned release tarballs
 # (reproducible and faster than building git HEAD; matches the pharmcat container)

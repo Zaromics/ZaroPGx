@@ -138,6 +138,11 @@ genome-downloader:
 Unmodified upstream images: PostgreSQL 18.6 (PostgreSQL License), HAPI FHIR JPA
 Server 8.12.0 (Apache-2.0), Kroki 0.32.1 with Mermaid 11.16.0 (MIT).
 
+uv and uvx 0.12.23 (MIT OR Apache-2.0), https://github.com/astral-sh/uv, copied
+unmodified from Astral's image ghcr.io/astral-sh/uv, are in the app, gatk-api,
+genome-downloader, nextflow, pharmcat and pypgx images, which install their
+Python packages with uv.
+
 Debian packages keep their copyright files under /usr/share/doc in each image.
 
 

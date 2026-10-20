@@ -24,9 +24,13 @@ jobs:
 
       # setup-uv has published only full-version tags since v8 (immutable releases):
       # there is no @v10 to float on, so every job pins the exact release.
+      # `version` pins uv itself (setup-uv otherwise installs the newest), the same uv
+      # the images copy and pyproject.toml's required-version names
+      # (tests/test_dockerfile_uv_pin.py keeps the three together).
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          version: "0.12.23"
           enable-cache: true
 
       # The full dependency set needs pysam, which has no wheel for every
@@ -64,6 +68,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          version: "0.12.23"
           enable-cache: true
 
       - name: Set up Python
@@ -112,6 +117,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
+          version: "0.12.23"
           enable-cache: true
 
       - name: Set up Python
