@@ -41,9 +41,9 @@ from app.reports.copy_number import (
     copy_number_call_note,
     copy_number_note,
     genes_without_copy_number,
+    listed_alleles_note,
     pharmcat_copy_number_alert,
-    pharmcat_copy_number_call_note,
-    pharmcat_copy_number_note,
+    positions_summary_note,
     why_not_assessed,
 )
 
@@ -503,8 +503,8 @@ def test_a_vcf_report_says_so_and_a_whole_genome_does_not(monkeypatch, tmp_path)
     assert "Copy number not assessed: CYP2D6" not in body
     assert "(VCF input)" not in body
     # ... but PharmCAT's own calls are, on a whole genome too.
-    assert "Copy number not assessed in PharmCAT's calls:" in body
-    assert rows["CYP2B6"]["copy_number_not_assessed"]["by"] == "PharmCAT"
+    assert "Structural alleles not assessed:" in body
+    assert rows["CYP2B6"]["copy_number_not_assessed"]["kind"] == "pharmcat"
 
 
 def test_pharmcats_rows_from_pypgx_are_all_its_call(monkeypatch, tmp_path):
@@ -543,7 +543,11 @@ def test_an_input_type_the_job_did_not_record_is_not_asserted(monkeypatch, tmp_p
         "Copy number not assessed: CYP2D6, GSTM1 and UGT2B17. No depth of coverage "
         "reached PyPGx in this run." in body
     )
-    assert "VCF" not in body[: body.index("Executive Summary")]
+    # PyPGx's alert asserts no input type (PharmCAT's says what PharmCAT reads).
+    alerts = body[: body.index("Executive Summary")]
+    pypgx_alert = alerts[alerts.index("Copy number not assessed:") :]
+    pypgx_alert = pypgx_alert[: pypgx_alert.index("Structural alleles not assessed")]
+    assert "VCF" not in pypgx_alert
 
 
 def test_the_interactive_report_has_the_alert_and_the_notes(monkeypatch, tmp_path):
@@ -619,57 +623,74 @@ def _pharmcat_rows():
     ]
 
 
+def _pypgx_row(gene, diplotype="*1/*1"):
+    """PyPGx's call, through PharmCAT as an outside call (Call P)."""
+    return {
+        "gene": gene,
+        "diplotype": diplotype,
+        "call_source": "OUTSIDE",
+        "tool_source": "PyPGx",
+    }
+
+
 def test_pharmcats_own_calls_are_noted():
     rows = _pharmcat_rows()
     annotate_pharmcat_copy_number(rows)
     noted = {r["gene"]: r.get("copy_number_not_assessed") for r in rows}
     for gene in ("CYP2B6", "CYP2C19", "CYP4F2", "SLCO1B1"):
-        assert noted[gene] == {
-            "note": pharmcat_copy_number_note(gene),
-            "call_note": pharmcat_copy_number_call_note(gene),
-            "by": "PharmCAT",
-        }
+        assert noted[gene]["listed"] and noted[gene]["kind"] == "pharmcat"
+        assert noted[gene]["marker"] == "Copy number not assessed"
+        assert noted[gene]["call_note"] == (
+            f"Copy number not assessed (PharmCAT's call): {PHARMCAT_CALL_NOTE[gene]} "
+            "(see Alerts)"
+        )
     assert noted["G6PD"] is None and noted["CYP2C9"] is None
-    assert pharmcat_copy_number_call_note("CYP2B6") == (
+    assert noted["CYP2B6"]["call_note"] == (
         "Copy number not assessed (PharmCAT's call): would miss hybrids (*29, *30) "
         "(see Alerts)"
     )
-    note = pharmcat_copy_number_note("CYP2C19")
-    assert "*36, *37" in note and "can change the phenotype" in note
-    # CYP4F2 has no phenotype to change.
-    assert "phenotype" not in pharmcat_copy_number_note("CYP4F2")
+
+
+def test_pypgxs_calls_it_cannot_assess_are_noted():
+    """PyPGx's own CYP2C19 and SLCO1B1 (no copy-number model), and its CYP2B6
+    with copy number measured (no state yields *30)."""
+    rows = [_pypgx_row("CYP2C19"), _pypgx_row("SLCO1B1"), _pypgx_row("CYP2B6")]
+    annotate_pharmcat_copy_number(rows)
+    cyp2c19, slco1b1, cyp2b6 = (r["copy_number_not_assessed"] for r in rows)
+    assert cyp2c19["kind"] == slco1b1["kind"] == "no_model"
+    assert cyp2c19["call_note"] == (
+        "Copy number not assessed (PyPGx has no copy-number model for this gene): "
+        "would miss deletions (*36, *37) (see Alerts)"
+    )
+    assert cyp2b6["kind"] == "no_state"
+    assert cyp2b6["call_note"] == (
+        "PyPGx's copy number cannot show *30, a hybrid with CYP2B7 (see Alerts)"
+    )
+    # Its copy number was measured: the summary does not say "not assessed".
+    assert cyp2b6["marker"] == "Structural alleles"
+    # PyPGx's CYP4F2 with copy number measured can show its deletion (*DEL).
+    rows = [_pypgx_row("CYP4F2")]
+    annotate_pharmcat_copy_number(rows)
+    assert "copy_number_not_assessed" not in rows[0]
 
 
 @pytest.mark.parametrize(
     "row",
     [
-        # PyPGx's call, through PharmCAT as an outside call: PyPGx's note, if any.
-        {
-            "gene": "CYP2B6",
-            "diplotype": "*1/*6",
-            "call_source": "OUTSIDE",
-            "tool_source": "PyPGx",
-        },
         # An outside call neither tool made (OUTSIDECALLSOVERRIDE's file).
         {"gene": "CYP2C19", "diplotype": "*1/*2", "call_source": "OUTSIDE"},
+        {"gene": "CYP2B6", "diplotype": "*1/*6", "call_source": "OUTSIDE"},
     ],
-    ids=["pypgx-outside-call", "override-file"],
+    ids=["override-cyp2c19", "override-cyp2b6"],
 )
-def test_only_pharmcats_own_calls_get_its_note(row):
+def test_an_outside_call_neither_tool_made_gets_no_note(row):
     rows = [dict(row)]
     annotate_pharmcat_copy_number(rows)
     assert "copy_number_not_assessed" not in rows[0]
 
 
 def test_a_row_pypgx_noted_keeps_pypgxs_note():
-    rows = [
-        {
-            "gene": "CYP2B6",
-            "diplotype": "*1/*6",
-            "call_source": "OUTSIDE",
-            "tool_source": "PyPGx",
-        },
-    ]
+    rows = [_pypgx_row("CYP2B6", "*1/*6")]
     annotate_copy_number(rows, ["CYP2B6"], VCF)
     before = dict(rows[0]["copy_number_not_assessed"])
     annotate_pharmcat_copy_number(rows)
@@ -689,28 +710,57 @@ def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
     pypgx = {"results": {"CYP2B6": _result("*1/*6", "Normal", cnv_model=True)}}
     annotate_pharmcat_copy_number(rows, pypgx)
     noted = rows[0]["copy_number_not_assessed"]
-    assert "PyPGx, which genotyped CYP2B6 from read depth in this run too" in (
-        noted["note"]
+    assert "not assessed" not in noted["call_note"]
+    assert noted["call_note"] == (
+        "PharmCAT's call, from small variants: would miss hybrids (*29, *30); "
+        "PyPGx measured copy number Normal (see Alerts)"
     )
-    assert "copy number Normal" in noted["note"]
-    assert noted["call_note"].endswith("; PyPGx: copy number Normal (see Alerts)")
+    assert noted["marker"] == "Structural alleles"
+    note = listed_alleles_note(rows)["note"]
+    assert "PyPGx also measured CYP2B6's copy number in this run (Normal)" in note
+
+
+def test_one_summary_note_for_all_of_them():
+    rows = _pharmcat_rows()
+    annotate_pharmcat_copy_number(rows)
+    listed = listed_alleles_note(rows)
+    assert listed["genes"] == "CYP2B6, CYP2C19, CYP4F2 and SLCO1B1"
+    assert listed["note"] == (
+        "These calls cannot show structural alleles PharmCAT lists as undetectable "
+        "from a VCF: CYP2B6 *29 and *30 (hybrids with CYP2B7); CYP2C19 *36 and *37 "
+        "(partial or whole-gene deletions); CYP4F2 *16 (a partial or whole-gene "
+        "deletion); SLCO1B1 *48 and *49 (partial or whole-gene deletions). PharmCAT "
+        "called CYP2B6, CYP2C19, CYP4F2 and SLCO1B1 itself, from small variants, as "
+        "it does on every input, a whole genome included. A missed allele can "
+        "change the phenotype of CYP2B6, CYP2C19 and SLCO1B1. See Alerts and "
+        "Warnings."
+    )
+    assert listed_alleles_note([]) == {"genes": "", "note": ""}
 
 
 def test_pharmcats_alert():
-    alert = pharmcat_copy_number_alert(["CYP2B6", "CYP2C19", "CYP4F2", "SLCO1B1"])
-    text = _clean(alert)
+    rows = _pharmcat_rows()
+    annotate_pharmcat_copy_number(rows)
+    text = _clean(pharmcat_copy_number_alert(rows))
     assert text.startswith(
-        "⚠️ Copy number not assessed in PharmCAT's calls: CYP2B6, CYP2C19, CYP4F2 "
-        "and SLCO1B1."
+        "⚠️ Structural alleles not assessed: CYP2B6, CYP2C19, CYP4F2 and SLCO1B1."
     )
     assert (
         "CYP2B6 *29 and *30 (hybrids with CYP2B7); CYP2C19 *36 and *37 (partial or "
         "whole-gene deletions); CYP4F2 *16 (a partial or whole-gene deletion); "
         "SLCO1B1 *48 and *49 (partial or whole-gene deletions)." in text
     )
-    assert "a whole genome included" in text
+    assert "a whole genome included" in text and "(not *30)" in text
     assert pharmcat_copy_number_alert([]) is None
-    assert pharmcat_copy_number_alert(["G6PD"]) is None
+    assert pharmcat_copy_number_alert([{"gene": "G6PD"}]) is None
+    # PyPGx's calls only: no word of what PyPGx could measure instead.
+    rows = [_pypgx_row("CYP2C19"), _pypgx_row("CYP2B6")]
+    annotate_pharmcat_copy_number(rows)
+    text = _clean(pharmcat_copy_number_alert(rows))
+    assert "CYP2C19 *36 and *37" in text and "CYP2B6 *30 (a hybrid with CYP2B7)" in text
+    assert "PyPGx called CYP2C19, and has no copy-number model for it." in text
+    assert "none of its copy-number states is *30" in text
+    assert "PYPGX_PHARMCAT_PREFERENCE" not in text
 
 
 def test_a_report_notes_pharmcats_calls_once_and_apart(monkeypatch, tmp_path):
@@ -724,15 +774,110 @@ def test_a_report_notes_pharmcats_calls_once_and_apart(monkeypatch, tmp_path):
     # Two alerts, each naming its own genes.
     assert "Copy number not assessed: CYP2D6, GSTM1 and UGT2B17." in body
     assert (
-        "Copy number not assessed in PharmCAT's calls: CYP2B6, CYP2C19, CYP4F2 and "
-        "SLCO1B1." in body
+        "Structural alleles not assessed: CYP2B6, CYP2C19, CYP4F2 and SLCO1B1." in body
     )
-    assert body.count("Copy number not assessed in PharmCAT's calls") == 1
+    assert body.count("Structural alleles not assessed") == 1
     rows = {r["gene"]: r for r in result["processed_data"]["genes"]}
-    assert rows["CYP2D6"]["copy_number_not_assessed"].get("by") is None
+    assert not rows["CYP2D6"]["copy_number_not_assessed"].get("listed")
+    # One summary note for the four, and each one's call note.
+    assert body.count("⚠ CYP2B6, CYP2C19, CYP4F2 and SLCO1B1 :") == 1
     for gene in PHARMCAT_MISSED:
         row = page[page.index(f'id="summary-{gene}"') :]
         assert "Copy number not assessed: see the notes" in row[: row.index("</tr>")]
-        assert f"⚠ {gene} : {pharmcat_copy_number_note(gene)}" in body
-        assert f"⚠ {pharmcat_copy_number_call_note(gene)}" in body
-    assert "G6PD : PharmCAT" not in body
+        assert "⚠ " + rows[gene]["copy_number_not_assessed"]["call_note"] in body
+    assert "⚠ G6PD" not in body
+
+
+PANEL = (
+    "ABCG2 CACNA1S CFTR CYP2B6 CYP2C19 CYP2C9 CYP2D6 CYP3A4 CYP3A5 CYP4F2 DPYD F2 F5 "
+    "G6PD HLA-A HLA-B IFNL3 MT-RNR1 NAT2 NUDT15 RYR1 SLCO1B1 TPMT UGT1A1 VKORC1"
+).split()
+LOW_DEPTH = {"short": "depth 9.0x, under 15x", "sentence": "", "gate": "15"}
+
+
+def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
+    """A heavy alignment run, PyPGx calling every gene it can (auto): copy-number
+    notes on six of the summary's genes (CYP2D6, CYP2B6, CYP4F2 and G6PD without
+    depth; CYP2C19 and SLCO1B1, which PyPGx has no model for), CYP2D6's reads mostly
+    at mapping quality 0, and a positions note on every called gene. The Executive
+    Summary stays one page, filled to its foot, and its notes fit the page behind
+    it."""
+    pytest.importorskip("weasyprint")
+    from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+    from app.reports.pdf_fit import section_fragments, section_pages
+    from tests.test_report_exec_summary_one_page import (
+        EXAMPLE_JSON,
+        _report_html,
+        _worst_case_tsv,
+    )
+
+    data = normalize_pharmcat_results(
+        json.loads(EXAMPLE_JSON.read_text(encoding="utf-8"))
+    )["data"]
+    original = generator_module.annotate_pharmcat_copy_number
+
+    def heavy(genes, pypgx_results=None):
+        for row in genes:
+            gene = row.get("gene")
+            if gene not in PANEL:
+                continue
+            if not str(row.get("diplotype") or "").startswith("*"):
+                row["diplotype"] = "*1/*2"
+            if gene.startswith("HLA") or gene == "MT-RNR1":
+                continue
+            row["call_source"], row["tool_source"] = "OUTSIDE", "PyPGx"
+            row["positions_note"] = (
+                "2 of 31 positions had no reads in the alignment and were read as "
+                "reference"
+            )
+        annotate_copy_number(genes, ["CYP2D6", "CYP2B6", "CYP4F2", "G6PD"], LOW_DEPTH)
+        original(genes, pypgx_results)
+        for row in genes:
+            if row.get("gene") == "CYP2D6":
+                row["alt_locus"] = {
+                    "note": "Most of this gene's reads had mapping quality 0 "
+                    "(91 of 1570): the call may be wrong.",
+                    "call_note": "Reads mostly at mapping quality 0 (see Alerts)",
+                }
+
+    monkeypatch.setattr(generator_module, "annotate_pharmcat_copy_number", heavy)
+    page = _report_html(monkeypatch, tmp_path, data, _worst_case_tsv())
+    notes = page[page.index('id="exec-summary-notes"') :]
+    notes = unescape(_clean(notes[: notes.index("<h2>Genetic Results</h2>")]))
+    for gene in ("CYP2D6", "CYP2B6", "CYP4F2", "G6PD"):
+        assert f"⚠ {gene} : Copy number was not assessed" in notes, gene
+    assert "⚠ CYP2C19 and SLCO1B1 : These calls cannot show" in notes
+    document, _ = generator_module.render_pdf_document(page)
+    assert len(section_pages(document, "exec-summary")) == 1
+    ((_, used),) = section_fragments(document, "exec-summary")
+    assert used > 0.99, used
+    assert len(section_pages(document, "exec-summary-notes")) == 1, notes
+    assert "⚠ ABCG2, CACNA1S, CFTR" in notes
+
+
+def test_several_positions_notes_are_one_entry():
+    rows = [
+        {
+            "gene": "CFTR",
+            "positions_note": "5 of 93 positions had no genotype in "
+            "the file and were read as reference",
+        },
+        {
+            "gene": "RYR1",
+            "positions_note": "6 of 319 positions had no genotype in "
+            "the file and were read as reference",
+        },
+        {
+            "gene": "DPYD",
+            "positions_note": "1 of 20 positions had no reads in the "
+            "alignment and were read as reference",
+        },
+    ]
+    note = positions_summary_note(rows)
+    assert note["genes"] == "CFTR, RYR1 and DPYD"
+    assert note["note"] == (
+        "CFTR 5 of 93, RYR1 6 of 319 positions had no genotype in the file and were "
+        "read as reference; DPYD 1 of 20 positions had no reads in the alignment and "
+        "were read as reference, so a variant there would not have been seen and "
+        "these calls may be wrong. Genetic Results notes each beside its call."
+    )
