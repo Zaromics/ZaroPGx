@@ -2797,6 +2797,22 @@ _OUTSIDE_CALL_RESULT_FILES = (
 )
 
 
+# PharmCAT's own report JSON, as the PharmCAT service copies it into the report
+# directory (docker/pharmcat/pharmcat.py; _MATCHER_METADATA_FILE_SUFFIXES), or under
+# its native name. Present, PharmCAT ran its matcher on every gene genes.json lists in
+# "pharmcat_can_call". It lists the 19 it annotates whether it calls them or not, but
+# F2 and F5 (unannotated genes since PharmCAT 3.2.0) only when it calls them, under
+# unannotatedGeneCalls: the NA12878 demo's has both, the example VCF run's neither.
+_PHARMCAT_JSON_GLOBS = ("*_pgx_pharmcat.json", "*_raw_report.json", "*.report.json")
+
+
+def _pharmcat_ran(report_dir: str) -> bool:
+    """Whether PharmCAT's report JSON is in the report directory."""
+    return any(
+        glob.glob(os.path.join(report_dir, pattern)) for pattern in _PHARMCAT_JSON_GLOBS
+    )
+
+
 # PharmCAT's other outside-call gene: CYP2D6, which it takes from PyPGx. Without a
 # PyPGx run PharmCAT lists it "Unknown/Unknown", callSource NONE, as it lists HLA-A,
 # HLA-B and MT-RNR1 without theirs.
@@ -2813,26 +2829,35 @@ def mark_not_tested_and_failed(
 
     - call_error: a tool tried the gene and failed (pypgx_failed_genes), or its
       lane died before saying anything about it (pypgx_lane_failed_genes).
-      PharmCAT's own matcher outranks it: a row whose call_source is MATCHER was
-      examined by PharmCAT, and a PyPGx failure on the same gene (an alignment run
-      asks PyPGx for PharmCAT's genes too) leaves it tested, not called.
+      PharmCAT's own matcher outranks it: a gene PharmCAT examined -- a row whose
+      call_source is MATCHER, or a "pharmcat_can_call" gene PharmCAT left out of a
+      report it wrote (F2 and F5 without a call) -- stays tested, not called, whatever
+      PyPGx did (an alignment run asks PyPGx for PharmCAT's genes too).
     - not_tested: nothing tested it. _build_canonical_diplotypes sets it on its
       placeholder rows (no tool reported the gene); here, for a gene only an outside
       call tool supplies, it follows whether that tool ran: set when its result file
       is missing (HLA-A and HLA-B, which PharmCAT lists uncalled after a VCF run),
       cleared when the tool ran and called nothing for the gene (HLA-C, which
       PharmCAT has no row for, after an OptiType run that typed none). CYP2D6 follows
-      `pypgx_ran` (whether the report read PyPGx results); None leaves it alone.
+      `pypgx_ran` (whether the report read PyPGx results); None leaves it alone. A
+      "pharmcat_can_call" gene follows whether PharmCAT ran (_pharmcat_ran): its
+      placeholder is cleared when PharmCAT's JSON is in the report directory.
     - neither: the gene was tested and not called.
 
     The FHIR export codes these error, not-performed and unknown. A row with a
     call is left alone.
     """
+    pharmcat_genes = set(_load_gene_set("pharmcat_can_call"))
+    pharmcat_ran = _pharmcat_ran(report_dir)
     for row in rows:
         if not isinstance(row, dict) or not _no_call(row.get("diplotype")):
             continue
         gene = str(row.get("gene") or "").strip().upper()
-        pharmcat_examined = str(row.get("call_source") or "").upper() == "MATCHER"
+        pharmcat_examined = str(row.get("call_source") or "").upper() == "MATCHER" or (
+            pharmcat_ran and gene in pharmcat_genes
+        )
+        if pharmcat_examined:
+            row.pop("not_tested", None)
         if gene in failed and not pharmcat_examined:
             row["call_error"] = failed[gene]
             row.pop("not_tested", None)

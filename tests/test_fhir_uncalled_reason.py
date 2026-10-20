@@ -2,8 +2,7 @@
 
 Since fix/fhir-no-empty-values every gene the run did not call had the genotype
 valueCodeableConcept {"text": "Unknown"}, whether a tool tested the gene and could not
-call it or nothing tested it at all (HLA from a VCF; F2 and F5 where PyPGx has nothing
-for them). A reader could tell "not tested" from "tested, no call" only by matching
+call it or nothing tested it at all (HLA from a VCF). A reader could tell "not tested" from "tested, no call" only by matching
 text, and not even that: both read "Unknown".
 
 The IG's genotype profile (Genomics Reporting 3.0.0) requires value[x] (1..1), with an
@@ -14,8 +13,12 @@ report step puts on the gene rows (app/reports/generator.py):
 - not-performed: not_tested. _build_canonical_diplotypes' placeholder rows (no tool
   reported the gene), and the genes only an outside-call tool supplies when that tool
   did not run: HLA-A, HLA-B and HLA-C without hla_result.json (no HLA typing, as in
-  every VCF run), MT-RNR1 without mtdna_result.json.
-- error: call_error. PyPGx tried the gene and failed ({"success": False}).
+  every VCF run), MT-RNR1 without mtdna_result.json, CYP2D6 without PyPGx results. A
+  gene PharmCAT examines ("pharmcat_can_call") that its report left out (F2 and F5,
+  listed only when called) is not a placeholder when PharmCAT's JSON is there.
+- error: call_error. PyPGx tried the gene and failed ({"success": False}), or the
+  PyPGx run the job turned on ended without results; never over PharmCAT's own
+  examination.
 - unknown: tested and not called -- "Unknown", "Unknown/Unknown", "Indeterminate".
 
 HAPI FHIR 8.12's $validate, with the IG and HL7 Terminology 6.1.0 loaded, checks the
@@ -97,9 +100,12 @@ VCF_RUN_ROWS: List[Dict[str, Any]] = [
 ]
 
 
-def _rows(
-    raw, report_dir: Path, failed=None, files=("mtdna_result.json",), pypgx_ran=None
-):
+# The VCF run's report directory: PharmCAT's JSON and mtDNA calling's result.
+PHARMCAT_JSON = "job_pgx_pharmcat.json"
+VCF_RUN_FILES = (PHARMCAT_JSON, "mtdna_result.json")
+
+
+def _rows(raw, report_dir: Path, failed=None, files=VCF_RUN_FILES, pypgx_ran=None):
     """The canonical rows as generate_report leaves them: built, then marked from
     what the run left in its report directory."""
     for name in files:
@@ -139,11 +145,42 @@ def _values(rows) -> Dict[str, Dict[str, Any]]:
 
 
 def test_vcf_run_genes_nothing_tested_are_coded_not_performed(tmp_path):
-    """No tool reported F2, F5 or HLA-C; no HLA typing ran, so PharmCAT's uncalled
-    HLA-A and HLA-B were not tested either."""
+    """No HLA typing ran: HLA-C, which nothing reported, and PharmCAT's uncalled
+    HLA-A and HLA-B were not tested."""
     values = _values(_rows(VCF_RUN_ROWS, tmp_path))
-    for gene in ("F2", "F5", "HLA-A", "HLA-B", "HLA-C"):
+    for gene in ("HLA-A", "HLA-B", "HLA-C"):
         assert values[gene] == NOT_PERFORMED, gene
+
+
+def test_f2_and_f5_follow_whether_pharmcat_ran(tmp_path):
+    """PharmCAT examines F2 and F5 but lists them only when it calls them (its
+    unannotatedGeneCalls). With its JSON in the report directory, a gene it can call
+    and left out was examined and not called; without it, nothing examined it."""
+    values = _values(_rows(VCF_RUN_ROWS, tmp_path))
+    for gene in ("F2", "F5"):
+        assert values[gene] == _unknown("Unknown"), gene
+    no_pharmcat = tmp_path / "no-pharmcat"
+    no_pharmcat.mkdir()
+    values = _values(_rows(VCF_RUN_ROWS, no_pharmcat, files=("mtdna_result.json",)))
+    for gene in ("F2", "F5"):
+        assert values[gene] == NOT_PERFORMED, gene
+
+
+def test_any_pharmcat_gene_left_out_follows_whether_pharmcat_ran(tmp_path):
+    """The rule is every "pharmcat_can_call" gene, not F2 and F5 by name."""
+    raw = [r for r in VCF_RUN_ROWS if r["gene"] not in ("CYP2C19", "NAT2")]
+    values = _values(_rows(raw, tmp_path))
+    assert generator_module._pharmcat_ran(str(tmp_path))
+    assert values["CYP2C19"] == _unknown("Unknown")
+    assert values["NAT2"] == _unknown("Unknown")
+    # A gene PyPGx calls alone is not PharmCAT's to vouch for.
+    assert values["UGT2B17"] == NOT_PERFORMED
+    no_pharmcat = tmp_path / "no-pharmcat"
+    no_pharmcat.mkdir()
+    values = _values(_rows(raw, no_pharmcat, files=()))
+    assert not generator_module._pharmcat_ran(str(no_pharmcat))
+    assert values["CYP2C19"] == NOT_PERFORMED
+    assert values["NAT2"] == NOT_PERFORMED
 
 
 def test_genes_tested_and_not_called_are_coded_unknown_in_the_tools_words(tmp_path):
@@ -157,12 +194,12 @@ def test_genes_tested_and_not_called_are_coded_unknown_in_the_tools_words(tmp_pa
 def test_after_hla_typing_an_untyped_hla_gene_is_unknown(tmp_path):
     """hla_result.json says OptiType ran: an HLA gene it typed none for was tested.
     Without mtdna_result.json, mtDNA calling did not run: MT-RNR1 was not tested."""
-    rows = _rows(VCF_RUN_ROWS, tmp_path, files=("hla_result.json",))
+    rows = _rows(VCF_RUN_ROWS, tmp_path, files=(PHARMCAT_JSON, "hla_result.json"))
     values = _values(rows)
     assert values["HLA-A"] == _unknown("Unknown/Unknown")
     assert values["HLA-C"] == _unknown("Unknown")
     assert values["MT-RNR1"] == NOT_PERFORMED
-    assert values["F2"] == NOT_PERFORMED
+    assert values["F2"] == _unknown("Unknown")
 
 
 def test_a_gene_pypgx_failed_on_is_coded_error_not_not_performed(tmp_path):
@@ -170,24 +207,23 @@ def test_a_gene_pypgx_failed_on_is_coded_error_not_not_performed(tmp_path):
     and would end as a placeholder; it was tested, and the tool failed."""
     failed = generator_module.pypgx_failed_genes(
         {
-            "F5": {"success": False, "error": "Batch processing error: boom"},
+            "UGT2B17": {"success": False, "error": "Batch processing error: boom"},
             "CYP2D6": {"success": False, "error": "Traceback ..."},
             "ABCB1": {"success": True, "diplotype": None},
             "IFNL4": {"success": True, "diplotype": "Reference/Reference"},
         }
     )
-    assert set(failed) == {"F5", "CYP2D6"}
+    assert set(failed) == {"UGT2B17", "CYP2D6"}
     raw = [r for r in VCF_RUN_ROWS if r["gene"] != "CYP2D6"] + [
         {"gene": "CYP2D6", "diplotype": "Unknown/Unknown", "call_source": "NONE"}
     ]
     rows = _rows(raw, tmp_path, failed=failed)
     by_gene = {row["gene"]: row for row in rows}
-    assert by_gene["F5"]["call_error"] == generator_module.PYPGX_GENE_FAILED
-    assert "not_tested" not in by_gene["F5"]
+    assert by_gene["UGT2B17"]["call_error"] == generator_module.PYPGX_GENE_FAILED
+    assert "not_tested" not in by_gene["UGT2B17"]
     values = _values(rows)
-    assert values["F5"] == ERROR
+    assert values["UGT2B17"] == ERROR
     assert values["CYP2D6"] == ERROR
-    assert values["F2"] == NOT_PERFORMED
     assert values["ABCB1"] == _unknown("Unknown")
 
 
@@ -226,7 +262,7 @@ def test_every_genotype_keeps_a_value_and_no_data_absent_reason(tmp_path):
 def test_the_report_lists_a_gene_not_tested_as_such(tmp_path):
     report = _bundle(_rows(VCF_RUN_ROWS, tmp_path))["entry"][0]["resource"]
     displays = {ref["display"] for ref in report["result"]}
-    assert {"F2 Not performed", "HLA-A Not performed", "ABCB1 Unknown"} <= displays
+    assert {"HLA-C Not performed", "HLA-A Not performed", "ABCB1 Unknown"} <= displays
 
 
 def test_the_ids_do_not_change_so_a_re_push_updates_in_place(tmp_path):
@@ -262,7 +298,7 @@ def test_the_codes_are_hl7_terminologys_with_its_displays():
 
 
 def test_the_xml_bundle_carries_the_coding(tmp_path):
-    rows = _rows(VCF_RUN_ROWS, tmp_path, failed={"F5": "PyPGx failed: x"})
+    rows = _rows(VCF_RUN_ROWS, tmp_path, failed={"UGT2B17": "PyPGx failed: x"})
     xml = FHIRExportService(MagicMock()).export_pgx_report(
         run_id="run-uncalled",
         output_format="xml",
@@ -301,10 +337,11 @@ def test_pypgx_on_with_no_result_file_codes_its_genes_error(tmp_path, status):
         assert values[gene] == ERROR, gene
     by_gene = {row["gene"]: row for row in rows}
     assert by_gene["ABCB1"]["call_error"].startswith("PyPGx")
-    # Not PyPGx's to call after a VCF: PharmCAT's, and the genes nothing reported.
+    # Not PyPGx's to call after a VCF: PharmCAT's (F2 examined by PharmCAT, not
+    # called), and HLA, which nothing typed.
     assert values["CYP2C19"] == {"text": "*38/*38"}
     assert values["HLA-A"] == NOT_PERFORMED
-    assert values["F2"] == NOT_PERFORMED
+    assert values["F2"] == _unknown("Unknown")
 
 
 @pytest.mark.parametrize("steps", [_steps(None), _steps("skipped")])
@@ -339,6 +376,21 @@ def test_a_pypgx_failure_leaves_pharmcat_s_own_no_call_unknown(tmp_path):
     assert {"NAT2", "F2", "ABCB1", "CYP2D6"} <= set(failed)
     values = _values(_rows(VCF_RUN_ROWS, tmp_path, failed=failed, pypgx_ran=True))
     assert values["NAT2"] == _unknown("Unknown/Unknown")
+    # PharmCAT ran, and examined F2: its no-call stands.
+    assert values["F2"] == _unknown("Unknown")
+    assert values["ABCB1"] == ERROR
+    # Without PharmCAT's JSON nothing but PyPGx was to examine F2, and it failed.
+    no_pharmcat = tmp_path / "no-pharmcat"
+    no_pharmcat.mkdir()
+    values = _values(
+        _rows(
+            VCF_RUN_ROWS,
+            no_pharmcat,
+            failed=failed,
+            files=("mtdna_result.json",),
+            pypgx_ran=True,
+        )
+    )
     assert values["F2"] == ERROR
     per_gene = generator_module.pypgx_failed_genes(
         {"NAT2": {"success": False, "error": "x"}}
@@ -349,11 +401,12 @@ def test_a_pypgx_failure_leaves_pharmcat_s_own_no_call_unknown(tmp_path):
 
 def test_an_error_genotype_says_why_in_a_short_note(tmp_path):
     failed = generator_module.pypgx_failed_genes(
-        {"F5": {"success": False, "error": "Traceback /app/x.py line 3: boom"}}
+        {"UGT2B17": {"success": False, "error": "Traceback /app/x.py line 3: boom"}}
     )
     genotypes = _genotypes(_bundle(_rows(VCF_RUN_ROWS, tmp_path, failed=failed)))
-    assert genotypes["F5"]["note"] == [{"text": generator_module.PYPGX_GENE_FAILED}]
-    assert "/app" not in json.dumps(genotypes["F5"])
+    note = genotypes["UGT2B17"]["note"]
+    assert note == [{"text": generator_module.PYPGX_GENE_FAILED}]
+    assert "/app" not in json.dumps(genotypes["UGT2B17"])
     for gene in ("F2", "ABCB1", "CYP2C19"):
         assert "note" not in genotypes[gene], gene
 
@@ -389,7 +442,7 @@ def test_no_step_record_says_nothing():
 # generate_report itself: PyPGx's results read from the report directory, the job's
 # steps (load_job_step_records, monkeypatched: job_id=None has no database), and the
 # rows it hands the FHIR export.
-def _generate(monkeypatch, tmp_path, pypgx_file, step_status):
+def _generate(monkeypatch, tmp_path, pypgx_file, step_status, pharmcat_json=False):
     for key in (
         "write_pdf",
         "write_html",
@@ -410,6 +463,8 @@ def _generate(monkeypatch, tmp_path, pypgx_file, step_status):
     )
     (tmp_path / "pypgx_result.json").write_text(json.dumps(pypgx_file))
     (tmp_path / "mtdna_result.json").write_text("{}")
+    if pharmcat_json:
+        (tmp_path / PHARMCAT_JSON).write_text("{}")
     genes = [dict(row) for row in PHARMCAT_ONLY_ROWS]
     result = generator_module.generate_report(
         {"data": {"genes": genes, "drugRecommendations": []}},
@@ -445,3 +500,13 @@ def test_generate_report_with_nextflow_s_fallback_file_marks_error(
         assert rows[gene]["call_error"] == generator_module.PYPGX_NO_RESULT, gene
     assert "call_error" not in rows["CYP2C19"]
     assert rows["F2"]["not_tested"] is True
+
+
+def test_generate_report_with_pharmcat_s_json_takes_f2_as_examined(
+    monkeypatch, tmp_path
+):
+    rows = _generate(
+        monkeypatch, tmp_path, {"results": {}}, "completed", pharmcat_json=True
+    )
+    assert "not_tested" not in rows["F2"] and "call_error" not in rows["F2"]
+    assert rows["HLA-C"]["not_tested"] is True

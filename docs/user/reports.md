@@ -153,15 +153,16 @@ for the result, since the IG has no term for the result itself; such a phenotype
 note saying so, and the mapping is provisional. A gene the run did not call still has a
 genotype, since the IG's genotype profile requires a value, and its value carries a code
 of HL7's DataAbsentReason saying why. `not-performed` (text "Not performed"): nothing
-tested the gene. No tool reported it (F2 and F5 after a VCF: PharmCAT 3.4 has neither,
-and a VCF run does not ask PyPGx for them), or the run did not run the tool that supplies
-it: no HLA typing (every VCF run, or OptiType turned off: HLA-A, HLA-B and HLA-C), no
-mtDNA calling (MT-RNR1), no PyPGx (CYP2D6, which PharmCAT takes from PyPGx). `error`
-(text "Error", and a note saying why): the tool that tried the gene failed on it (a PyPGx
-error, or a PyPGx run the job turned on that ended without results); a gene PharmCAT
-examined itself stays `unknown` whatever PyPGx did. `unknown`: a tool tested the gene and
-could not call it (text as the tool put it: "Unknown", "Unknown/Unknown",
-"Indeterminate"). The bundle validates against those profiles with no errors (HAPI
+tested the gene. No tool reported it and none was to examine it, or the run did not run
+the tool that supplies it: no HLA typing (every VCF run, or OptiType turned off: HLA-A,
+HLA-B and HLA-C), no mtDNA calling (MT-RNR1), no PyPGx (CYP2D6, which PharmCAT takes from
+PyPGx), no PharmCAT. `error` (text "Error", and a note saying why): the tool that tried
+the gene failed on it (a PyPGx error, or a PyPGx run the job turned on that ended without
+results); a gene PharmCAT examined itself stays `unknown` whatever PyPGx did. `unknown`:
+a tool tested the gene and could not call it (text as the tool put it: "Unknown",
+"Unknown/Unknown", "Indeterminate"). That includes F2 and F5 after PharmCAT ran: it
+examines them in every run but lists them only when it calls them (its unannotated gene
+calls), so a VCF without their positions leaves them out of its report. The bundle validates against those profiles with no errors (HAPI
 FHIR's `$validate`, October 2026); {doc}`../samples/README` lists the warnings that
 remain and why. Bundles written before then do not validate, and their XML is not
 readable as FHIR. The `/fhir` endpoints ({doc}`../developer/api-reference`) also
