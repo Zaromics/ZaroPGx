@@ -349,6 +349,10 @@ function makeSandbox(html) {
     location: { href: "http://localhost/", origin: "http://localhost", protocol: "http:", host: "localhost" },
     matchMedia: null,
     navigator: { userAgent: "node" },
+    // window's own listeners (a resize re-places an open stage popup); nothing
+    // here resizes.
+    addEventListener: () => {},
+    removeEventListener: () => {},
     _listeners: listeners,
     // id -> element for everything in the page now (render_workflow_panel.js).
     _connectedElements: () => registry.connected(),
