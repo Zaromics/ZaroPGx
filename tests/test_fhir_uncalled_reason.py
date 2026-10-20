@@ -267,3 +267,75 @@ def test_the_xml_bundle_carries_the_coding(tmp_path):
     assert f'<system value="{DAR}" />' in xml
     for code in ("not-performed", "error", "unknown"):
         assert f'<code value="{code}" />' in xml
+
+
+# The PyPGx lane, as the job's own steps record it (load_job_step_records).
+def _steps(pypgx_status=None):
+    steps = [{"name": "header_analysis", "status": "completed", "output": {}}]
+    if pypgx_status is not None:
+        steps.append({"name": "pypgx_analysis", "status": pypgx_status, "output": {}})
+    steps.append({"name": "pharmcat_analysis", "status": "completed", "output": {}})
+    return steps
+
+
+# What PharmCAT alone leaves when PyPGx produced nothing: CYP2D6 has no outside call.
+PHARMCAT_ONLY_ROWS = [
+    {"gene": "CYP2C19", "diplotype": "*38/*38", "call_source": "MATCHER"},
+    {"gene": "CYP2D6", "diplotype": "Unknown/Unknown", "call_source": "NONE"},
+    {"gene": "HLA-A", "diplotype": "Unknown/Unknown", "call_source": "NONE"},
+]
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "running", ""])
+def test_pypgx_on_with_no_result_file_codes_its_genes_error(tmp_path, status):
+    """The upload turned PyPGx on (its step exists), and it left no result file: the
+    lane died, so its genes were not left untested; they are errors."""
+    failed = generator_module.pypgx_lane_failed_genes(_steps(status), {})
+    rows = _rows(PHARMCAT_ONLY_ROWS, tmp_path, failed=failed)
+    values = _values(rows)
+    for gene in ("ABCB1", "CYP2A6", "UGT2B17", "CYP2D6"):
+        assert values[gene] == ERROR, gene
+    by_gene = {row["gene"]: row for row in rows}
+    assert by_gene["ABCB1"]["call_error"].startswith("PyPGx")
+    # Not PyPGx's to call: PharmCAT's, and the genes nothing reported.
+    assert values["CYP2C19"] == {"text": "*38/*38"}
+    assert values["HLA-A"] == NOT_PERFORMED
+    assert values["F2"] == NOT_PERFORMED
+
+
+@pytest.mark.parametrize("steps", [_steps(None), _steps("skipped")])
+def test_pypgx_switched_off_leaves_its_genes_not_performed(tmp_path, steps):
+    """No pypgx_analysis step (the upload left PyPGx off), or a skipped one: PyPGx
+    was never to run, and its genes were not tested."""
+    assert generator_module.pypgx_lane_failed_genes(steps, {}) == {}
+    values = _values(_rows(PHARMCAT_ONLY_ROWS, tmp_path))
+    assert values["ABCB1"] == NOT_PERFORMED
+    assert values["CYP2D6"] == _unknown("Unknown/Unknown")
+
+
+def test_pypgx_that_finished_leaves_the_codes_unchanged(tmp_path):
+    results = {
+        "ABCB1": {"success": True, "diplotype": None},
+        "CYP2D6": {"success": True, "diplotype": "*1/*1"},
+    }
+    assert generator_module.pypgx_lane_failed_genes(_steps("completed"), results) == {}
+    values = _values(_rows(VCF_RUN_ROWS, tmp_path))
+    assert values["ABCB1"] == _unknown("Unknown")
+    assert values["CYP2A6"] == _unknown("Indeterminate")
+
+
+def test_a_failed_step_with_results_keeps_pypgx_s_own_record(tmp_path):
+    """A gene PyPGx reported keeps that record; one it never got to is an error."""
+    results = {"ABCB1": {"success": True, "diplotype": None}}
+    failed = generator_module.pypgx_lane_failed_genes(_steps("failed"), results)
+    assert "ABCB1" not in failed and "CYP2A6" in failed
+    raw = [r for r in VCF_RUN_ROWS if r["gene"] != "CYP2A6"]
+    values = _values(_rows(raw, tmp_path, failed=failed))
+    assert values["ABCB1"] == _unknown("Unknown")
+    assert values["CYP2A6"] == ERROR
+
+
+def test_no_step_record_says_nothing():
+    """Without the job's steps (no database), absence alone decides nothing."""
+    assert generator_module.pypgx_lane_failed_genes([], {}) == {}
+    assert generator_module.pypgx_lane_failed_genes(None, None) == {}

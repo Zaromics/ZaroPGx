@@ -156,7 +156,7 @@ of HL7's DataAbsentReason saying why. `not-performed` (text "Not performed"): no
 tested the gene. No tool reported it (F2 and F5 when PyPGx has nothing for them), or the
 run did no HLA typing (every VCF run, or OptiType turned off: HLA-A, HLA-B and HLA-C) or
 no mtDNA calling (MT-RNR1). `error` (text "Error"): the tool that tried the gene failed
-on it (a PyPGx error). `unknown`: a tool tested the gene and could not call it (text as
+on it (a PyPGx error, or a PyPGx run the job turned on that ended without results). `unknown`: a tool tested the gene and could not call it (text as
 the tool put it: "Unknown", "Unknown/Unknown", "Indeterminate"). The bundle validates against those
 profiles with no errors (HAPI FHIR's
 `$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.

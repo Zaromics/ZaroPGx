@@ -2718,6 +2718,65 @@ def pypgx_failed_genes(results: Any) -> Dict[str, str]:
     return failed
 
 
+def _load_gene_set(name: str) -> List[str]:
+    """A named gene set of config/genes.json ("sets"), upper-case; [] when absent."""
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        with open(
+            os.path.join(project_root, "config", "genes.json"), "r", encoding="utf-8"
+        ) as f:
+            members = ((json.load(f) or {}).get("sets") or {}).get(name) or []
+    except (OSError, ValueError, AttributeError) as e:
+        logger.warning(f"Failed to load gene set {name} from genes.json: {e}")
+        return []
+    return [str(gene).strip().upper() for gene in members if str(gene).strip()]
+
+
+def pypgx_lane_failed_genes(
+    records: Optional[List[Dict[str, Any]]], results: Any
+) -> Dict[str, str]:
+    """PyPGx's genes it has no record for, when the job's own steps say it was to run.
+
+    Whether PyPGx was to run is the job's pypgx_analysis step, the record the
+    workflow diagram draws: app/services/workflow_registry.py mints it only when the
+    upload turned PyPGx on (needs_pypgx), so no step means PyPGx was switched off,
+    and "skipped" that it did not run. Both leave the genes not tested: {} here.
+
+    PyPGx was to run, and its genes have no record, when its step failed or when it
+    left no result file (`results` empty): the lane died. Each gene it calls (genes.json
+    "pypgx_minus_pharmcat": PyPGx's own genes and CYP2D6, which PharmCAT takes from
+    it) that the results do not name is then an error, not a gene nobody tested. A
+    gene the results do name keeps PyPGx's own record (pypgx_failed_genes for one it
+    failed on). A step that completed with results leaves the rest alone: PyPGx did
+    not set out to call those. No step rows at all (no database) says nothing.
+    """
+    status = {
+        str(r.get("name")): str(r.get("status") or "").lower()
+        for r in records or ()
+        if isinstance(r, dict)
+    }
+    step = status.get("pypgx_analysis")
+    if step is None or step == "skipped":
+        return {}
+    reported = (
+        {str(gene).strip().upper() for gene in results}
+        if isinstance(results, dict)
+        else set()
+    )
+    if reported and step != "failed":
+        return {}
+    why = (
+        "PyPGx's step failed"
+        if step == "failed"
+        else f"PyPGx left no result (its step is {step or 'unrecorded'})"
+    )
+    return {
+        gene: f"{why}; no record for this gene"
+        for gene in _load_gene_set("pypgx_minus_pharmcat")
+        if gene not in reported
+    }
+
+
 # The genes a run gets only as an outside call from a tool of its own, and the file
 # each such tool leaves in the report directory when it runs: OptiTypeHLAFromBAM's
 # hla_result.json and MtdnaCall's mtdna_result.json (pipelines/pgx/main.nf), each a
@@ -2736,7 +2795,8 @@ def mark_not_tested_and_failed(
 ) -> None:
     """Say, on each canonical row without a call, whether the gene was tested.
 
-    - call_error: a tool tried the gene and failed (pypgx_failed_genes).
+    - call_error: a tool tried the gene and failed (pypgx_failed_genes), or its
+      lane died before saying anything about it (pypgx_lane_failed_genes).
     - not_tested: nothing tested it. _build_canonical_diplotypes sets it on its
       placeholder rows (no tool reported the gene); here, for a gene only an outside
       call tool supplies, it follows whether that tool ran: set when its result file
@@ -3941,6 +4001,7 @@ def generate_report(
 
     # Now that we know the report directory, try to load PyPGx results and augment data['genes']
     pypgx_failed: Dict[str, str] = {}
+    pypgx_results_obj: Dict[str, Any] = {}
     try:
         # Prefer PyPGx results coming directly from workflow (if upstream provided it)
         pypgx_results = None
@@ -3977,6 +4038,8 @@ def generate_report(
             }
             # The genes PyPGx failed on are skipped below; the canonical rows say so.
             pypgx_failed = pypgx_failed_genes(results_obj)
+            if isinstance(results_obj, dict):
+                pypgx_results_obj = results_obj
             added_count = 0
             # Every row of a gene: PharmCAT 2.x's JSON has one per guideline source
             # (CPIC, DPWG). Keyed to the last alone, only the DPWG row was PyPGx's,
@@ -4089,7 +4152,13 @@ def generate_report(
             workflow_config=workflow_config,
         )
         data["genes"] = canonical_diplotypes
-        mark_not_tested_and_failed(canonical_diplotypes, report_dir, pypgx_failed)
+        # A lane that died leaves no per-gene record: the job's steps say whether
+        # PyPGx was to run (pypgx_lane_failed_genes). PyPGx's own record wins.
+        failed_calls = {
+            **pypgx_lane_failed_genes(workflow_records, pypgx_results_obj),
+            **pypgx_failed,
+        }
+        mark_not_tested_and_failed(canonical_diplotypes, report_dir, failed_calls)
         logger.info(
             f"Canonical diplotypes prepared: total={len(canonical_diplotypes)} (alphabetical, deduplicated, full complement)"
         )
