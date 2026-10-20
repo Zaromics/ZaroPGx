@@ -47,10 +47,12 @@ their licence texts.
   app/static/vendor/redoc/redoc.standalone.js.LICENSE.txt
 
 docker/mtdna-server-2/report.Rmd and docker/mtdna-server-2/files/
-rcrs_mutserve.fasta are copied from mtDNA-Server 2 v2.1.16
-(https://github.com/genepi/mtdna-server-2), MIT License, Copyright (c)
-Institute of Genetic Epidemiology, Medical University of Innsbruck. The FASTA
-is the revised Cambridge Reference Sequence (NC_012920.1).
+rcrs_mutserve.fasta are copied unchanged from mtDNA-Server 2 v2.1.16
+(https://github.com/genepi/mtdna-server-2: reports/report.Rmd and
+files/rcrs_mutserve.fasta), MIT License, Copyright (c) 2023 Hansi
+Weißensteiner; the licence text is in
+docker/mtdna-server-2/LICENSE.mtdna-server-2. The FASTA is the revised
+Cambridge Reference Sequence (NC_012920.1).
 
 test_data/ holds PharmCAT's example VCFs and the reports PharmCAT produced from
 them (https://github.com/PharmGKB/PharmCAT, MPL-2.0). The guidance text in those
@@ -63,9 +65,18 @@ the NIGMS Human Genetic Cell Repository at the Coriell Institute for Medical
 Research. These data were generated at the New York Genome Center with funds
 provided by NHGRI Grant 3UM1HG008901-03S1.
 
-lexicon/allele-table.csv, gene-table.csv and phenotype-table.csv are copied
-from PyPGx (https://github.com/sbslee/pypgx, MIT). lexicon/phenotypes.tsv lists
-PharmCAT's alleles and phenotypes, which are CPIC and ClinPGx content (below).
+lexicon/allele-table.csv, gene-table.csv and phenotype-table.csv are PyPGx
+0.27.0's tables (https://github.com/sbslee/pypgx, pypgx/api/data/) without
+their MT-RNR1 rows (24 allele rows, 1 gene row and 3 phenotype rows); apart
+from line endings, nothing else in them is changed. MIT License, Copyright (c)
+2020 Seung-been "Steven" Lee; the licence text is in lexicon/LICENSE.pypgx.
+lexicon/phenotypes.tsv lists PharmCAT's alleles and phenotypes, which are CPIC
+and ClinPGx content (below).
+
+app/genome/grch38_contig_names.tsv maps GRCh38's RefSeq and GenBank accessions
+to UCSC names and lengths. scripts/make_grch38_contig_names.py writes it from
+NCBI's GRCh38 assembly reports (GCF_000001405.26 and GCF_000001405.40); NCBI
+places no restrictions on their use.
 
 docker/fhir-server/packages/ holds three FHIR packages, unmodified, from HL7's
 FHIR package registry (https://packages.fhir.org), which the bundled HAPI FHIR
@@ -86,7 +97,9 @@ pharmcat:      PharmCAT 3.4.0 (MPL-2.0), https://github.com/PharmGKB/PharmCAT;
                BSD-3-Clause), https://www.htslib.org;
                Eclipse Temurin 17 (GPL-2.0-only WITH Classpath-exception-2.0).
 pypgx:         PyPGx 0.27.0 and fuc 0.38.0 (MIT), https://github.com/sbslee;
-               the PyPGx resource bundle 0.27.0, https://github.com/sbslee/pypgx-bundle;
+               the PyPGx resource bundle 0.27.0, https://github.com/sbslee/pypgx-bundle
+               (no licence stated; its 1000 Genomes panels come under the
+               EMBL-EBI terms in section 3);
                Beagle 5.4, inside PyPGx (GPL-3.0-or-later),
                https://faculty.washington.edu/browning/beagle/beagle.html;
                pysam (MIT), scikit-learn (BSD-3-Clause), NumPy, SciPy and
@@ -95,7 +108,8 @@ pypgx:         PyPGx 0.27.0 and fuc 0.38.0 (MIT), https://github.com/sbslee;
 gatk-api:      GATK 4.7.0.0 (Apache-2.0), https://github.com/broadinstitute/gatk,
                with Picard (MIT), HTSJDK (MIT) and BWA-MEM via gatk-bwamem-jni
                (Apache-2.0 build of BWA; BSD-3-Clause bindings);
-               samtools, bcftools and HTSlib 1.24; OpenJDK 21.
+               samtools, bcftools and HTSlib 1.24; OpenJDK 21; PyPGx 0.27.0's
+               gene table (lexicon/gene-table.csv, MIT, section 1).
 zarohla:       OptiType 1.5.0 (BSD-3-Clause), https://github.com/FRED-2/OptiType,
                with its HLA reference built from IPD-IMGT/HLA 3.13.0 (CC BY-ND,
                below); YARA and SeqAn 2.4.0 (BSD-3-Clause, Debian seqan-apps);
@@ -114,6 +128,12 @@ app:           the Python packages in uv.lock, each under its own licence, among
                platform"); bcftools and HTSlib 1.24; fonts from Debian: Liberation
                (GPL-2.0 with font exception), DejaVu (Bitstream Vera), Noto
                (OFL-1.1).
+genome-downloader:
+               samtools and HTSlib 1.21 from Debian (MIT; HTSlib's CRAM code
+               BSD-3-Clause); OpenJDK 21 from Debian (GPL-2.0-only WITH
+               Classpath-exception-2.0), which the downloader does not use;
+               FastAPI (MIT), Uvicorn (BSD-3-Clause), Requests (Apache-2.0) and
+               tqdm (MPL-2.0 AND MIT).
 Unmodified upstream images: PostgreSQL 18.6 (PostgreSQL License), HAPI FHIR JPA
 Server 8.12.0 (Apache-2.0), Kroki 0.32.1 with Mermaid 11.16.0 (MIT).
 
@@ -145,11 +165,16 @@ Debian packages keep their copyright files under /usr/share/doc in each image.
   Any other use of UCSC Chain Files requires a commercial license". The genome
   downloader fetches it from UCSC; downloading it accepts UCSC's End User
   License Agreement, https://genome.ucsc.edu/license/EULA.pdf.
-- 1000 Genomes Project reference genomes and phasing panels (inside PyPGx's
-  resource bundle): EMBL-EBI terms of use, Fort Lauderdale principles. The 30x
-  data were generated at the New York Genome Center with funds provided by
-  NHGRI Grants 3UM1HG008901-03S1 and 3UM1HG008901-04S2, from cell lines and DNA
-  samples obtained from the NIGMS Human Genetic Cell Repository at the Coriell
+- 1000 Genomes Project data: the GRCh37 reference human_g1k_v37 and the GRCh38
+  full analysis set with decoys and HLA
+  (GRCh38_full_analysis_set_plus_decoy_hla.fa, for the CRAM reference cache),
+  which the genome downloader fetches from the 1000 Genomes FTP site
+  (https://ftp.1000genomes.ebi.ac.uk); the phasing panels inside PyPGx's
+  resource bundle; and the NA12878 reads in the demo CRAM (section 1).
+  EMBL-EBI terms of use, Fort Lauderdale principles. The 30x data were
+  generated at the New York Genome Center with funds provided by NHGRI Grants
+  3UM1HG008901-03S1 and 3UM1HG008901-04S2, from cell lines and DNA samples
+  obtained from the NIGMS Human Genetic Cell Repository at the Coriell
   Institute for Medical Research.
 - IPD-IMGT/HLA sequences, in OptiType's reference: Creative Commons
   Attribution-NoDerivs. https://www.ebi.ac.uk/ipd/imgt/hla/licence/

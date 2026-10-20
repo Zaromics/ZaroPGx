@@ -90,6 +90,29 @@ def test_notice_names_every_tool_the_images_carry(credit):
     assert names.get(credit.key, credit.name) in NOTICE, credit.name
 
 
+@pytest.mark.parametrize(
+    "licence, copyright_line",
+    [
+        ("lexicon/LICENSE.pypgx", 'Copyright (c) 2020 Seung-been "Steven" Lee'),
+        (
+            "docker/mtdna-server-2/LICENSE.mtdna-server-2",
+            "Copyright (c) 2023 Hansi Weißensteiner",
+        ),
+    ],
+)
+def test_files_copied_from_mit_projects_carry_the_licence_text(licence, copyright_line):
+    """MIT's one condition: its copyright line and permission notice go with copies.
+
+    The PyPGx tables in lexicon/ and mtDNA-Server 2's report.Rmd and rCRS FASTA are
+    copied into the repository; NOTICE names the licence file beside them.
+    """
+    text = (ROOT / licence).read_text(encoding="utf-8")
+    assert copyright_line in text
+    assert "Permission is hereby granted, free of charge" in text
+    assert licence in NOTICE
+    assert copyright_line in " ".join(NOTICE.split())
+
+
 def test_every_platform_component_has_a_licence():
     for item in PLATFORM:
         assert item.licence and item.url.startswith("https://"), item

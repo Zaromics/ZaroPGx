@@ -1470,6 +1470,9 @@ CREDITS: Tuple[Credit, ...] = (
         "CC-BY-ND",
         lambda run: run.ran("hla_typing"),
         (IMGT_HLA_2026, IMGT_HLA_2013),
+        # OptiType 1.5.0's data/hla_reference_dna.fasta (unchanged since 2014) holds
+        # 6,889 alleles; every ID and name is in IPD-IMGT/HLA's Allelelist.3130.txt.
+        # 3.12.0 lacks 236 of them and 3.14.0 renames 7 (Allelelist_history.txt).
         release="3.13.0, in OptiType",
         notice=(
             "HLA allele sequences are from the IPD-IMGT/HLA Database, used under "
@@ -1959,7 +1962,9 @@ TERMINOLOGY_NOTICES: Tuple[Tuple[str, str], ...] = (
         "HL7 FHIR",
         "HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of "
         "Health Level Seven International and their use does not constitute "
-        "endorsement by HL7. FHIR R4 and the Genomics Reporting Implementation "
-        "Guide are published under CC0.",
+        "endorsement by HL7. FHIR R4 is published under CC0, and so are the "
+        "three FHIR packages the bundled HAPI FHIR server loads: the Genomics "
+        "Reporting Implementation Guide 3.0.0, HL7 Terminology (THO) 6.1.0 and "
+        "the FHIR Extensions Pack 5.1.0.",
     ),
 )
