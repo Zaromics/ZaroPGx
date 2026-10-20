@@ -56,6 +56,11 @@ from app.mtdna.mt_rnr1 import (
     REFERENCE,
 )
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+from app.pharmcat.pharmcat_messages import (
+    drug_messages,
+    gene_message_lines,
+    gene_messages,
+)
 from app.pharmcat.report_json import (
     SUPPORTED_VERSION_SERIES,
     extract_matcher_metadata,
@@ -1162,6 +1167,61 @@ def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optiona
     return dict(_EMPTY_MATCHER_METADATA)
 
 
+def probe_pharmcat_report(report_dir: str, report_id: str) -> Optional[Dict[str, Any]]:
+    """The run's PharmCAT report.json, from the files probe_matcher_metadata reads,
+    or None. Never raises."""
+    candidates = [
+        os.path.join(report_dir, f"{report_id}{suffix}")
+        for suffix in _MATCHER_METADATA_FILE_SUFFIXES
+    ]
+    for suffix in _MATCHER_METADATA_FILE_SUFFIXES:
+        try:
+            others = glob.glob(os.path.join(report_dir, f"*{suffix}"))
+            others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            candidates.extend(others)
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as fh:
+                report = json.load(fh)
+            if isinstance(report, dict) and isinstance(report.get("genes"), dict):
+                return report
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+    return None
+
+
+def attach_pharmcat_messages(
+    report: Optional[Mapping[str, Any]],
+    genes: List[Dict[str, Any]],
+    recommendations: List[Dict[str, Any]],
+) -> None:
+    """Put PharmCAT's messages (app/pharmcat/pharmcat_messages.py) on the gene rows
+    (``pharmcat_messages``) and on each recommendation of a drug
+    (``pharmcat_messages``), in place. Every report lane renders those objects."""
+    if not report:
+        return
+    by_gene = gene_messages(report)
+    by_drug = drug_messages(report)
+    for row in genes or []:
+        if isinstance(row, dict):
+            entries = by_gene.get(str(row.get("gene") or "").strip().upper())
+            if entries:
+                row["pharmcat_messages"] = entries
+    for rec in recommendations or []:
+        if isinstance(rec, dict):
+            entries = by_drug.get(str(rec.get("drug") or "").strip().lower())
+            if entries:
+                rec["pharmcat_messages"] = entries
+
+
 # Upstream's own floor (docker/mtdna-server-2/app.py's MIN_MEAN_COVERAGE,
 # nextflow.config params.min_mean_coverage upstream). Repeated here only for
 # the no-call explanation below -- not read back from the sidecar, which
@@ -1496,6 +1556,7 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["allele_results_unbroken"] = allele_results_unbroken
     environment.filters["name_breaks"] = name_breaks
     environment.filters["code_breaks"] = code_breaks
+    environment.filters["message_lines"] = gene_message_lines
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.tests["a_call"] = gene_was_called
@@ -3698,6 +3759,16 @@ def generate_report(
     )
     matcher_meta = probe_matcher_metadata(output_dir, _report_id_for_meta)
 
+    # PharmCAT's own messages on each call and drug: from the report.json it was
+    # given, else the run's copy beside the report (the database lane keeps the
+    # messages but not where PharmCAT put them).
+    _raw = pharmcat_results.get("data") if isinstance(pharmcat_results, dict) else None
+    pharmcat_report = (
+        _raw
+        if isinstance(_raw, dict) and isinstance(_raw.get("genes"), dict)
+        else probe_pharmcat_report(output_dir, _report_id_for_meta)
+    )
+
     # What this report credits: the tools and data this job used, at the versions
     # that ran (app/reports/credits.py). Built once for every output; `platform`
     # is its software, which the workflow diagram labels its steps with.
@@ -4024,6 +4095,10 @@ def generate_report(
         logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
     # The note beside each flagged gene's call; the alert above says why.
     annotate_alt_locus(data.get("genes", []), alt_locus)
+    # PharmCAT's own messages, on the final gene rows and the recommendations.
+    attach_pharmcat_messages(
+        pharmcat_report, data.get("genes", []), template_recommendations
+    )
     # Genes with SV-defined alleles that PyPGx called without copy number
     # (app/reports/copy_number.py): a note beside each call and one alert, from
     # PyPGx's own record, so a whole-genome run, where every such gene has a

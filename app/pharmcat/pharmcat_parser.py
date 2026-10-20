@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 # ZaroPGx imports
 from app.api.db import SessionLocal
+from app.pharmcat.pharmcat_messages import api_messages
 from app.pharmcat.report_json import (
     PharmCATSchemaError,
     detect_format,
@@ -1281,9 +1282,10 @@ def get_pharmcat_summary(
             "total_messages": len(messages),
             "genes": genes,
             "actionable_findings": actionable,
-            "warning_messages": [
-                m for m in messages if m["exception_type"] in ["warning", "error"]
-            ],
+            # PharmCAT 3.4 emits ambiguity, note, footnote, non-match, ... and never
+            # "warning" or "error", which this selected: the list was always empty.
+            # The messages the report shows (app/pharmcat/pharmcat_messages.py).
+            "warning_messages": api_messages(messages),
         }
 
 

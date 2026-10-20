@@ -83,6 +83,17 @@ copy number, so its call cannot show a *CYP2B6* \*29 hybrid or duplication, or a
 *CYP4F2* deletion, and it carries no note. Nor does an outside call PyPGx did not make,
 such as one from `OUTSIDECALLSOVERRIDE`'s file.
 
+**PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
+shows them where PharmCAT's own report does, in PharmCAT's words: a gene's under Genetic
+Results ("PharmCAT's notes on these calls") and in the interactive report's gene panel, a
+drug's at the head of the drug under Drug Recommendations. Among them: an unphased call's
+"The assigned genotype is \*1/\*15; however, \*5/\*37 cannot be ruled out without phased
+data.", the G6PD hemizygous-sample note, the reverse-strand footnotes and the warfarin
+notes, with the CYP2C9 rs12777823 genotype PharmCAT reports for warfarin. Three kinds are
+left out because the report says the same in its own words: PharmCAT's reference-allele
+note (the Wild Type labels), its missing-positions note (Alerts and Warnings) and its
+outside-call note (the Call column). None appears on the Executive Summary.
+
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
 

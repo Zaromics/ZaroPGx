@@ -1,0 +1,39 @@
+{#- PharmCAT's own messages (app/pharmcat/pharmcat_messages.py), where PharmCAT's
+    own report shows them: a gene's with the gene, a drug's with the drug. Its text,
+    its markup removed. generator.attach_pharmcat_messages puts them on the rows
+    ("pharmcat_messages"): each {kind, rule, paragraphs}. -#}
+
+{% macro message_body(m) -%}
+{%- if m.kind == 'report-as-genotype' %}Genotype PharmCAT reports with this drug: {% endif -%}
+{%- for p in m.paragraphs %}{{ p }}{% if not loop.last %}<br>{% endif %}{% endfor -%}
+{%- endmacro %}
+
+{% macro gene_notes(rows) -%}
+{%- set with_messages = rows|selectattr('pharmcat_messages')|selectattr('diplotype', 'a_call')|list %}
+{%- if with_messages %}
+<div class="pharmcat-messages">
+    <h4>PharmCAT's notes on these calls</h4>
+    <p class="header-note">In PharmCAT's words, from its report. Notes about positions it
+       did not read, and about reference alleles, are given above in this report's own
+       words and not repeated.</p>
+    <ul class="pharmcat-message-list">
+    {%- for d in with_messages %}
+        {%- for m in d.pharmcat_messages %}
+        <li><strong>{{ d.gene }}</strong>: {{ message_body(m) }}</li>
+        {%- endfor %}
+    {%- endfor %}
+    </ul>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro drug_notes(recs) -%}
+{%- set first = recs|selectattr('pharmcat_messages')|first %}
+{%- if first %}
+<ul class="pharmcat-message-list drug-messages">
+{%- for m in first.pharmcat_messages %}
+    <li><span class="pharmcat-message-source">PharmCAT:</span> {{ message_body(m) }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- endmacro %}
