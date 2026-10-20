@@ -56,6 +56,17 @@ Then:
 | One report file | `GET /reports/{patient_id}/{job_id}/{file name}` |
 | All of a patient's reports, zipped | `GET /upload/reports/download/{patient_id}` |
 
+Once the job has completed, `GET /upload/status/{job_id}` carries its report links at the
+top level, the ones the page shows: `pdf_report_url`, `html_report_url` (the HTML the PDF is
+made from), `interactive_html_report_url`, `pharmcat_html_report_url`,
+`pharmcat_json_report_url`, `pharmcat_tsv_report_url`, `mtdna_report_url`,
+`mtdna_haplogroups_url` and `mtdna_vcf_url`. Each is there only when the job has that file,
+and is a path on the app, `/reports/{patient_id}/{job_id}/{file name}`.
+`GET /upload/reports/job/{job_id}` returns a job's stored links in `reports`, under
+`pdf_path`, `html_path`, `interactive_html_path` and so on. For a job with no stored links
+it falls back to the files on disk, under `*_url` keys, and there `html_report_url` is the
+interactive report.
+
 ## Endpoint groups
 
 | Prefix | What it is |

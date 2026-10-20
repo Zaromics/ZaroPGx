@@ -446,6 +446,30 @@ async def delayed_cleanup_on_cancellation(job_id: str, job_metadata: dict):
         logger.error(f"Error during delayed cleanup of job {job_id}: {e}")
 
 
+# A finished job's report links under the keys the page reads them by (showResults),
+# from the keys its metadata["reports"] keeps them under: generate_report's served
+# paths (/reports/{patient_id}/{job_id}/{file}). The completion message and
+# GET /upload/status/{job_id} both send these.
+REPORT_URL_KEYS = {
+    "pdf_report_url": "pdf_path",
+    "html_report_url": "html_path",
+    "interactive_html_report_url": "interactive_html_path",
+    "pharmcat_html_report_url": "pharmcat_html_path",
+    "pharmcat_json_report_url": "pharmcat_json_path",
+    "pharmcat_tsv_report_url": "pharmcat_tsv_path",
+    "mtdna_report_url": "mtdna_report_path",
+    "mtdna_haplogroups_url": "mtdna_haplogroups_path",
+    "mtdna_vcf_url": "mtdna_vcf_path",
+}
+
+
+def report_urls(reports: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Every REPORT_URL_KEYS link of a job's stored reports; None where it has none."""
+    return {
+        url_key: reports.get(path_key) for url_key, path_key in REPORT_URL_KEYS.items()
+    }
+
+
 async def handle_final_stages_progression(
     job_service: JobService, job_id: str, outdir: str
 ):
@@ -1008,25 +1032,7 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
                         "progress_percentage": 100,
                         "current_step": "completed",
                         "message": "Processing complete! - All processing finished",
-                        "pdf_report_url": response_data.get("pdf_path"),
-                        "html_report_url": response_data.get("html_path"),
-                        "interactive_html_report_url": response_data.get(
-                            "interactive_html_path"
-                        ),
-                        "pharmcat_html_report_url": response_data.get(
-                            "pharmcat_html_path"
-                        ),
-                        "pharmcat_json_report_url": response_data.get(
-                            "pharmcat_json_path"
-                        ),
-                        "pharmcat_tsv_report_url": response_data.get(
-                            "pharmcat_tsv_path"
-                        ),
-                        "mtdna_report_url": response_data.get("mtdna_report_path"),
-                        "mtdna_haplogroups_url": response_data.get(
-                            "mtdna_haplogroups_path"
-                        ),
-                        "mtdna_vcf_url": response_data.get("mtdna_vcf_path"),
+                        **report_urls(response_data),
                     },
                 )
             )
@@ -2157,41 +2163,14 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         logs = job_service.get_job_logs(job_id)
         latest_message = progress_info.message
 
-        # Extract report URLs from metadata for completed workflows
-        report_urls = {}
+        # A completed job's report links, at the top level, as the completion message
+        # sends them. They are stored under generate_report's *_path keys; this read
+        # looked for the *_url keys, which no job ever stored, and returned none.
+        links = {}
         if job.status == "completed" and metadata.get("reports"):
-            reports = metadata["reports"]
-            logger.info(
-                f"Found report data in workflow metadata: {list(reports.keys())}"
-            )
-
-            # Extract all report URLs to top level for frontend compatibility
-            if "pdf_report_url" in reports:
-                report_urls["pdf_report_url"] = reports["pdf_report_url"]
-            if "html_report_url" in reports:
-                report_urls["html_report_url"] = reports["html_report_url"]
-            if "interactive_html_report_url" in reports:
-                report_urls["interactive_html_report_url"] = reports[
-                    "interactive_html_report_url"
-                ]
-            if "pharmcat_html_report_url" in reports:
-                report_urls["pharmcat_html_report_url"] = reports[
-                    "pharmcat_html_report_url"
-                ]
-            if "pharmcat_json_report_url" in reports:
-                report_urls["pharmcat_json_report_url"] = reports[
-                    "pharmcat_json_report_url"
-                ]
-            if "pharmcat_tsv_report_url" in reports:
-                report_urls["pharmcat_tsv_report_url"] = reports[
-                    "pharmcat_tsv_report_url"
-                ]
-            if "mtdna_report_url" in reports:
-                report_urls["mtdna_report_url"] = reports["mtdna_report_url"]
-            if "mtdna_haplogroups_url" in reports:
-                report_urls["mtdna_haplogroups_url"] = reports["mtdna_haplogroups_url"]
-            if "mtdna_vcf_url" in reports:
-                report_urls["mtdna_vcf_url"] = reports["mtdna_vcf_url"]
+            links = {
+                key: url for key, url in report_urls(metadata["reports"]).items() if url
+            }
 
         # Create response
         response = {
@@ -2214,7 +2193,7 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
                     for step in steps
                 ],
             },
-            **report_urls,  # Include report URLs at top level
+            **links,
         }
 
         logger.info(f"Status response for job {job_id}: {response}")
