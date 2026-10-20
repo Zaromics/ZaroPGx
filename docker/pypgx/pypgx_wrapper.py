@@ -465,8 +465,9 @@ async def process_gene_batch_parallel(
             logger.warning(f"Failed to check workflow cancellation status: {e}")
     
     # Ensure VCF is compressed and indexed BEFORE parallel processing. A path
-    # /genotype already prepared passes through unchanged.
-    vcf_gz = prepare_vcf_for_pypgx(vcf_path)
+    # /genotype already prepared passes through unchanged. Off the event loop,
+    # like every blocking step below: see the wait on the genes.
+    vcf_gz = await asyncio.to_thread(prepare_vcf_for_pypgx, vcf_path)
 
     # Log memory usage before processing
     memory_before = get_memory_usage()
@@ -479,8 +480,13 @@ async def process_gene_batch_parallel(
             for gene in genes
         }
         
-        # Collect results as they complete
-        for future in as_completed(future_to_gene):
+        # Collect results as they complete. The wait for the next gene runs in a
+        # thread: waited on here, on the event loop, it held the loop for a whole
+        # PyPGx run, and every request with it -- /health timed out mid-run, so
+        # the app's services-status showed PyPGx as down while it was genotyping.
+        # Same order, same futures: as_completed itself, stepped from a thread.
+        completed = as_completed(future_to_gene)
+        while (future := await asyncio.to_thread(next, completed, None)) is not None:
             # Check for cancellation before processing each result
             if job_client:
                 try:
@@ -633,8 +639,8 @@ def register_process(process_key: str, pid: int, process_info: Dict[str, Any] = 
 
 def unregister_process(process_key: str):
     """Unregister a process when it completes normally."""
-    if process_key in running_processes:
-        del running_processes[process_key]
+    # pop, not check-then-del: run_pypgx threads and /cancel both remove entries.
+    if running_processes.pop(process_key, None) is not None:
         logger.info(f"Unregistered process for {process_key}")
 
 app = FastAPI(
@@ -796,7 +802,11 @@ async def create_input_vcf(
         # for single- and double-suffix names alike.
         output_vcf_gz = job_dir / (safe_name.split(".", 1)[0] + ".vcf.gz")
 
-        res = run_pypgx_create_input_vcf(str(input_path), str(output_vcf_gz), pypgx_assembly)
+        # In a thread: it runs PyPGx, samtools and bcftools for minutes, and on the
+        # event loop it blocked every other request, /health among them.
+        res = await asyncio.to_thread(
+            run_pypgx_create_input_vcf, str(input_path), str(output_vcf_gz), pypgx_assembly
+        )
         if not res.get("success"):
             if job_client:
                 await job_client.log_progress(f"BAM to VCF conversion failed: {res.get('error', 'Unknown error')}", {"error": res.get("error")})
@@ -3170,7 +3180,9 @@ async def genotype(
         # After the size: the copy without them is plain text, a bgzipped upload's
         # decompressed size.
         if not lane_wrote_coverage_lines(upload_type, input_type):
-            input_filepath, dropped = without_zaropgx_header_lines(input_filepath)
+            input_filepath, dropped = await asyncio.to_thread(
+                without_zaropgx_header_lines, input_filepath
+            )
             if dropped:
                 logger.warning(
                     f"Ignoring {dropped} ZaroPGx header line(s) in an uploaded VCF "
@@ -3246,9 +3258,12 @@ async def genotype(
             without_reads = {
                 g: p for g, p in without_reads.items() if g not in copy_number_genes
             }
-        vcf_for_pypgx = prepare_vcf_for_pypgx(str(input_filepath))
+        # The file work here (bgzip, tabix, bcftools, reading every gene's
+        # positions) runs in a thread, off the event loop, so /health still answers.
+        vcf_for_pypgx = await asyncio.to_thread(prepare_vcf_for_pypgx, str(input_filepath))
         positions = pypgx_gene_positions(pypgx_assembly)
-        evidence = position_evidence(
+        evidence = await asyncio.to_thread(
+            position_evidence,
             vcf_for_pypgx,
             {
                 g: positions[g]
@@ -3312,7 +3327,7 @@ async def genotype(
                 f"Not calling {len(at_positions)} gene(s) with no reads at their "
                 f"positions in the {measured_on}: {', '.join(at_positions)}"
             )
-        vcf_for_pypgx = drop_no_calls(vcf_for_pypgx)
+        vcf_for_pypgx = await asyncio.to_thread(drop_no_calls, vcf_for_pypgx)
         # requested_genes stays the whole panel: the step's counts are out of it.
         genes_to_call = [
             g
@@ -3872,7 +3887,8 @@ async def cancel_workflow_job(request: CancelRequest):
         
         # Check our stored process registry for all processes with this workflow_id
         processes_to_terminate = []
-        for process_key, process_info in running_processes.items():
+        # A snapshot: run_pypgx threads register and unregister while this runs.
+        for process_key, process_info in list(running_processes.items()):
             if process_key.startswith(job_id):
                 processes_to_terminate.append((process_key, process_info))
         
@@ -3925,8 +3941,8 @@ async def cancel_workflow_job(request: CancelRequest):
                     except Exception as e:
                         logger.warning(f"Failed to cleanup {path}: {e}")
                 
-                # Remove from registry
-                del running_processes[process_key]
+                # Remove from registry (its run_pypgx thread may have already)
+                running_processes.pop(process_key, None)
         else:
             logger.warning(f"No running processes found for job {job_id}")
         
