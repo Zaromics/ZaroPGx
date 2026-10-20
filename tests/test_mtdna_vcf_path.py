@@ -55,10 +55,10 @@ def test_reference_is_gated_on_absent_to_ref():
     substring anywhere in the file -- "absent_to_ref" also appears in the
     function signature and docstrings, which would stay green even if the
     gate itself were deleted. The gating decision itself now lives in
-    vcf_evidence() (app/mtdna/mt_rnr1.py), checked ahead of every other
-    tier -- exercised directly against real inputs in
+    vcf_evidence() (app/mtdna/mt_rnr1.py), checked ahead of every tier but
+    the no-chrM-data one -- exercised directly against real inputs in
     test_mt_rnr1_vocabulary.py's test_vcf_evidence_checks_consent_before_
-    every_other_tier. This only pins that the VCF branch actually passes
+    tiers_c_and_d. This only pins that the VCF branch actually passes
     absent_to_ref through to that function rather than dropping it. See
     review round 1, findings 1 and 4 (2026-08-30).
     """
@@ -116,7 +116,7 @@ def test_the_vcf_branch_delegates_the_evidence_decision():
     docker/mtdna-server-2/app.py is not importable in the unit suite (see the
     fixture docstring below), so a test against its source text can only pin
     substrings -- which cannot fail if a conjunction quietly degrades to a
-    disjunction, or absent_to_ref stops being checked first. That is exactly
+    disjunction, or the checks change order. That is exactly
     the failure shape review round 1 caught here: the previous version of
     this test asserted "has_variant_in_gene(" / "not_found_polys" /
     "NO_CALL_REGION_NOT_COVERED" were present in the branch, all of which
@@ -214,16 +214,18 @@ def mtdna_app(tmp_path_factory):
     shutil.which("bcftools") is None or shutil.which("samtools") is None,
     reason="bcftools/samtools not on PATH",
 )
+@pytest.mark.parametrize("absent_to_ref", [True, False])
 def test_a_declared_chrm_header_with_no_chrm_records_stays_a_no_call(
-    mtdna_app, tmp_path
+    mtdna_app, tmp_path, absent_to_ref
 ):
     """The exact regression the evidence gate above exists to prevent: a VCF
     whose header declares a chrM contig (so `contig_name` is truthy -- the
     old, wrong evidence source) but that carries zero chrM records -- a
     realistic nuclear-only exome/panel VCF from GATK/DRAGEN/bcftools, none of
     which omit chrM from the sequence dictionary just because it was never
-    covered. Even with absent_to_ref=true, this must stay a no-call naming
-    the absent chrM data, never Reference. If `bool(contig_name) or` is
+    covered. With absent_to_ref on or off, this must stay a no-call naming
+    the absent chrM data, never Reference: off, it used to be reported as
+    the option being off, which would not have helped (2026-10-19). If `bool(contig_name) or` is
     restored in docker/mtdna-server-2/app.py, this fails: contig_name is
     "chrM" here, which used to be sufficient on its own to promote to
     Reference. See review round 2, finding 1 (2026-08-30).
@@ -242,7 +244,7 @@ def test_a_declared_chrm_header_with_no_chrm_records_stays_a_no_call(
 
     result = asyncio.run(
         mtdna_app._call_from_vcf(
-            str(vcf_path), str(work), "GRCh38", True, "test-no-chrm-data"
+            str(vcf_path), str(work), "GRCh38", absent_to_ref, "test-no-chrm-data"
         )
     )
 

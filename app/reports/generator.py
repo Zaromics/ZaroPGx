@@ -1179,10 +1179,11 @@ def mtdna_report_context(
     via app.mtdna.mt_rnr1.resolve_mt_rnr1_call -- the one place the
     "empty match -> Reference" promotion happens, and the only place that
     knows which of several distinct reasons actually applied):
-      - VCF input, no chrM data at all: the VCF never had a chrM contig
-        header or a chrM record, so an absent MT-RNR1 record is
+      - VCF input, no chrM data at all: the VCF has no chrM record (a chrM
+        contig header alone does not count), so an absent MT-RNR1 record is
         indistinguishable from "never sequenced" -- e.g. an ordinary
-        nuclear-only PGx VCF (NO_CALL_NO_CHRM_DATA);
+        nuclear-only PGx VCF (NO_CALL_NO_CHRM_DATA), with the option on or
+        off;
       - VCF input, chrM data present: the job did not set
         pharmcat_absent_to_ref, so an absent record stayed ambiguous between
         "reference here" and "never covered here" (NO_CALL_NOT_CONSENTED);
@@ -1248,9 +1249,11 @@ def mtdna_report_context(
             )
         elif reason_code == NO_CALL_NOT_CONSENTED:
             no_call_reason = (
-                "No MT-RNR1 variant was detected, and this VCF job did not "
-                "set pharmcat_absent_to_ref, so an absent record could not "
-                "be resolved to Reference."
+                "No MT-RNR1 variant was detected, and the run did not assume "
+                'the reference allele where the file has no record ("Assume '
+                'absent sites = reference", under PharmCAT on the upload page, '
+                "was off), so an absent record could not be resolved to "
+                "Reference."
             )
         elif reason_code == NO_CALL_UNRESOLVED_961_DELINS:
             no_call_reason = (
