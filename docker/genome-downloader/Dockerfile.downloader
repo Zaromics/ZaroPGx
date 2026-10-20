@@ -6,7 +6,6 @@ RUN apt-get update && \
     curl \
     samtools \
     unzip \
-    default-jre \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv and Python deps
