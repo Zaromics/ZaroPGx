@@ -5,7 +5,9 @@ turned off gets them alone. Only a file that exists gets a link, and an mtDNA fi
 only when it holds a result.
 """
 
+import gzip
 import json
+import zlib
 
 import pytest
 
@@ -150,5 +152,20 @@ def test_empty_or_unreadable_mtdna_files_are_not_linked(tmp_path):
     (tmp_path / "mtdna_report.html").write_text("")
     (tmp_path / "mtdna_result.json").write_text("not json")
     (tmp_path / "mtdna_variants.vcf.gz").write_text("not gzip")
+
+    assert mtdna_report_paths(str(tmp_path), PREFIX) == {}
+
+
+def test_a_corrupt_mtdna_vcf_is_not_linked_and_fails_nothing(tmp_path):
+    """Corrupt deflate data raises zlib.error, which is not an OSError: it used to
+    propagate and fail the job's final stage instead of leaving the link out."""
+    data = bytearray(
+        gzip.compress(b"##fileformat=VCFv4.2\n" + b"chrM\t1\t.\tG\tA\n" * 500)
+    )
+    data[20:40] = b"\xff" * 20
+    (tmp_path / "mtdna_variants.vcf.gz").write_bytes(bytes(data))
+    with pytest.raises(zlib.error):
+        with gzip.open(tmp_path / "mtdna_variants.vcf.gz", "rt") as fh:
+            fh.read()
 
     assert mtdna_report_paths(str(tmp_path), PREFIX) == {}

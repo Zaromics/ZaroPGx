@@ -12,6 +12,7 @@ import re
 import shutil
 import struct
 import uuid
+import zlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -3029,7 +3030,7 @@ def _vcf_has_records(path: str) -> bool:
     try:
         with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
             return any(line.strip() and not line.startswith("#") for line in fh)
-    except (OSError, EOFError) as exc:
+    except (OSError, EOFError, zlib.error) as exc:
         logger.warning(f"Could not read {path}: {exc}")
         return False
 
@@ -3078,7 +3079,14 @@ def mtdna_report_paths(report_dir: str, reports_url_prefix: str) -> Dict[str, st
         path = os.path.join(report_dir, name)
         if not os.path.isfile(path):
             continue
-        if has_content(path):
+        try:
+            linked = has_content(path)
+        except Exception as exc:
+            # Deciding a link must not fail the job (the final stage marks it
+            # failed on any error here): a file that cannot be read is not linked.
+            logger.warning(f"{what} not linked: could not read {name}: {exc}")
+            continue
+        if linked:
             paths[key] = f"{reports_url_prefix}/{name}"
             logger.info(f"{what} URL added: {paths[key]}")
         else:
