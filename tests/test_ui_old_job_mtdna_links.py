@@ -13,6 +13,7 @@ same test (mtdna_file_holds_result), and leave the stored metadata as it is.
 
 import copy
 import gzip
+import logging
 
 import pytest
 
@@ -175,3 +176,56 @@ def test_a_link_that_names_no_report_file_is_left_out(tmp_path, monkeypatch, url
 
     assert checked == {"pdf_path": "/reports/p/j/j_pgx_report.pdf"}
     assert reports["mtdna_vcf_path"] == url
+
+
+def test_a_link_through_a_symlink_loop_is_left_out_not_a_500(
+    client, job_service, old_job
+):
+    """Path.resolve() raises RuntimeError for a symlink loop on Python 3.12; the path
+    jail refuses it, so the link is left out and the answer is still 200."""
+    job_id, job_dir, stored = old_job
+    write_na12878_run(job_dir)
+    try:
+        (job_dir / "a").symlink_to(job_dir / "b")
+        (job_dir / "b").symlink_to(job_dir / "a")
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+    prefix = f"/reports/{PATIENT}/{job_id}"
+    metadata = copy.deepcopy(stored)
+    metadata["reports"]["mtdna_vcf_path"] = f"{prefix}/a/mtdna_variants.vcf.gz"
+    job_service.update_job(job_id, JobUpdate(metadata=metadata))
+
+    for endpoint in (f"/upload/reports/job/{job_id}", f"/upload/status/{job_id}"):
+        resp = client.get(endpoint)
+        assert resp.status_code == 200, endpoint
+    reports = client.get(f"/upload/reports/job/{job_id}").json()["reports"]
+    assert "mtdna_vcf_path" not in reports
+    # The others, whose files hold a result, are still linked.
+    assert reports["mtdna_report_path"] == f"{prefix}/mtdna_report.html"
+    assert reports["mtdna_haplogroups_path"] == f"{prefix}/mtdna_result.json"
+
+
+def test_a_link_with_a_nul_is_left_out_not_raised(tmp_path, monkeypatch):
+    """Path.resolve() raises ValueError for an embedded NUL on Python 3.12. (The
+    database's JSONB cannot store one, so this is the check alone.)"""
+    monkeypatch.setattr(upload_router, "REPORTS_DIR", str(tmp_path))
+    reports = {"mtdna_vcf_path": "/reports/p/j/mtdna_variants.vcf.gz\x00"}
+    assert upload_router.without_empty_mtdna_links(reports) == {}
+
+
+def test_reading_a_job_logs_its_mtdna_checks_at_debug_only(client, old_job, caplog):
+    """The check runs on every read of the job, the status poll among them: nothing
+    at INFO, so the log does not fill with paths."""
+    job_id, job_dir, _stored = old_job
+    _no_result_files(job_dir)
+    caplog.set_level(logging.INFO, logger="app.reports.generator")
+
+    client.get(f"/upload/reports/job/{job_id}")
+    client.get(f"/upload/status/{job_id}")
+
+    assert not [r for r in caplog.records if "mtDNA" in r.getMessage()]
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger="app.reports.generator")
+    client.get(f"/upload/reports/job/{job_id}")
+    debug = [r for r in caplog.records if "not linked" in r.getMessage()]
+    assert debug and all(r.levelno == logging.DEBUG for r in debug)

@@ -3157,9 +3157,13 @@ MTDNA_FILES = {
 }
 
 
-def mtdna_file_holds_result(key: str, path: str) -> bool:
+def mtdna_file_holds_result(key: str, path: str, level: int = logging.INFO) -> bool:
     """True when the file at `path`, the mtDNA file of report_paths key `key`, exists
-    and holds a result by MTDNA_FILES' test for that key. Never raises."""
+    and holds a result by MTDNA_FILES' test for that key. Never raises.
+
+    Logged at `level`: INFO when a finishing job decides its links once, DEBUG when
+    upload_router checks a stored link on every read of a job.
+    """
     _name, what, has_content = MTDNA_FILES[key]
     if not os.path.isfile(path):
         return False
@@ -3168,12 +3172,15 @@ def mtdna_file_holds_result(key: str, path: str) -> bool:
     except Exception as exc:
         # Deciding a link must not fail the job (the final stage marks it
         # failed on any error here): a file that cannot be read is not linked.
-        logger.warning(f"{what} not linked: could not read {path}: {exc}")
+        logger.log(
+            max(level, logging.WARNING) if level >= logging.INFO else level,
+            f"{what} not linked: could not read {path}: {exc}",
+        )
         return False
     if linked:
-        logger.info(f"{what} linked: {path} holds a result")
+        logger.log(level, f"{what} linked: {path} holds a result")
     else:
-        logger.info(f"{what} not linked: {path} has no result in it")
+        logger.log(level, f"{what} not linked: {path} has no result in it")
     return bool(linked)
 
 

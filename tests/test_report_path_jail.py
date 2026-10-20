@@ -112,3 +112,49 @@ def test_retired_report_stubs_return_501(client, method, path):
     test_client, _, _ = client
     resp = getattr(test_client, method)(path)
     assert resp.status_code == 501
+
+
+def test_resolve_under_refuses_a_symlink_loop(tmp_path):
+    """Python 3.12's Path.resolve() raises RuntimeError on a loop, not OSError."""
+    from app.api.utils.path_jail import resolve_under
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    try:
+        (reports / "a").symlink_to(reports / "b")
+        (reports / "b").symlink_to(reports / "a")
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    with pytest.raises(PermissionError):
+        resolve_under(reports, "a", "x")
+
+
+def test_resolve_under_refuses_a_nul(tmp_path):
+    """Path.resolve() raises ValueError for an embedded NUL, not OSError."""
+    from app.api.utils.path_jail import resolve_under
+
+    with pytest.raises(PermissionError):
+        resolve_under(tmp_path, "p", "x\x00y")
+
+
+def test_serve_report_file_with_a_nul_is_refused_not_a_500(client):
+    test_client, reports, _ = client
+    (reports / "pat1").mkdir()
+
+    resp = test_client.get("/reports/pat1/x%00y.txt")
+    assert resp.status_code == 403
+
+
+def test_serve_report_file_through_a_symlink_loop_is_refused_not_a_500(client):
+    test_client, reports, _ = client
+    patient = reports / "pat1"
+    patient.mkdir()
+    try:
+        (patient / "a").symlink_to(patient / "b")
+        (patient / "b").symlink_to(patient / "a")
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    resp = test_client.get("/reports/pat1/a/x.txt")
+    assert resp.status_code == 403

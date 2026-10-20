@@ -510,7 +510,10 @@ def without_empty_mtdna_links(reports: Dict[str, Any]) -> Dict[str, Any]:
             if key not in checked:
                 continue
             path = _report_file(checked[key])
-            if path is None or not mtdna_file_holds_result(path_key, str(path)):
+            # DEBUG: this runs on every read of the job (the status poll among them).
+            if path is None or not mtdna_file_holds_result(
+                path_key, str(path), level=logging.DEBUG
+            ):
                 del checked[key]
     return checked
 
