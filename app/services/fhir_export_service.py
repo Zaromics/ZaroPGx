@@ -72,9 +72,10 @@ RESOURCE_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:zaropgx:fhir-resourc
 # The HLA-B alleles PharmCAT screens, each reported as its own result.
 HLA_B_SCREENED_ALLELES = ("*15:02", "*57:01", "*58:01")
 
-# The genotype of a gene the run did not call, as the calling tools state it
-# ("Unknown"; app/reports/generator.py gene_was_called).
-UNCALLED_GENOTYPE = "Unknown"
+# The genotype a gene no tool reported states: the text of its DataAbsentReason
+# code, not-performed (_genotype_value). A gene a tool reported but could not call
+# states the tool's own words instead ("Unknown", "Unknown/Unknown").
+NOT_TESTED_GENOTYPE = "Not performed"
 
 
 def _text(value: Any) -> Optional[str]:
@@ -767,7 +768,6 @@ class FHIRExportService:
         """
         obs_id = resource_id or str(uuid.uuid4())
         gene_symbol = _text(gene_data.get("gene")) or "Unknown"
-        diplotype = self._genotype_text(gene_data)
         activity_score = gene_data.get("activity_score")
         activity_value = None
         if activity_score not in (None, "", "n/a"):
@@ -807,10 +807,9 @@ class FHIRExportService:
             # Text, as the IG's PharmVar genotype example has it. The diplotype
             # was sent as a code of http://www.pharmvar.org, whose codes are
             # PharmVar's allele ids (PV00155), never a diplotype -- and genes
-            # PharmVar does not cover (ABCG2's rs2231142) went under it too.
-            "valueCodeableConcept": {
-                "text": diplotype,
-            },
+            # PharmVar does not cover (ABCG2's rs2231142) went under it too. A
+            # gene with no call adds why, coded (_genotype_value).
+            "valueCodeableConcept": self._genotype_value(gene_data),
             "component": [],
         }
 
@@ -894,21 +893,61 @@ class FHIRExportService:
         return observation
 
     @staticmethod
-    def _genotype_text(gene_data: Dict[str, Any]) -> str:
-        """The genotype a gene's observation states: its diplotype, or "Unknown"
-        for a gene the run did not call.
+    def _uncalled_reason(gene_data: Dict[str, Any]) -> Optional[str]:
+        """Why the gene has no call, as a DataAbsentReason code; None for a call.
 
-        A gene a tool reported but could not call comes as "Unknown" (or
-        "Unknown/Unknown"). One no tool reported -- HLA from a VCF, a gene
-        outside the input -- comes as the placeholder row app/reports/generator.py
-        _build_canonical_diplotypes adds, with diplotype "". That went out as
-        valueCodeableConcept.text "", which $validate rejects ("value cannot be
-        empty") and a push to HAPI stored as a genotype with no value. It is the
-        same fact as "Unknown" and is stated the same way: the IG's genotype
-        profile requires the value (1..1), so dataAbsentReason, which may stand
-        only where there is none (obs-6), cannot replace it.
+        Two kinds of row come with none. A gene no tool reported -- HLA-C from a
+        VCF, F2 and F5 where PyPGx has nothing for them -- is the placeholder row
+        app/reports/generator.py _build_canonical_diplotypes adds, with diplotype
+        "": its test was not performed. A gene a tool reported but could not call
+        carries the tool's "Unknown" (PyPGx's genes with no call, PyPGx enrichment
+        in generator.py) or "Unknown/Unknown" (PharmCAT's callSource NONE): the
+        genotype exists but is not known. "Unknown" leading the text is the rule
+        generator.gene_was_called applies, so "*1/Unknown" is a call.
         """
-        return _text(gene_data.get("diplotype")) or UNCALLED_GENOTYPE
+        diplotype = _text(gene_data.get("diplotype"))
+        if diplotype is None:
+            return "not-performed"
+        if diplotype.lower().startswith("unknown"):
+            return "unknown"
+        return None
+
+    @staticmethod
+    def _genotype_text(gene_data: Dict[str, Any]) -> str:
+        """The genotype a gene's observation states: its diplotype, or "Not
+        performed" for a gene no tool reported.
+
+        That gene's row has diplotype "" (_uncalled_reason). It went out as
+        valueCodeableConcept.text "", which $validate rejects ("value cannot be
+        empty") and a push to HAPI stored as a genotype with no value; then as
+        "Unknown", the words of a gene a tool reported but could not call, so the
+        two read the same. The IG's genotype profile requires the value (1..1),
+        so dataAbsentReason, which may stand only where there is none (obs-6),
+        cannot replace it.
+        """
+        return _text(gene_data.get("diplotype")) or NOT_TESTED_GENOTYPE
+
+    @classmethod
+    def _genotype_value(cls, gene_data: Dict[str, Any]) -> Dict[str, Any]:
+        """The genotype observation's valueCodeableConcept: the genotype as text,
+        and for a gene with no call, a DataAbsentReason coding saying why --
+        not-performed (no tool reported the gene) or unknown (one did, and could
+        not call it) -- so a reader need not match the text to tell them apart.
+        """
+        text = cls._genotype_text(gene_data)
+        reason = cls._uncalled_reason(gene_data)
+        if reason is None:
+            return {"text": text}
+        return {
+            "coding": [
+                {
+                    "system": terminology.DATA_ABSENT_REASON,
+                    "code": reason,
+                    "display": terminology.DATA_ABSENT_REASON_DISPLAYS[reason],
+                }
+            ],
+            "text": text,
+        }
 
     @staticmethod
     def _states_a_phenotype(phenotype: Any) -> bool:

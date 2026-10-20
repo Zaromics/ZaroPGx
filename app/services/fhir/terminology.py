@@ -46,6 +46,23 @@ GENOMICS_TBD_DISPLAYS = {
     "conclusion-string": "Conclusion Text",
 }
 
+# HL7's DataAbsentReason code system (HL7 Terminology), with its displays for the
+# codes ZaroPGx sends: why a gene's genotype holds no call. The IG's genotype profile
+# requires a value (1..1) and obs-6 forbids dataAbsentReason beside one, so the
+# reason goes in the value, as a coding of it: R4 Observation.dataAbsentReason's
+# comment allows exceptional values "in the value", and US Core's Missing Data rule
+# for a coded element whose binding is example, preferred or extensible (this one's
+# is example) is DataAbsentReason's code in the CodeableConcept.
+DATA_ABSENT_REASON = "http://terminology.hl7.org/CodeSystem/data-absent-reason"
+DATA_ABSENT_REASON_DISPLAYS = {
+    # "The value is not available because the observation procedure (test, etc.)
+    # was not performed": no tool reported the gene.
+    "not-performed": "Not Performed",
+    # "The value is expected to exist but is not known": a tool reported the gene
+    # and could not call it.
+    "unknown": "Unknown",
+}
+
 # ZaroPGx-local identifier namespaces.
 ZAROPGX_PATIENT_ID = "urn:zaropgx:patient-id"
 ZAROPGX_REPORT_ID = "urn:zaropgx:report-id"
