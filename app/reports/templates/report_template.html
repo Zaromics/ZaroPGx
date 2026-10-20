@@ -1359,7 +1359,7 @@
                with the gene rather than being dropped for tidiness. #}
             {# Why PyPGx made no call, where it said (generator: no_call_note): one
                footnote per reason, since one VCF can leave many genes with the same
-               one (59 on the old demo VCF, PharmCAT's example). #}
+               one (59 on the old demo VCF, test_data/pharmcat.example2.vcf). #}
             {% set no_call_notes = uncalled_genes|selectattr('no_call_note')|map(attribute='no_call_note')|unique(case_sensitive=true)|list %}
             <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if d.no_call_note %}<sup>{{ no_call_notes.index(d.no_call_note) + 1 }}</sup>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>
             {% for note in no_call_notes %}

@@ -11,6 +11,9 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1) } -Update"
 ```
 
+Run these as given: they fetch the scripts from `main`. The `bootstrap.sh` in your checkout
+pins its own release and updates to nothing newer.
+
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
@@ -18,10 +21,11 @@ by `docker compose up -d`.
 
 ### The image tag moves with the release
 
-`start-docker.sh` and `start-docker.ps1` now replace an older release's `ZAROPGX_TAG` in
-`.env` (such as `0.3.2`) with the new release, and say so; `latest`, newer and custom tags
-are left alone. If you start the stack with `docker compose` directly, set it yourself, then
-pull:
+`start-docker.sh` and `start-docker.ps1` now replace `ZAROPGX_TAG` in `.env` with the new
+release when it names an older one (such as `0.3.2`), and say so. A blank tag, `latest`, a
+newer release and any tag that is not a plain release number (`0.4.0-rc1`, `v0.3.2`, a local
+build's) are left alone. If you start the stack with `docker compose` directly, set it
+yourself, then pull:
 
 ```bash
 docker compose pull && docker compose up -d
@@ -54,16 +58,18 @@ results. To keep uploads, add `KEEP_UPLOADS=true` to `.env`.
 
 The templates now pin `HAPI_FHIR_TAG=v8.12.0-2` (was `v8.10.0-2`). An existing `.env` keeps
 its value. If you change it, HAPI migrates its schema on first start and cannot go back:
-back up the database first (see the docs, *Running a server*). The implementation guide
-install below was tested on `v8.12.0-2` only.
+back up the database first (see the docs, *Running a server*). Either tag works with the
+implementation guide below: on a `fhir` schema made by 0.3.2, `v8.10.0-2` and `v8.12.0-2`
+both installed all three packages on the first start, and `$validate` of the Run Demo
+bundle gave the same errors (none) and warnings on both.
 
 ### The FHIR server installs the Genomics Reporting IG
 
 On the first start after updating, `fhir-server` installs the HL7 Genomics Reporting IG
 3.0.0, which the FHIR export follows, and the two packages it depends on (HL7 Terminology
 6.1.0 and the FHIR Extensions Pack 5.1.0). They are read from `docker/fhir-server/packages`,
-which `compose.yml` now mounts read-only; nothing is downloaded. That start takes 18 to 25
-seconds longer and adds about 46 MB to the `fhir` schema; later starts skip the install. If
+which `compose.yml` now mounts read-only; nothing is downloaded. That start takes 14 to 25
+seconds longer and adds about 50 MB to the `fhir` schema; later starts skip the install. If
 one of the package files is missing, HAPI does not start, and its log says
 `HAPI-2031: Error loading "file:///fhir-packages/..."`: restore the file from the release
 (`git checkout -- docker/fhir-server/packages`). Details: `docs/developer/architecture.md`,
@@ -86,8 +92,14 @@ against the 1000 Genomes GRCh38 analysis set in the CRAM reference cache (above)
 the genome downloader has cached it, Run Demo answers 503 and the page says why; with
 `REF_CACHE_ENABLED=false` it always does. Like any CRAM, it fails with GATK switched off.
 `app/static/demo/pharmcat.example.vcf` is gone, and with it the address
-`/static/demo/pharmcat.example.vcf`; PharmCAT's example VCF is in `test_data/`. The CRAM
-adds 30 MB to the repository, which the update downloads.
+`/static/demo/pharmcat.example.vcf`; the same file is `test_data/pharmcat.example2.vcf`. The
+CRAM adds 30 MB to the repository, which the update downloads.
+
+The cache is built by the genome downloader's start-up run. With `DOWNLOAD_ON_STARTUP=false`
+in `.env`, an updated install never builds it, and Run Demo answers 503 for good; the
+downloader's `/start-download` does not help, it answers `already_completed`. To build the
+cache, remove that line or set it to `true`, then `docker compose up -d genome-downloader`:
+with the genomes already staged, it fetches only the cache.
 
 ### Nextflow no longer mounts the Docker socket
 
@@ -112,7 +124,8 @@ From a VCF or BCF, PyPGx used to call every gene it was asked for, reading a gen
 record in the file as the reference sequence. It now calls a gene only where the file has a
 genotype at one of the positions PyPGx defines the gene's alleles at; a gene with none gets
 no call and a note, unless **Assume absent sites = reference** is on. On the old demo VCF
-(PharmCAT's example), asked for all 66 of its genes, PyPGx now calls 2, where it called 40.
+(`test_data/pharmcat.example2.vcf`), asked for all 66 of its genes, PyPGx now calls 2, where
+it called 40.
 A VCF you analysed with 0.3.2 can therefore come back with most PyPGx genes not called.
 Turn the option on only for a whole-genome call set, where a missing record does mean the
 reference (`docs/user/usage.md`, *Options*; `docs/user/file-formats.md`, *Variant Call
@@ -124,9 +137,9 @@ The index `scripts/build-align-index.sh` builds for FASTQ (see v0.3.1 → v0.3.2
 BAM, CRAM and SAM too. When an alignment has 20 or more reads whose primary alignment is on
 GRCh38's ALT contigs for *CYP2D6* or *UGT2B17*/*UGT2B15* (an alignment that was not
 ALT-aware, typically), those loci's reads are aligned again against it before PyPGx and
-PharmCAT's positions read them. Without the index, the genes are called from the reads as
-uploaded and flagged in the report: their calls may be wrong. Build it if you analyse
-alignments made against a GRCh38 with ALT contigs.
+PharmCAT's positions read them. Without the index, they are called from the reads as
+uploaded, and *CYP2D6* and *UGT2B15* are flagged in the report: their calls may be wrong.
+Build it if you analyse alignments made against a GRCh38 with ALT contigs.
 
 ### FHIR bundles are saved per job
 

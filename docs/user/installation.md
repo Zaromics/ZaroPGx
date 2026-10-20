@@ -94,8 +94,8 @@ reference cache (another 3.2 GB). The app waits for PharmCAT to be healthy befor
 not for the genome downloader. **Run Demo** works once the downloader has finished: its
 input is a CRAM that decodes only against the cache, and until then the page says so. To
 see where the downloader is, `docker compose logs genome-downloader`, or
-`curl http://127.0.0.1:5050/status`: Run Demo needs its last entry,
-`ref_cache_1kg_analysis_set`, at `ready`.
+`curl http://127.0.0.1:5050/status`: Run Demo needs
+`genomes.ref_cache_1kg_analysis_set.status` to be `ready`.
 
 Then:
 

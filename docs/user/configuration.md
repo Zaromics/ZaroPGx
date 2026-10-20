@@ -54,7 +54,7 @@ Where a template ships a different value from the code's default, both are given
 | `NEXTFLOW_MAX_WAIT_SECONDS` | `86400` | How long the app waits for a pipeline run before failing the job |
 | `FASTQ_MAX_UPLOAD_BYTES` | `21474836480` (20 GB) | The largest FASTQ aligned, both mates together, in bytes; the app and the GATK service both read it. What limits it is disk and time: aligning needs about 9 times the FASTQ's size in free disk, which the GATK service checks before it starts, and a whole genome takes hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested |
 | `PYPGX_MEMORY_LIMIT`, `PYPGX_MAX_PARALLEL_GENES`, `PYPGX_BATCH_SIZE` | `7G`, `8`, `4` | PyPGx's memory and parallelism |
-| `MAX_MEMORY` | `20g` | The GATK service's Java heap for variant calling. For an input over 2 GB, 70% of the container's memory if that is less |
+| `MAX_MEMORY` | `20g` | The GATK service's Java heap for variant calling. For an input over 2 GB, 70% of the host's memory (as the container reads it) if that is less |
 | `PYPGX_PHARMCAT_PREFERENCE` | `pharmcat` (`auto` outside Compose) | Which genes PyPGx genotypes. `pharmcat`: not those PharmCAT calls itself (it still calls CYP2D6, which PharmCAT takes from it). `pypgx`: all 87. `auto`: the first for VCFs, the second for alignments |
 | `OUTSIDECALLSOVERRIDE` | off | Use a hand-written outside-calls file instead of the generated one |
 | `MAX_HEADER_READ_BYTES`, `MAX_HEADER_PARSE_TIMEOUT_SEC` | `1000000000`, `300` | Limits on reading an upload's header |

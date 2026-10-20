@@ -39,7 +39,7 @@ the same way. The other fields are optional:
 |---|---|---|
 | `sample_identifier` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` | Printed as the report's Sample ID; a UUID if omitted |
 | `optitype_enabled`, `gatk_enabled`, `pypgx_enabled`, `mtdna_enabled`, `report_enabled` | `true`, `false` | `false` skips that step. A step the input does not need never runs |
-| `pharmcat_absent_to_ref`, `pharmcat_unspecified_to_ref` | `true`, `false` | PharmCAT's assume-reference flags, VCF and BCF only. `pharmcat_absent_to_ref` also decides whether PyPGx calls a gene the file has no genotype for, and whether MT-RNR1 can be called reference, a gVCF's too (see {doc}`../user/usage`) |
+| `pharmcat_absent_to_ref`, `pharmcat_unspecified_to_ref` | `true`, `false` | PharmCAT's assume-reference flags, VCF and BCF only. `pharmcat_absent_to_ref` also decides whether PyPGx calls a gene the file has no genotype for, and whether MT-RNR1 (a gVCF's too) can be called reference (see {doc}`../user/usage`) |
 
 The response carries `job_id` and `data_id`, the detected `file_type`, and the workflow
 the job will run. An input that cannot be analysed is refused with 400 and a reason, before

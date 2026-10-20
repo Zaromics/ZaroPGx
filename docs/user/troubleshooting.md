@@ -57,8 +57,12 @@ chmod 1777 data/temp data/temp/mtdna data/versions
 written against the 1000 Genomes GRCh38 analysis set, which the genome downloader caches
 after it has staged the reference genomes: a 3.2 GB download on the first start. Wait for
 it (`docker compose logs genome-downloader`, or `curl http://127.0.0.1:5050/status` until
-`ref_cache_1kg_analysis_set` is `ready`) and try again. With `REF_CACHE_ENABLED=false` the
-cache is never built and the demo cannot run.
+`genomes.ref_cache_1kg_analysis_set.status` is `ready`) and try again. With
+`REF_CACHE_ENABLED=false` the cache is never built and the demo cannot run. It is not built
+either on an install updated from 0.3.2 with `DOWNLOAD_ON_STARTUP=false`: the downloader adds
+the cache to staged genomes only on a start-up run, and its `/start-download` answers
+`already_completed`. Remove that line from `.env` or set it to `true`, then
+`docker compose up -d genome-downloader`; it fetches only the cache.
 
 **FASTQ: "The bwa-mem index image is not present".** Build the alignment index once:
 `./scripts/build-align-index.sh`.
