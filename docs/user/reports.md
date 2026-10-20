@@ -47,18 +47,22 @@ it, so a double-sided print holds both on one sheet.
 
 **Genetic Results.** Every gene the run called: up to 91, PharmCAT's 25 and the other 66
 from PyPGx and OptiType. Columns: diplotype, phenotype, activity score, implications, and
-**Call**, the tool that made the call: C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2,
-X an outside call whose tool was not recorded, – no call, ? not recorded. The guideline
-behind each recommendation (CPIC, DPWG or FDA) heads it under Drug Recommendations. The table
-has no guideline column: PharmCAT 3.1 and later record no guideline source per gene.
+**Call**, the tool the run records for the gene: the one that made the call or, for a gene
+without a call, the one that tried. C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2, X an
+outside call whose tool was not recorded, – no call and no tool on record for the gene
+(PharmCAT made none and was given none, or no tool returned a result for it), ? not
+recorded. The guideline behind each recommendation (CPIC, DPWG or FDA) heads it under Drug
+Recommendations. The table has no guideline column: PharmCAT 3.1 and later record no
+guideline source per gene.
 
-Genes examined without a call are listed after the table, with the reason when one is known:
-for a PyPGx gene, no reads over it, or at any of its positions, in the alignment or gVCF, or
-no genotype in a VCF. For a gene PyPGx can find with both copies deleted (CYP2A6, CYP2D6,
-GSTM1, GSTT1, SULT1A1, UGT2B17), no reads at its positions may be that deletion, and the
-reason says so. A PyPGx call made from only some of its positions says beside it how many
-of the rest were read as the reference, and why: no reads there, or no genotype in the
-file.
+Genes examined without a call are listed after the table, each with its Call letter (as
+they are in the interactive report's Genes tab, which lists every gene), and with the reason
+when one is known: for a PyPGx gene, no reads over it, or at any of its positions, in the
+alignment or gVCF, or no genotype in a VCF. For a gene PyPGx can find with both copies
+deleted (CYP2A6, CYP2D6, GSTM1, GSTT1, SULT1A1, UGT2B17), no reads at its positions may be
+that deletion, and the reason says so. A PyPGx call made from only some of its positions
+says beside it how many of the rest were read as the reference, and why: no reads there,
+or no genotype in the file.
 
 **Copy number not assessed.** Some alleles are structural variants: a whole-gene deletion, a
 duplication, or a hybrid with a neighbouring gene, such as *CYP2D6* \*5, \*1x2, \*36 and
@@ -75,13 +79,27 @@ later), only that no read depth reached PyPGx. One entry under Alerts and Warnin
 the genes, and such a gene's row in the Executive Summary points to its note. A
 whole-genome alignment's report has none of these.
 
-Not every call of these genes is PyPGx's. PharmCAT calls *CYP2B6*, *CYP4F2* and *G6PD*
-itself, from small variants, on every input, a whole genome included, unless
-`PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an alignment;
-{doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT does not measure
-copy number, so its call cannot show a *CYP2B6* \*29 hybrid or duplication, or a
-*CYP4F2* deletion, and it carries no note. Nor does an outside call PyPGx did not make,
-such as one from `OUTSIDECALLSOVERRIDE`'s file.
+PharmCAT's own calls get the same kind of note. PharmCAT calls *CYP2B6*, *CYP2C19*,
+*CYP4F2* and *SLCO1B1* itself, from small variants, on every input, a whole genome
+included, unless `PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an
+alignment; {doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT 3.4
+names the structural alleles it cannot detect from a VCF: the *CYP2B7*-*CYP2B6* hybrids
+*CYP2B6* \*29 and \*30, and the deletions *CYP2C19* \*36 and \*37, *CYP4F2* \*16 and
+*SLCO1B1* \*48 and \*49. It says so in its own HTML report's disclaimers, not in the
+report.json this report is built from. Each such call of PharmCAT's (Call C) is marked
+"Copy number not assessed (PharmCAT's call)", with the alleles it would miss. When PyPGx
+makes these calls instead, it cannot show them all either: it has no copy-number model for
+*CYP2C19* or *SLCO1B1* ("Copy number not assessed (PyPGx has no copy-number model for this
+gene)"), and none of its *CYP2B6* copy-number states is \*30, so even its whole-genome
+*CYP2B6* call is marked. Its *CYP4F2* call from a whole genome measures the gene's copy
+number, so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If
+PyPGx measured a copy number other than normal for a gene whose call shown is PharmCAT's,
+the call may be wrong, and its row in the Executive Summary says "PyPGx found a structural
+allele". One entry under Alerts and Warnings, "Structural alleles not assessed", names the
+genes, and one note behind the Executive Summary covers them all. These notes appear on a
+whole genome's report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
+An outside call neither tool made, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets no
+note either.
 
 **PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
 shows them where PharmCAT's own report does, in PharmCAT's words: a gene's under Genetic
@@ -161,14 +179,27 @@ risk for an HLA risk allele found, ...) and sent as text where none does (Likely
 G6PD's terms, hedged and uncertain calls); {doc}`../samples/README` has the table. High
 and Low risk (HLA risk alleles, MT-RNR1, malignant hyperthermia) follow CPIC's EHR priority
 for the result, since the IG has no term for the result itself; such a phenotype carries a
-note saying so, and the mapping is provisional. A gene the run did not call, including
-one no tool reported (HLA from a VCF), has the genotype "Unknown", since the IG's
-genotype profile requires a value. The bundle validates against those
-profiles with no errors (HAPI FHIR's
-`$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.
-Bundles written before then do not validate, and their XML is not readable as FHIR. The
-`/fhir` endpoints ({doc}`../developer/api-reference`) also generate, preview and save a
-bundle.
+note saying so, and the mapping is provisional. A gene the run did not call still has a
+genotype, since the IG's genotype profile requires a value, and its value carries a code
+of HL7's DataAbsentReason saying why. `not-performed` (text "Not performed"): nothing
+tested the gene. No tool reported it and none was to examine it, or the run did not run
+the tool that supplies it: no HLA typing (every VCF run, or OptiType turned off: HLA-A,
+HLA-B and HLA-C), no mtDNA calling (MT-RNR1), no PyPGx (CYP2D6, which PharmCAT takes from
+PyPGx), no PharmCAT. `error` (text "Error", and a note saying why): the tool that tried
+the gene failed on it (a PyPGx error, or a PyPGx run the job turned on that ended without
+results); a gene PharmCAT examined itself stays `unknown` whatever PyPGx did. `unknown`:
+a tool tested the gene and could not call it (text as the tool put it: "Unknown",
+"Unknown/Unknown", "Indeterminate"). That includes F2 and F5 after PharmCAT ran: it
+examines them in every run but lists them only when it calls them (its unannotated gene
+calls), so a VCF without their positions leaves them out of its report. The bundle validates against those profiles with no errors (HAPI
+FHIR's `$validate`, October 2026); {doc}`../samples/README` lists the warnings that
+remain and why. Bundles written before then do not validate, and their XML is not
+readable as FHIR. The `/fhir` endpoints ({doc}`../developer/api-reference`) also
+generate, preview and save a bundle. `POST /fhir/save/workflow/{job_id}` and the
+endpoints that take a PharmCAT run id build it from PharmCAT's rows in the database:
+PharmCAT's genes only, without what the report step knew about the run, so a gene with
+no call is `unknown` there. Saving that way overwrites the job's bundle, and a push
+then sends it; regenerating the job's report writes the full bundle again.
 
 Writing the files sends nothing anywhere. To put a job's results on a FHIR server, ask for
 it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_URL`, in
