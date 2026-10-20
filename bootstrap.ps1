@@ -65,6 +65,34 @@ function Read-ConsoleLine {
     return [Console]::ReadLine()
 }
 
+# Under `iwr | iex` the script runs in the caller's own PowerShell, and `exit` ends
+# it: a window opened just to run this closes before its last message can be read.
+# Every exit after a message the user must read comes through here, which waits for
+# Enter first when someone is at the console (not under -NonInteractive or with
+# input redirected, where Read-Host would fail or read the pipe).
+function Exit-Bootstrap {
+    param([int]$Code = 1)
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        try { [void](Read-Host "Press Enter to close") } catch { }
+    }
+    exit $Code
+}
+
+# Local changes to tracked files, which `git rm --cached -r .` + `git reset --hard`
+# would discard: the working copy's and the index's (staged, even when the working
+# copy was then reverted), each against HEAD. git diff compares content after
+# .gitattributes' eol rules, so a file whose only change is CRLF line endings is not
+# listed; git status lists it, as its size changed. core.safecrlf=false silences
+# git's "CRLF will be replaced by LF" warning for each such file. Throws when git
+# fails, so local changes cannot be ruled out.
+function Get-TrackedChanges {
+    $workingCopy = & git -c core.safecrlf=false -C $TargetDir diff --name-status HEAD --
+    if ($LASTEXITCODE -ne 0) { throw "git diff failed" }
+    $index = & git -c core.safecrlf=false -C $TargetDir diff --cached --name-status HEAD --
+    if ($LASTEXITCODE -ne 0) { throw "git diff --cached failed" }
+    @($workingCopy) + @($index) | Where-Object { $_ } | Select-Object -Unique
+}
+
 # WSL feature install often cannot start until Windows reboots.
 function Test-RebootPending {
     $cbs = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
@@ -261,7 +289,7 @@ function Install-Dependencies {
             
             if ($elevatedProcess.ExitCode -eq 3010) {
                 Write-RebootRequired
-                exit 0
+                Exit-Bootstrap 0
             }
             if ($elevatedProcess.ExitCode -ne 0) {
                 Write-Host "  Installation process exited with code: $($elevatedProcess.ExitCode)" -ForegroundColor Yellow
@@ -520,7 +548,7 @@ function Install-Dependencies {
     
     if ($script:NeedsReboot -or (($MissingDeps -contains "WSL2") -and (Test-RebootPending))) {
         Write-RebootRequired
-        exit 0
+        Exit-Bootstrap 0
     }
 
     Write-Host ""
@@ -538,7 +566,7 @@ function Install-Dependencies {
 # Check dependencies
 if ($SkipDependencyCheck -and $MissingDeps.Count -gt 0) {
     $installed = Install-Dependencies -MissingDeps $MissingDeps
-    if (-not $installed) { exit 1 }
+    if (-not $installed) { Exit-Bootstrap 1 }
     exit 0
 }
 
@@ -613,7 +641,7 @@ if (-not $SkipDependencyCheck) {
                                     Write-Host "  Note: You'll need to set up a username/password on first use" -ForegroundColor Gray
                                     if ($ubuntuInstallOut -match '(?i)restart is required|please reboot|reboot your computer' -or (Test-RebootPending)) {
                                         Write-RebootRequired
-                                        exit 0
+                                        Exit-Bootstrap 0
                                     }
                                 } else {
                                     Write-Host "  [WARNING] Failed to install Ubuntu automatically" -ForegroundColor Yellow
@@ -698,7 +726,7 @@ if (-not $SkipDependencyCheck) {
                 Write-Host "                  WSL version 2.1.5 or higher" -ForegroundColor Gray
             }
             Write-Host ""
-            exit 1
+            Exit-Bootstrap 1
         }
         
         # After installation, re-check dependencies to ensure they're now available
@@ -741,7 +769,7 @@ if (-not $SkipDependencyCheck) {
             Write-Host "  4. Re-run this bootstrap script" -ForegroundColor Gray
             Write-Host ""
             Write-Host "Re-run the same bootstrap command after completing those steps." -ForegroundColor Yellow
-            exit 0
+            Exit-Bootstrap 0
         } else {
             Write-Host "[OK] All dependencies are now available!" -ForegroundColor Green
         }
@@ -749,7 +777,7 @@ if (-not $SkipDependencyCheck) {
 
     if (-not (Test-DockerComposeVersion)) {
         Write-Host "Docker Compose 2.24.0 or newer is required before setup can continue." -ForegroundColor Red
-        exit 1
+        Exit-Bootstrap 1
     }
     
     Write-Host ""
@@ -764,41 +792,56 @@ if (-not (Test-Path $TargetDir)) {
     git clone --branch $Branch $RepoUrl $TargetDir
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Clone failed." -ForegroundColor Red
-        exit 1
+        Exit-Bootstrap 1
     }
 } else {
     Write-Host "Target directory already exists: $TargetDir" -ForegroundColor Gray
     if ($Update) {
         if (-not (Test-Path (Join-Path $TargetDir ".git"))) {
             Write-Host "Existing directory is not a Git repository; refusing to update." -ForegroundColor Red
-            exit 1
+            Exit-Bootstrap 1
         } else {
             Write-Host "Updating repository (fast-forward only)..." -ForegroundColor Yellow
             # Only local changes to tracked files block an update: the checkout
-            # and the line-ending reset below would carry or discard them.
+            # and the line-ending resets below would carry or discard them. Line
+            # endings alone are not a change (see Get-TrackedChanges).
             # Untracked files are not checked. A running install makes some that
             # an older .gitignore does not cover (0.3.2's missed the services'
             # rotated logs, data/*.log.1 to .5), and neither step deletes one. If
             # the release adds a file at the path of an untracked one, git refuses
             # the checkout and names the file (an ignored file there is
             # overwritten, as before).
-            $status = (& git -C $TargetDir status --porcelain --untracked-files=no)
-            if ($status) {
-                Write-Host "Tracked files have local changes; refusing to update. Commit or stash them first (git status lists them)." -ForegroundColor Yellow
-                exit 1
+            try {
+                $trackedChanges = Get-TrackedChanges
+            } catch {
+                Write-Host "git diff failed, so local changes cannot be ruled out; refusing to update." -ForegroundColor Red
+                Exit-Bootstrap 1
+            }
+            if ($trackedChanges) {
+                Write-Host "Tracked files have local changes; refusing to update, so nothing was changed:" -ForegroundColor Yellow
+                $trackedChanges | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+                # A release install is a detached HEAD: a commit there would be
+                # left behind by the checkout. --index restores a staged version too.
+                Write-Host "Stash them (git -C `"$TargetDir`" stash), re-run with -Update, then git -C `"$TargetDir`" stash pop --index." -ForegroundColor Yellow
+                Exit-Bootstrap 1
             } else {
+                # Nothing real to lose. A file whose only change is CRLF line
+                # endings still looks modified to git checkout, which refuses to
+                # replace it, so check those files out again first.
+                git -C $TargetDir rm --cached -r . 2>&1 | Out-Null
+                git -C $TargetDir reset --hard 2>&1 | Out-Null
                 # Release hotfix tags may be replaced deliberately. Force-fetch
                 # tags so an existing clone does not retain an older tag object.
                 git -C $TargetDir fetch --all --prune --force --tags
-                if ($LASTEXITCODE -ne 0) { Write-Host "git fetch failed." -ForegroundColor Red; exit 1 }
+                if ($LASTEXITCODE -ne 0) { Write-Host "git fetch failed." -ForegroundColor Red; Exit-Bootstrap 1 }
                 git -C $TargetDir checkout $Branch
-                if ($LASTEXITCODE -ne 0) { Write-Host "git checkout failed. If git named untracked files the release would overwrite, move them aside and re-run." -ForegroundColor Red; exit 1 }
+                if ($LASTEXITCODE -ne 0) { Write-Host "git checkout failed. If git named untracked files the release would overwrite, move them aside and re-run." -ForegroundColor Red; Exit-Bootstrap 1 }
                 git -C $TargetDir rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>$null | Out-Null
                 if ($LASTEXITCODE -eq 0) {
                     git -C $TargetDir pull --ff-only
-                    if ($LASTEXITCODE -ne 0) { Write-Host "git pull failed (non-fast-forward)." -ForegroundColor Red; exit 1 }
+                    if ($LASTEXITCODE -ne 0) { Write-Host "git pull failed (non-fast-forward)." -ForegroundColor Red; Exit-Bootstrap 1 }
                 }
-                
+
                 # Re-normalize line endings after pull (in case .gitattributes was updated)
                 Write-Host "Re-normalizing line endings..." -ForegroundColor Gray
                 git -C $TargetDir rm --cached -r . 2>&1 | Out-Null
@@ -807,14 +850,34 @@ if (-not (Test-Path $TargetDir)) {
         }
     } else {
         Write-Host "Skipping update (use -Update to fetch latest)." -ForegroundColor Gray
-        
-        # Check if we need to re-normalize line endings even without update
+
+        # Check if we need to re-normalize line endings even without update.
+        # A checkout made before .gitattributes forced LF on shell scripts, or one
+        # whose scripts were rewritten with CRLF by a Windows editor or tool, has a
+        # start-docker.sh that bash (WSL, the containers) cannot run. Clearing the
+        # index and resetting checks every tracked file out again under the current
+        # .gitattributes. The reset also overwrites local changes to tracked files,
+        # so it refuses when there are any; line endings alone are not a change
+        # (see Get-TrackedChanges).
         if (Test-Path (Join-Path $TargetDir ".git")) {
             $shFile = Join-Path $TargetDir "start-docker.sh"
             if (Test-Path $shFile) {
                 # Check if file has CRLF line endings
                 $content = Get-Content -Path $shFile -Raw
                 if ($content -match "`r`n") {
+                    try {
+                        $trackedChanges = Get-TrackedChanges
+                    } catch {
+                        Write-Host "start-docker.sh has Windows (CRLF) line endings, but git diff failed, so local changes cannot be ruled out; not re-normalizing." -ForegroundColor Red
+                        Exit-Bootstrap 1
+                    }
+                    if ($trackedChanges) {
+                        Write-Host "start-docker.sh has Windows (CRLF) line endings. Re-normalizing them would discard local changes to tracked files, so nothing was changed:" -ForegroundColor Yellow
+                        $trackedChanges | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+                        # --index restores a staged version too.
+                        Write-Host "Stash them (git -C `"$TargetDir`" stash), re-run, then restore them (git -C `"$TargetDir`" stash pop --index)." -ForegroundColor Yellow
+                        Exit-Bootstrap 1
+                    }
                     Write-Host "Detected incorrect line endings, re-normalizing files..." -ForegroundColor Yellow
                     git -C $TargetDir rm --cached -r . 2>&1 | Out-Null
                     git -C $TargetDir reset --hard 2>&1 | Out-Null
@@ -828,7 +891,7 @@ if (-not (Test-Path $TargetDir)) {
 $startScript = Join-Path $TargetDir "start-docker.ps1"
 if (-not (Test-Path $startScript)) {
     Write-Host "start-docker.ps1 not found at: $startScript" -ForegroundColor Red
-    exit 1
+    Exit-Bootstrap 1
 }
 
 Write-Host "Launching startup script..." -ForegroundColor Yellow
@@ -841,12 +904,12 @@ try {
     if ($startScriptExitCode -ne 0) {
         Write-Host "start-docker.ps1 exited with code: $startScriptExitCode" -ForegroundColor Red
         if ($didPush) { Pop-Location }
-        exit $startScriptExitCode
+        Exit-Bootstrap $startScriptExitCode
     }
 } catch {
     Write-Host "Failed to launch start-docker.ps1: $($_.Exception.Message)" -ForegroundColor Red
     if ($didPush) { Pop-Location }
-    exit 1
+    Exit-Bootstrap 1
 }
 
 

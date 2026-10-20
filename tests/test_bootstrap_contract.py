@@ -55,6 +55,12 @@ def _bash_function(script: str, name: str) -> str:
     return text[match.start() : position]
 
 
+def _powershell_function(script: str, name: str) -> str:
+    """Extract a top-level PowerShell function (its closing brace at column 0)."""
+    start = script.index(f"\nfunction {name} {{\n") + 1
+    return script[start : script.index("\n}\n", start) + 3]
+
+
 def test_release_checkout_and_image_profiles_are_pinned_together():
     bash = _text("bootstrap.sh")
     powershell = _text("bootstrap.ps1")
@@ -251,9 +257,15 @@ def test_both_bootstraps_check_tracked_files_only_before_updating():
     bash = _text("bootstrap.sh")
     powershell = _text("bootstrap.ps1")
     assert '"$(git status --porcelain --untracked-files=no)"' in bash
-    assert "git -C $TargetDir status --porcelain --untracked-files=no)" in powershell
-    for script in (bash, powershell):
-        assert "status --porcelain)" not in script
+    assert "status --porcelain)" not in bash
+    # bootstrap.ps1 compares content with git diff, which never lists untracked files.
+    update = powershell[
+        powershell.index("Updating repository (fast-forward only)") : powershell.index(
+            '"Skipping update'
+        )
+    ]
+    assert "$trackedChanges = Get-TrackedChanges" in update
+    assert "status --porcelain" not in powershell
 
 
 def test_gitignore_covers_the_services_rotated_logs():
@@ -476,20 +488,140 @@ def test_powershell_bootstrap_propagates_startup_failure():
         re.DOTALL,
     )
     assert failure_branch
-    assert "exit $startScriptExitCode" in failure_branch.group("body")
+    assert "Exit-Bootstrap $startScriptExitCode" in failure_branch.group("body")
 
 
 def test_powershell_update_refusals_exit_before_startup():
     powershell = _text("bootstrap.ps1")
     dirty_branch = re.search(
-        r"if \(\$status\) \{(?P<body>.*?)\n\s*\}",
+        r"if \(\$trackedChanges\) \{(?P<body>.*?)\n\s*\}",
         powershell,
         re.DOTALL,
     )
     assert dirty_branch
-    assert "exit 1" in dirty_branch.group("body")
+    assert "Exit-Bootstrap 1" in dirty_branch.group("body")
     assert (
         "Existing directory is not a Git repository; refusing to update." in powershell
+    )
+
+
+def test_powershell_tracked_changes_compare_content_in_both_working_copy_and_index():
+    """bootstrap.ps1 re-normalizes line endings with `git rm --cached -r .` and `git
+    reset --hard`, which discard local changes to tracked files: the working copy's
+    and the index's. `git diff HEAD` alone misses a change that was staged and then
+    reverted in the working copy. git status would list a file whose only change is
+    CRLF line endings (its size changed), refusing someone who edited nothing; git diff
+    compares content after .gitattributes' eol rules. (PowerShell is not in CI; the
+    branch was run under pwsh 7.4 in a container, see its PR text.)"""
+    powershell = _text("bootstrap.ps1")
+    function = _powershell_function(powershell, "Get-TrackedChanges")
+    for diff in ("diff --name-status HEAD --", "diff --cached --name-status HEAD --"):
+        # core.safecrlf=false: no "CRLF will be replaced by LF" warning per file.
+        assert re.search(
+            r"& git -c core\.safecrlf=false -C \$TargetDir "
+            + re.escape(diff)
+            + r"\n\s*if \(\$LASTEXITCODE -ne 0\) \{ throw ",
+            function,
+        ), diff
+    assert "status --porcelain" not in powershell
+
+
+def test_powershell_line_ending_resets_refuse_local_changes():
+    """Every `git rm --cached -r .` + `git reset --hard` comes after a tracked-changes
+    check whose failure, and whose finding changes, both exit first. Without -Update,
+    a CRLF start-docker.sh used to trigger the reset with no check at all."""
+    powershell = _text("bootstrap.ps1")
+    resets = [
+        m.start()
+        for m in re.finditer(
+            re.escape("git -C $TargetDir rm --cached -r ."), powershell
+        )
+    ]
+    # -Update: before the checkout and after it. Without: a CRLF start-docker.sh.
+    assert len(resets) == 3
+    for reset in resets:
+        before = powershell[:reset]
+        guarded = before[before.rindex("$trackedChanges = Get-TrackedChanges") :]
+        failed = re.search(r"\} catch \{(?P<body>.*?)\n\s*\}", guarded, re.DOTALL)
+        assert failed, "the check's own failure must be handled"
+        assert re.search(r"Exit-Bootstrap 1\s*$", failed["body"])
+        dirty = re.search(
+            r"\n\s*if \(\$trackedChanges\) \{(?P<body>.*?)\n\s*\}",
+            guarded,
+            re.DOTALL,
+        )
+        assert dirty
+        assert re.search(r"Exit-Bootstrap 1\s*$", dirty["body"])
+
+    update = powershell[
+        powershell.index("Updating repository (fast-forward only)") : powershell.index(
+            '"Skipping update'
+        )
+    ]
+    # A file whose only change is CRLF line endings passes the check, but git
+    # checkout still sees it as modified and refuses to replace it: re-normalize first.
+    assert update.index("rm --cached -r .") < update.index("checkout $Branch")
+
+    no_update = powershell[
+        powershell.index('"Skipping update') : powershell.index("$startScript = ")
+    ]
+    # Still re-normalizes a CRLF checkout, the reset's purpose.
+    assert '$content -match "`r`n"' in no_update
+    assert "git -C $TargetDir reset --hard" in no_update
+
+
+def test_powershell_refusals_say_stash_with_a_quoted_path():
+    """A release install is a detached HEAD: a commit there would be left behind by
+    -Update's checkout, so the refusals say stash, re-run, pop. The commands are
+    copied as printed, so the path is quoted (it may contain spaces). `stash pop`
+    without --index drops a change that was staged and then reverted in the working
+    copy (checked under git 2.34), which the check now refuses for."""
+    powershell = _text("bootstrap.ps1")
+    refusals = re.findall(
+        r"\n\s*if \(\$trackedChanges\) \{(.*?)\n\s*\}", powershell, re.DOTALL
+    )
+    assert len(refusals) == 2
+    for refusal in refusals:
+        said = "\n".join(line for line in refusal.splitlines() if "Write-Host" in line)
+        assert "ommit" not in said
+        assert 'git -C `"$TargetDir`" stash)' in said
+        assert 'git -C `"$TargetDir`" stash pop --index' in said
+        assert "git -C $TargetDir stash" not in said
+    # The first is -Update's.
+    assert "re-run with -Update" in refusals[0]
+    assert "re-run with -Update" not in refusals[1]
+    assert "Commit or stash" not in powershell
+
+
+def test_powershell_exits_after_a_message_wait_for_enter():
+    """Under `iwr | iex`, `exit` ends the caller's own PowerShell (checked under pwsh
+    7.4), so a window opened to run the script closed before its last message could
+    be read. Every exit after such a message goes through Exit-Bootstrap, which
+    pauses only at a console: never under redirected input, where it would read the
+    pipe, and never under -NonInteractive, where Read-Host fails."""
+    powershell = _text("bootstrap.ps1")
+    helper = _powershell_function(powershell, "Exit-Bootstrap")
+    assert "[Environment]::UserInteractive" in helper
+    assert "-not [Console]::IsInputRedirected" in helper
+    assert re.search(
+        r'try \{ \[void\]\(Read-Host "Press Enter to close"\) \} catch \{ \}', helper
+    )
+    assert re.search(r"exit \$Code\n\}\n$", helper)
+
+    # The elevated installer runs in a window of its own that it holds open itself
+    # (Start-Sleep, ReadKey), or whose result its caller reports (3010).
+    elevated = powershell[
+        powershell.index("# If SkipDependencyCheck is set and MissingDeps") : (
+            powershell.index("# Install missing dependencies (normal flow")
+        )
+    ]
+    rest = powershell.replace(helper, "").replace(elevated, "")
+    bare = re.findall(r"(?m)^[^#\n]*?\bexit\s+(?:\d+|\$\w+)", rest)
+    # Only the elevated install's own success, which prints nothing to read.
+    assert [line.strip() for line in bare] == ["exit 0"]
+    assert "if (-not $installed) { Exit-Bootstrap 1 }\n    exit 0\n" in powershell
+    assert powershell.index("function Exit-Bootstrap") < powershell.index(
+        "Exit-Bootstrap 1"
     )
 
 
@@ -540,3 +672,14 @@ def test_documented_alpine_entry_installs_bash_and_curl_first():
     installation = _text("docs/user/installation.md")
     for document in (readme, installation):
         assert "apk add --no-cache bash curl" in document
+
+
+def test_bash_update_refusal_says_stash_not_commit():
+    """A release install is a detached HEAD: a commit there is stranded by the
+    update's checkout, so the refusal says to stash and restore, with the path
+    quoted for copy-paste."""
+    script = (ROOT / "bootstrap.sh").read_text(encoding="utf-8")
+    assert "Commit or stash" not in script
+    assert "stash), re-run with --update" in script
+    assert "stash pop --index" in script
+    assert 'git -C \\"${TARGET_DIR}\\"' in script
