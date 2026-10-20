@@ -40,8 +40,10 @@ Read these first.
 same order in every report. Each row has the diplotype, the phenotype and, where the
 guideline uses one, the activity score. A reference call is shown as PharmCAT labels it
 (CFTR's as "Reference/Reference"; the notes give the allele's name). A gene the data did not call is a grey "Not called"
-row. The page is a right-hand page, and its notes are on the page behind it, so a
-double-sided print holds both on one sheet.
+row. A ⚠ beside a gene marks a call that may be wrong, and the notes say why: most of its
+reads had mapping quality 0, or some of its positions were read as the reference with
+nothing to show it. The page is a right-hand page, and its notes are on the page behind
+it, so a double-sided print holds both on one sheet.
 
 **Genetic Results.** Every gene the run called: up to 91, PharmCAT's 25 and the other 66
 from PyPGx and OptiType. Columns: diplotype, phenotype, activity score, implications, and
@@ -53,8 +55,10 @@ two letters:
 
 Genes examined without a call are listed after the table, with the reason when one is known:
 for a PyPGx gene, no reads over it, or at any of its positions, in the alignment or gVCF, or
-no genotype in a VCF. A PyPGx call made from only some of its positions says beside it how
-many of the rest were read as the reference, and why: no reads there, or no genotype in the
+no genotype in a VCF. For a gene PyPGx can find with both copies deleted (CYP2A6, CYP2D6,
+GSTM1, GSTT1, SULT1A1, UGT2B17), no reads at its positions may be that deletion, and the
+reason says so. A PyPGx call made from only some of its positions says beside it how many
+of the rest were read as the reference, and why: no reads there, or no genotype in the
 file.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
