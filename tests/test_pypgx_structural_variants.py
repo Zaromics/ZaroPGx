@@ -164,21 +164,43 @@ class _Recorder:
 
 
 def test_a_panel_gets_no_sv_inputs(pypgx, monkeypatch, tmp_path, sv_genes):
-    monkeypatch.setattr(pypgx, "whole_genome_depth", lambda *a: 0.0)
+    monkeypatch.setattr(pypgx, "whole_genome_depth", lambda *a: 0.04)
     recorder = _Recorder()
     monkeypatch.setattr(pypgx.subprocess, "run", recorder)
 
-    assert pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh38") is None
+    inputs, record = pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh38")
+
+    assert inputs is None
     assert recorder.calls == [], "no PyPGx SV command may run for a panel"
+    # What the report says why from (app/reports/copy_number.py).
+    assert record == {
+        "status": "low_depth",
+        "median_depth": 0.0,
+        "min_median_depth": 15.0,
+    }
+
+
+def test_another_build_is_recorded_as_such(pypgx, monkeypatch, tmp_path, sv_genes):
+    monkeypatch.setattr(pypgx.subprocess, "run", _Recorder())
+    inputs, record = pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh37")
+    assert inputs is None
+    assert record == {
+        "status": "not_grch38",
+        "median_depth": None,
+        "min_median_depth": 15.0,
+    }
 
 
 def test_a_whole_genome_gets_both_inputs(pypgx, monkeypatch, tmp_path, sv_genes):
-    monkeypatch.setattr(pypgx, "whole_genome_depth", lambda *a: 33.0)
+    monkeypatch.setattr(pypgx, "whole_genome_depth", lambda *a: 33.04)
     recorder = _Recorder()
     monkeypatch.setattr(pypgx.subprocess, "run", recorder)
 
-    depth, control = pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh38")
+    (depth, control), record = pypgx.prepare_sv_inputs(
+        "x.bam", str(tmp_path / "s"), "GRCh38"
+    )
 
+    assert record == {"status": "on", "median_depth": 33.0, "min_median_depth": 15.0}
     assert depth.endswith(".depth-of-coverage.zip")
     assert control.endswith(".control-statistics.zip")
     prepare, stats = recorder.calls
@@ -196,7 +218,9 @@ def test_a_failed_pypgx_step_leaves_no_partial_inputs(
     monkeypatch.setattr(pypgx, "whole_genome_depth", lambda *a: 33.0)
     monkeypatch.setattr(pypgx.subprocess, "run", _Recorder(fail_on=failing))
 
-    assert pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh38") is None
+    inputs, record = pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh38")
+    assert inputs is None
+    assert record["status"] == "failed"
     assert list(tmp_path.iterdir()) == []
 
 

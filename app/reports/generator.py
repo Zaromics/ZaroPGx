@@ -66,6 +66,12 @@ from app.reports.alt_locus import (
     annotate_alt_locus,
     realigned_alt_loci,
 )
+from app.reports.copy_number import (
+    annotate_copy_number,
+    copy_number_alert,
+    genes_without_copy_number,
+    why_not_assessed,
+)
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
@@ -3812,6 +3818,31 @@ def generate_report(
         logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
     # The note beside each flagged gene's call; the alert above says why.
     annotate_alt_locus(data.get("genes", []), alt_locus)
+    # Genes with SV-defined alleles that PyPGx called without copy number
+    # (app/reports/copy_number.py): a note beside each call and one alert, from
+    # PyPGx's own record, so a whole-genome run, where every such gene has a
+    # copy-number call, gets neither. Same new-list rule for the alert.
+    copy_number_why = why_not_assessed(
+        load_job_file_type(db_session, job_id) or file_type, bam2vcf_output
+    )
+    annotate_copy_number(
+        data.get("genes", []),
+        genes_without_copy_number(pypgx_results),
+        copy_number_why,
+    )
+    _copy_number_alert = copy_number_alert(
+        [
+            row["gene"]
+            for row in data.get("genes", [])
+            if isinstance(row, dict)
+            and row.get("copy_number_not_assessed")
+            and gene_was_called(row.get("diplotype"))
+        ],
+        copy_number_why,
+    )
+    if _copy_number_alert:
+        workflow_warnings = list(workflow_warnings) + [_copy_number_alert]
+        template_data["workflow_warnings"] = workflow_warnings
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
     file_type = str(data.get("file_type", "vcf")).lower()
