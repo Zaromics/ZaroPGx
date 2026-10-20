@@ -60,9 +60,19 @@ except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
 # The liftover chain's pinned SHA-256 and its check, shared with the mtDNA service
 # the same way (Dockerfile.gatk-api copies the file in beside this one).
 try:
-    from liftover_chain import CHAIN_SHA256, chain_mismatch  # pyright: ignore[reportMissingImports]
+    from liftover_chain import (  # pyright: ignore[reportMissingImports]
+        CHAIN_SHA256,
+        PHARMCAT_POSITIONS_SHA256,
+        chain_mismatch,
+        pinned_mismatch,
+    )
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
-    from app.utils.liftover_chain import CHAIN_SHA256, chain_mismatch
+    from app.utils.liftover_chain import (
+        CHAIN_SHA256,
+        PHARMCAT_POSITIONS_SHA256,
+        chain_mismatch,
+        pinned_mismatch,
+    )
 
 # Configuration. Read before logging is configured because the progress-log handler
 # below writes into DATA_DIR.
@@ -289,6 +299,12 @@ LIFTOVER_CHAIN_SHA256 = CHAIN_SHA256
 # the file is 1,226 records.
 PHARMCAT_POSITIONS_PATH = os.path.join(
     REFERENCE_DIR, 'pharmcat', 'pharmcat_positions.vcf'
+)
+# Its pinned SHA-256 for the PharmCAT release the stack runs (compose passes the same
+# PHARMCAT_VERSION as to genome-downloader). A release with no pin is not checked,
+# as genome-downloader fetches it unpinned.
+PHARMCAT_POSITIONS_PIN = PHARMCAT_POSITIONS_SHA256.get(
+    os.environ.get("PHARMCAT_VERSION", "3.4.0")
 )
 
 # Builds /liftover-vcf accepts as `source_build`. An allowlist, not a passthrough:
@@ -5777,6 +5793,17 @@ async def gvcf_to_vcf(
                     "PharmCAT version bump."
                 ),
             )
+        # Usable is not the same as right: checked against its pin, cached per file
+        # identity, so this reads the 64 KB file once per process and copy.
+        if PHARMCAT_POSITIONS_PIN:
+            mismatch = await asyncio.to_thread(
+                pinned_mismatch,
+                PHARMCAT_POSITIONS_PATH,
+                PHARMCAT_POSITIONS_PIN,
+                "PharmCAT's position list",
+            )
+            if mismatch:
+                raise HTTPException(status_code=400, detail=mismatch)
 
         # Sanitised for the same reason as every other route here: file.filename is
         # attacker-controlled and this name reaches subprocess argv and the shared

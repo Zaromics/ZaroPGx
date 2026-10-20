@@ -286,6 +286,9 @@ services:
       # The same value the app plans FASTQ uploads against (20 GiB unless .env sets
       # it); a mismatch would accept an upload this service then refuses.
       - FASTQ_MAX_UPLOAD_BYTES=${FASTQ_MAX_UPLOAD_BYTES:-21474836480}
+      # Selects the pin /gvcf-to-vcf checks PharmCAT's position list against; the
+      # same value genome-downloader fetches that list for.
+      - PHARMCAT_VERSION=${PHARMCAT_VERSION:-3.4.0}
       - PYTHONPATH=/app
       - UVICORN_RELOAD_EXCLUDES=".git/*,.venv/*"
     ports:
