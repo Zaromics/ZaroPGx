@@ -1,23 +1,14 @@
 ---
 name: Feature request
-about: Ask for an input format, a gene, a report change or anything else ZaroPGx should do.
+about: Suggest an input format, a gene, a report change or another feature.
 labels: enhancement
 ---
 
-<!--
-Never attach genetic data (VCF, BCF, gVCF, BAM, CRAM, SAM, FASTQ), reports or real
-sample identifiers. Issues are public.
+<!-- Issues are public: never attach genetic data, reports or sample identifiers.
+Roadmap: https://github.com/Zaromics/ZaroPGx/blob/main/docs/to-do.md -->
 
-Check the roadmap first: https://github.com/Zaromics/ZaroPGx/blob/main/docs/to-do.md
--->
+## What should ZaroPGx do?
 
-## What you want ZaroPGx to do
+## Why?
 
-## Why: what it would let you do, or what it gets wrong today
-
-## Sources
-
-<!-- Guidelines, papers, tool documentation or file-format specifications that back the
-request, with links. -->
-
-## Anything else
+## Sources (guidelines, papers, specifications)

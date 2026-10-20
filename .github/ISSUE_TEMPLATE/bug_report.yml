@@ -1,17 +1,12 @@
 name: Bug report
-description: Something went wrong installing ZaroPGx, running an analysis, or in a report.
+description: Something went wrong installing ZaroPGx, running an analysis or in a report.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        ### Never attach genetic data, reports or sample identifiers
-
-        Issues are public. Do not attach or paste VCF, BCF, gVCF, BAM, CRAM, SAM or FASTQ files, PDF, HTML or FHIR reports made from them, or sample IDs, patient IDs or file names that belong to a real person, yours included.
-
-        **Redact logs before you paste them:** replace paths, sample, patient and job IDs, passwords, tokens and cookies with placeholders.
-
-        If you can, reproduce the problem with the public files in `test_data/` or with **Run Demo** (NA12878, a public sample), and say which you used. A security problem goes to [private vulnerability reporting](https://github.com/Zaromics/ZaroPGx/security/advisories/new), not here: see SECURITY.md.
+        **Issues are public. Never attach genetic data (VCF, BAM, CRAM, FASTQ…), reports or sample identifiers, and redact paths, IDs and secrets from logs.**
+        If you can, reproduce the problem with `test_data/` or **Run Demo**. Security problems: see SECURITY.md.
 
   - type: input
     id: version
@@ -78,7 +73,7 @@ body:
     id: what_happened
     attributes:
       label: What happened, and what you expected
-      description: The message the page showed, if any. For a wrong call, give the gene and the call, not the sample's other results.
+      description: Include the error message, if any. For a wrong call, give only the gene and the call.
     validations:
       required: true
 
@@ -108,5 +103,5 @@ body:
     attributes:
       label: Before you submit
       options:
-        - label: This issue has no genetic data, no reports and no real sample identifiers, and the logs in it are redacted.
+        - label: No genetic data, reports or sample identifiers are included, and logs are redacted.
           required: true

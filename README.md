@@ -1,23 +1,19 @@
-# ZaroPGx
+# ZaroPGx — A Pharmacogenomic Analysis Platform
 
 [![CI](https://github.com/Zaromics/ZaroPGx/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Zaromics/ZaroPGx/actions/workflows/ci.yml?query=branch%3Amain)
 [![Latest release](https://img.shields.io/github/v/release/Zaromics/ZaroPGx)](https://github.com/Zaromics/ZaroPGx/releases/latest)
-[![Licence: AGPL-3.0](https://img.shields.io/github/license/Zaromics/ZaroPGx)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/github/license/Zaromics/ZaroPGx)](LICENSE)
 
-A self-hosted pharmacogenomics pipeline: upload a person's sequencing data, and get their
-diplotypes and phenotypes for up to 91 genes, with the CPIC, DPWG and FDA guidance that
-applies, as PDF, interactive HTML and FHIR reports, without the data leaving your machine.
+**See the analysis in action: click below to watch a demo on YouTube:**
+[<img src="https://img.youtube.com/vi/FzKI48IQb3I/hqdefault.jpg" width="600" height="400"
+/>](https://www.youtube.com/embed/FzKI48IQb3I)
 
-[<img src="https://img.youtube.com/vi/FzKI48IQb3I/hqdefault.jpg" width="480" alt="Demo video (recorded with an earlier version)" />](https://www.youtube.com/watch?v=FzKI48IQb3I)
+---
+## What ZaroPGx Does
 
-Demo video (recorded with an earlier version)
-
-## What ZaroPGx does
-
-Upload a VCF, BCF, gVCF, BAM, CRAM, SAM or short-read FASTQ. ZaroPGx converts or aligns it as
-needed, calls star alleles with PyPGx 0.27, types HLA with OptiType, calls mitochondrial
-variants with mtDNA-Server 2, and runs PharmCAT 3.4.0 with those calls as outside calls. The
-result is a PDF and an interactive HTML report, PharmCAT's own reports and a FHIR R4 bundle.
+ZaroPGx is a self-hosted pharmacogenomics pipeline. It takes a VCF, BCF, gVCF, BAM, CRAM,
+SAM or short-read FASTQ, and reports diplotypes and phenotypes for up to 91 genes, with the
+CPIC, DPWG and FDA guidance that applies, as PDF, interactive HTML and FHIR R4.
 
 | | Genes | Called by |
 |---|---:|---|
@@ -25,85 +21,14 @@ result is a PDF and an interactive HTML report, PharmCAT's own reports and a FHI
 | Beyond PharmCAT | 65 | PyPGx |
 | HLA-C | 1 | OptiType |
 
-It runs as a Docker Compose stack on your own machine; your data stays in its `data/`
-directory. It is research software, not a clinical test.
+**Workflow**: *Sample upload → Preprocessing (conversion, liftover or alignment, as needed) →
+OptiType HLA calling → mtDNA-Server 2 → PyPGx allele calling → PharmCAT phenotype matching
+with outside calls → Reports (PDF, interactive HTML, FHIR R4)*
 
-## How it works
+It runs as a Docker Compose stack on your own machine, and your data stays there. It is
+research software, not a clinical test.
 
-```mermaid
-flowchart TD
-    fastq["FASTQ"] -->|"bwa-mem (GATK), duplicates marked"| bam
-    cram["CRAM"] -->|samtools| bam
-    sam["SAM"] -->|samtools| bam
-    bamup["BAM"] --> bam
-    bam(["BAM, GRCh38"])
-
-    vcfup["VCF"] --> vcf
-    bcf["BCF"] -->|bcftools| vcf
-    gvcf["gVCF"] --> gt["GATK GenotypeGVCFs, twice"]
-    gt --> vcf
-    vcf(["VCF"])
-    vcf -->|"GRCh37: Picard LiftoverVcf"| vcf38
-    vcf -->|GRCh38| vcf38
-    vcf38(["VCF, GRCh38"])
-
-    bam --> reads["PyPGx: variants from the reads,<br>and a call at each PharmCAT position"]
-
-    subgraph callers ["Outside calls for PharmCAT"]
-        hla["OptiType<br>HLA-A, -B, -C"]
-        pypgx["PyPGx<br>star alleles"]
-        mt["mtDNA-Server 2<br>MT-RNR1, haplogroup"]
-    end
-
-    bam --> hla
-    bam --> mt
-    reads --> pypgx
-    vcf38 --> pypgx
-    vcf --> mt
-
-    reads -->|"PharmCAT's positions"| pharmcat
-    gt -->|"PharmCAT's positions"| pharmcat
-    vcf38 -->|"VCF and BCF uploads"| pharmcat
-    callers --> pharmcat
-    pharmcat["PharmCAT 3.4.0<br>diplotypes, phenotypes, CPIC, DPWG and FDA guidance"]
-
-    pharmcat --> reports
-    callers --> reports
-    reports[["Reports: PDF, interactive HTML, FHIR R4 bundle,<br>PharmCAT's own HTML, JSON and TSV"]]
-```
-
-Reads (BAM, CRAM, SAM, FASTQ) become a GRCh38 BAM; variant files (VCF, BCF, gVCF) become a
-GRCh38 VCF. From a BAM, OptiType types HLA, and PyPGx calls variants from the reads and a
-genotype at each of PharmCAT's positions, so PharmCAT reads what the reads show rather than
-assuming the reference; a gVCF gets the same from its reference blocks. PyPGx, OptiType and
-mtDNA-Server 2 hand their calls to PharmCAT as outside calls, and the app writes the reports
-from all four. HLA typing, PyPGx, mtDNA and the report can each be switched off on the upload
-page. The Nextflow pipeline is [`pipelines/pgx/main.nf`](pipelines/pgx/main.nf); the services
-are described in [Architecture](docs/developer/architecture.md).
-
-## What you can upload, and what you get
-
-| Input | Status | What runs |
-|---|---|---|
-| VCF, GRCh38 | Supported | PyPGx, mtDNA-Server 2 (if the file has chrM calls) and PharmCAT. PyPGx calls a gene only from the positions the VCF genotypes: a gene with no genotype at any of its star alleles' positions is not called, and a call missing some says how many were read as the reference (unless **Assume absent sites = reference** is on). No HLA typing and no copy number: both need reads. |
-| VCF, GRCh37/hg19 | Supported (lifted over) | Lifted over to GRCh38 (Picard LiftoverVcf, UCSC's hg19→hg38 chain), then as a GRCh38 VCF. Variants that cannot be lifted are dropped and counted; the run fails if more than half cannot be. |
-| BCF | Testing | Converted to a VCF (bcftools), then as a VCF, liftover included. |
-| gVCF (GATK, GRCh38) | Testing | Genotyped with GATK GenotypeGVCFs, over PharmCAT's positions and then over the rest, so reference calls come from the file's reference blocks instead of being assumed. Then as a VCF: no HLA typing, no copy number. Refused: non-GATK reference blocks (`<*>`) and GRCh37 gVCFs. |
-| BAM, CRAM, SAM (GRCh38) | Testing | Every stage: OptiType (HLA-A, -B, -C); a call from the reads at each PharmCAT position; PyPGx, with copy number (gene deletions, duplications and hybrids) for whole-genome data at a median depth of 15x or more, not for targeted panels; mtDNA-Server 2, with its own report. Where reads sit on GRCh38's CYP2D6 or UGT2B ALT contigs, those loci are aligned again to the main chromosomes (needs the alignment index). A CRAM must be written against one of three GRCh38 references. GRCh37 alignments are refused. |
-| FASTQ, short reads | Testing | Aligned to GRCh38 (bwa-mem in GATK), duplicates marked, then as a BAM. Single-end or an R1/R2 pair, up to 20 GB; needs the alignment index (`scripts/build-align-index.sh`). Long reads are refused. |
-| 23andMe, AncestryDNA; T2T-CHM13 | Refused for now; support in development | Detected and refused, with the reason. A consumer array carries few of PharmCAT's positions (23andMe v5: 229 of 1,226), and PyPGx would read the rest as reference: confidently wrong calls. A T2T file has no safe route to GRCh38 yet. |
-
-One sample per file. BED and FASTA files are refused too. What each format needs, and why some
-are refused: [input formats](docs/user/file-formats.md). What the reports contain:
-[reports](docs/user/reports.md).
-
-Next, planned for v0.5: more visualisations in the interactive report, and data handled fully
-in the database. Further out: FHIR export straight to a personal or electronic health record,
-targeted analytics with specialty curation, data pulled and normalised directly from
-published databases, and other sequencing and genotyping formats. Everything planned:
-[roadmap](docs/to-do.md).
-
-## Quickstart
+### 🚀 Quickstart -- One-Command Setup
 
 **PowerShell (Windows):**
 ```powershell
@@ -120,20 +45,16 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
-The bootstrap checks for Git, Docker and Docker Compose and offers to install what is missing,
-clones the repository at the release tag, and starts the stack with the matching images. If it
-installed Docker or WSL, you may need to log out or reboot and run it again. To update later,
-run it with `--update` (Bash) or `-Update` (PowerShell); [UPGRADING.md](UPGRADING.md) says
-what changes between releases. The scripts are short; read them first if you prefer:
-[bootstrap.sh](bootstrap.sh), [bootstrap.ps1](bootstrap.ps1).
-
-The first start takes 8-15 minutes while PharmCAT downloads its reference data. Then open
-`http://localhost:8765`. **Run Demo** works once the genome downloader has also fetched the
-reference genomes and the 3.2 GB reference its CRAM decodes against; until then it says so.
+- Checks for Git, Docker and Docker Compose, and offers to install what is missing.
+- Clones the latest release and starts the stack. The first start takes 8-15 minutes.
+- Then open `http://localhost:8765`. **Run Demo** is ready once the reference genomes have
+  downloaded.
+- To update, run it again with `--update` (Bash) or `-Update` (PowerShell), and see
+  [UPGRADING.md](UPGRADING.md).
 
 <img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
 
-## Manual setup
+### Manual setup
 
 ```bash
 git clone https://github.com/Zaromics/ZaroPGx.git
@@ -142,21 +63,41 @@ cp .env.local .env
 ./start-docker.sh        # or .\start-docker.ps1; generates DB_PASSWORD and SECRET_KEY
 ```
 
-Requirements: Docker with Compose v2.24+, and Git; Linux, Windows with WSL 2, or macOS with
-Docker Desktop. The images are `linux/amd64` only (Apple Silicon needs Rosetta emulation). A
-VCF needs little memory; alignments need much more (the stack allows GATK up to 28 GB and
-PyPGx up to 20 GB). See [Installation](docs/user/installation.md).
+- **Requirements:** Docker with Compose v2.24+, and Git, on Linux, Windows (WSL 2) or macOS
+  (Docker Desktop). Images are `linux/amd64`.
+- **Memory:** a VCF needs little; a whole-genome BAM needs much more (up to 28 GB for GATK
+  and 20 GB for PyPGx).
+- **Access:** the app listens on `127.0.0.1:8765`, with no login. For network or public
+  access, see [Running a server](docs/user/deployment.md).
 
-**Access.** The app listens on `127.0.0.1:8765`, this machine only, and asks for no login
-(`ZAROPGX_AUTH_MODE=open`). To use it from other devices on your network, set
-`BIND_ADDRESS=0.0.0.0:8765`; anyone who can reach it then gets in unless you turn on the
-shared password. To serve it beyond your network, see
-[Running a server](docs/user/deployment.md).
+Details: [Installation](docs/user/installation.md).
+
+## Status
+**This project is in early development.**
+
+*Input formats*
+- [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.
+- [X] Priority 1 (*Supported*): **VCF, GRCh37**/hg19, NGS-derived. *Lifted over to GRCh38.*
+- [...] Priority 2 (*Testing*): **BAM, CRAM, SAM, BCF, gVCF**, NGS-derived, GRCh38.
+- [...] Priority 2 (*Testing*): **FASTQ**, short reads, up to 20 GB. *Aligned to GRCh38.*
+- [...] Priority 3 (*Research*): Other sequencing and genotyping formats.
+- [...] Priority 4 (*Research*): BED, 23andMe, AncestryDNA, various TXT formats. *Detected and refused for now.*
+- [...] Priority 5 (*Early research*): T2T-CHM13, and others. *Detected and refused for now.*
+
+What each format needs and gives: [input formats](docs/user/file-formats.md).
+
+*Features*
+- [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
+- [X] Priority 1 (*Supported*): **mtDNA-Server 2**: haplogroup and the MT-RNR1 outside call.
+- [o] Priority 2 (*Development*): **FHIR R4 export** (JSON, XML) following HL7's Genomics Reporting IG; push to the bundled HAPI FHIR server.
+- [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.5*
+- [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
+- [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load
+- [...] Priority 6 (*Early research*): Complete transition to fully DB-based workflow; pulling and normalizing data directly from published databases
 
 ## Documentation
 
-The app serves the full documentation at `http://localhost:8765/docs`; the source is in
-[`docs/`](docs/index.md):
+Served by the app at `http://localhost:8765/docs`, and in [`docs/`](docs/index.md):
 
 - [Running an analysis](docs/user/usage.md), [input formats](docs/user/file-formats.md),
   [reports](docs/user/reports.md)
@@ -164,32 +105,26 @@ The app serves the full documentation at `http://localhost:8765/docs`; the sourc
   [troubleshooting](docs/user/troubleshooting.md), [FAQ](docs/user/faq.md)
 - [Architecture](docs/developer/architecture.md),
   [development setup](docs/developer/development-setup.md), [testing](docs/developer/testing.md),
-  [contributing](docs/developer/contributing.md), [API](docs/developer/api-reference.md)
-- [UPGRADING.md](UPGRADING.md): what to do when moving between releases
+  [API](docs/developer/api-reference.md)
+- [UPGRADING.md](UPGRADING.md): moving between releases
 
-## Sample data
+## Sample Data
 
-**Run Demo** analyses `app/static/demo/NA12878.pgx-demo.cram`: NA12878's reads from the 1000
-Genomes Project's 30x whole genomes, cut to the reads its calls depend on, so it runs every
-stage on a sample whose results are published (see its [README](app/static/demo/README.md)).
-`test_data/` holds PharmCAT's example VCFs, GRCh37 and T2T SNP sets, and a small BAM, CRAM and
-SAM. For real-world data, try the [Personal Genome Project](https://www.personalgenomes.org/),
-whose participants share their genomes publicly.
+**Run Demo** analyses NA12878, a public sample with published results: a cut of its 1000
+Genomes 30x reads ([details](app/static/demo/README.md)). `test_data/` holds small public
+examples. For real-world data, try the [Personal Genome Project](https://www.personalgenomes.org/).
 
-## Contributing
+## Contributions are welcome and are gratefully appreciated!
 
-Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) points to the norms and the
-development setup. Report a security problem privately: see [SECURITY.md](SECURITY.md). When
-you open an issue, never attach genetic data, reports or sample identifiers.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md). Please
+never attach genetic data or sample identifiers to an issue.
 
-## Acknowledgements and citations
-
-ZaroPGx is built on the software and data below, and we thank their authors and maintainers;
-every report lists, under Platform and Citations, the parts its own run used, with versions
-and these references.
+## Acknowledgements & Citations
+ZaroPGx is built on the software and data below, and we thank their authors and maintainers. Every report lists, under Platform and Citations, the parts its own run used, with versions and these references.
+If your work is a part of ZaroPGx and you wish to add or amend text recognizing yourself, your work, and/or your organization, please send me a message and I will gladly attend to your request.
 
 <details>
-<summary>Software and data credits (42 tools and data sources)</summary>
+<summary>Software and data credits</summary>
 
 <!-- credits:start (scripts/render_credits.py writes this part) -->
 
@@ -301,15 +236,13 @@ Licences, terms of use and the platform's own components: [Credits](docs/user/cr
 
 </details>
 
-If your work is part of ZaroPGx and you want the text recognising you, your work or your
-organisation added or changed, send me a message and I will gladly see to it. To cite
-ZaroPGx itself, see [CITATION.cff](CITATION.cff).
-
 This project was originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
 - Zampatti S, Fabrizio C, Ragazzo M, et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *Journal of Personalized Medicine*. 2021;11(9):851. doi:[10.3390/jpm11090851](https://doi.org/10.3390/jpm11090851)
 
 ## License
 
-[AGPLv3](LICENSE). Third-party notices: [NOTICE](NOTICE).
+[AGPLv3](LICENSE)
 
 Copyright (C) 2024-2026 Iliya Yaroshevskiy
+
+This project is provided under the AGPLv3 License.
