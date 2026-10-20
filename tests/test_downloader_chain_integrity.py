@@ -16,6 +16,7 @@ tqdm, which the dev venv does not ship, so the fixture stubs it.
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -326,3 +327,70 @@ def test_startup_runs_the_check_and_schedules_a_run_when_it_removes_one():
     main = source[source.index('if __name__ == "__main__":') :]
     assert main.index("verify_staged_pins()") < main.index("schedule_download(")
     assert "if repinned or " in main
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
+def test_an_unreadable_pinned_file_does_not_stop_startup(
+    downloader, tmp_path, monkeypatch
+):
+    """The startup check runs before uvicorn; an exception there kept the service
+    from ever turning healthy, and gatk-api and pypgx wait on it."""
+    chain = _chain_only(downloader, tmp_path, monkeypatch)
+    path = Path(chain["gz_path"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"x")
+    path.chmod(0)
+    try:
+        assert downloader.verify_staged_pins() is False
+    finally:
+        path.chmod(0o644)
+
+    entry = downloader.download_status["genomes"]["hg19_to_hg38_chain"]
+    assert entry["status"] == "error"
+    assert "could not check" in entry["error"]
+    saved = json.loads(Path(downloader.STATUS_FILE).read_text(encoding="utf-8"))
+    assert saved["genomes"]["hg19_to_hg38_chain"]["status"] == "error"
+
+
+def test_startup_survives_the_check_raising():
+    source = SOURCE.read_text(encoding="utf-8")
+    main = source[source.index('if __name__ == "__main__":') :]
+    guarded = main[main.index("try:") : main.index("schedule_download(")]
+    assert "repinned = verify_staged_pins()" in guarded
+    assert "except OSError" in guarded and "repinned = False" in guarded
+
+
+def test_a_post_while_a_run_holds_the_lock_is_already_running(downloader):
+    from fastapi.testclient import TestClient
+
+    downloader._download_lock.acquire()
+    try:
+        response = TestClient(downloader.app).post("/start-download")
+    finally:
+        downloader._download_lock.release()
+    assert response.json() == {"status": "already_running"}
+
+
+def test_a_run_clears_every_genomes_verified_hash_first(
+    downloader, tmp_path, monkeypatch
+):
+    _chain_only(downloader, tmp_path, monkeypatch)
+    other = downloader.download_status["genomes"]["hg38"]
+    other["sha256_verified"] = "from an earlier run"
+    _serve(downloader, monkeypatch, b"wrong")
+
+    downloader.download_genomes()
+
+    assert "sha256_verified" not in other
+
+
+def test_a_failed_extraction_drops_the_verified_hash(downloader, tmp_path):
+    entry = downloader.download_status["genomes"]["hg38"]
+    entry["sha256_verified"] = "the download matched"
+    bad = tmp_path / "hg38.fa.gz"
+    bad.write_bytes(b"not gzip at all")
+
+    assert downloader.extract_file(str(bad), str(tmp_path / "hg38.fa"), "hg38") is False
+
+    assert entry["status"] == "error"
+    assert "sha256_verified" not in entry, "/status must not say error and verified"

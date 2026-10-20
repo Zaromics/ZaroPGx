@@ -398,7 +398,7 @@ def test_a_chain_that_fails_its_pin_is_refused(
     assert resp.status_code == 400, resp.text
     detail = resp.json()["detail"]
     assert "does not match its pinned SHA-256" in detail
-    assert "restart genome-downloader" in detail
+    assert "Restarting genome-downloader is enough" in detail
     assert fake_tools.argvs() == [], "nothing may run on an unverified chain"
 
 

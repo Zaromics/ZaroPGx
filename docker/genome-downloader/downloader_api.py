@@ -185,6 +185,7 @@ def populate_reference_cache():
                 continue
         if not os.path.exists(fasta):
             entry.update(status="error", error=f"{fasta} is not staged")
+            entry.pop("sha256_verified", None)
             save_status()
             success = False
             continue
@@ -201,6 +202,7 @@ def populate_reference_cache():
         except Exception as e:
             print(f"Error caching {fasta}: {e}")
             entry.update(status="error", error=str(e))
+            entry.pop("sha256_verified", None)
             success = False
         save_status()
     return success
@@ -313,30 +315,45 @@ REQUEST_TIMEOUT = (30, 300)
 
 
 def verify_staged_pins():
-    """At startup, check the pinned files that stay where they were downloaded (the
-    liftover chain), even on an install whose .download_complete says it is done:
-    the run that would check them is skipped then, and gatk-api and the mtDNA
-    service read the chain from the shared /reference. One that fails its hash is
-    removed, and .download_complete with it, so the next run fetches it again.
+    """At startup, check every pinned file that stays where it was downloaded (the
+    liftover chain, and PharmCAT's positions VCF and regions BED where they are
+    pinned), even on an install whose .download_complete says it is done: the run
+    that would check them is skipped then, and other services read them from the
+    shared /reference. One that fails its hash is removed, and .download_complete
+    with it, so the run that follows fetches it again. One that cannot be read or
+    removed is marked error with the reason and left; the service still starts.
     Returns True when something was removed."""
     removed = False
     for genome in GENOMES:
         path = genome["gz_path"]
         if not genome.get("sha256") or path != genome["fasta_path"]:
             continue
-        if not os.path.exists(path):
+        entry = download_status["genomes"][genome["name"]]
+        try:
+            if not os.path.exists(path):
+                continue
+            discard_unverified(genome)
+            gone = not os.path.exists(path)
+        except OSError as e:
+            print(f"Could not check {path} at startup: {e}")
+            entry.update(status="error", error=f"could not check {path} at startup: {e}")
+            entry.pop("sha256_verified", None)
             continue
-        discard_unverified(genome)
-        if not os.path.exists(path):
+        if gone:
             removed = True
-            entry = download_status["genomes"][genome["name"]]
             entry.update(status="pending", progress=0)
             entry.pop("sha256_verified", None)
-    if removed:
-        if os.path.exists(DOWNLOAD_COMPLETE_FLAG):
+    try:
+        if removed and os.path.exists(DOWNLOAD_COMPLETE_FLAG):
             os.remove(DOWNLOAD_COMPLETE_FLAG)
+    except OSError as e:
+        print(f"Could not remove {DOWNLOAD_COMPLETE_FLAG}: {e}")
+    if removed:
         download_status["completed"] = False
+    try:
         save_status()
+    except OSError as e:
+        print(f"Could not save {STATUS_FILE}: {e}")
     return removed
 
 
@@ -423,6 +440,7 @@ def download_file(url, dest_path, genome_name, sha256=None, what=None):
         if part_path and os.path.exists(part_path):
             os.remove(part_path)
         download_status["genomes"][genome_name]["status"] = "error"
+        download_status["genomes"][genome_name].pop("sha256_verified", None)
         download_status["genomes"][genome_name]["error"] = str(e)
         save_status()
         return False
@@ -455,6 +473,7 @@ def extract_file(file_path, output_path, genome_name):
     except Exception as e:
         print(f"Error extracting {file_path}: {str(e)}")
         download_status["genomes"][genome_name]["status"] = "error"
+        download_status["genomes"][genome_name].pop("sha256_verified", None)
         download_status["genomes"][genome_name]["error"] = str(e)
         save_status()
         return False
@@ -480,6 +499,7 @@ def extract_tar_file(file_path, output_path, genome_name):
     except Exception as e:
         print(f"Error extracting tar file {file_path}: {str(e)}")
         download_status["genomes"][genome_name]["status"] = "error"
+        download_status["genomes"][genome_name].pop("sha256_verified", None)
         download_status["genomes"][genome_name]["error"] = str(e)
         save_status()
         return False
@@ -503,6 +523,7 @@ def index_genome(fasta_path, genome_name):
     except Exception as e:
         print(f"Error indexing {fasta_path}: {str(e)}")
         download_status["genomes"][genome_name]["status"] = "error"
+        download_status["genomes"][genome_name].pop("sha256_verified", None)
         download_status["genomes"][genome_name]["error"] = str(e)
         save_status()
         return False
@@ -657,6 +678,10 @@ def download_genomes():
 def _download_genomes():
     global download_status
     download_status["in_progress"] = True
+    # Set again below only for what this run verifies, so /status never pairs a
+    # previous run's sha256_verified with this run's error.
+    for entry in download_status["genomes"].values():
+        entry.pop("sha256_verified", None)
     save_status()
     
     # Create required directories
@@ -671,7 +696,6 @@ def _download_genomes():
         # Status is reloaded from disk at startup, so a previous run's error would
         # otherwise ride along on an item this run completes.
         download_status["genomes"][genome["name"]].pop("error", None)
-        download_status["genomes"][genome["name"]].pop("sha256_verified", None)
 
         # Skip if already completed
         if os.path.exists(genome["fasta_path"] + ".fai"):
@@ -837,6 +861,8 @@ def status():
 @app.post('/start-download')
 def start_download():
     """Start the download process"""
+    if _download_lock.locked():
+        return {"status": "already_running"}
     if not download_status["in_progress"] and not download_status["completed"]:
         threading.Thread(target=download_genomes).start()
         return {"status": "started"}
@@ -850,7 +876,12 @@ if __name__ == "__main__":
 
     # Even on a finished install: a pinned file that fails its hash is removed with
     # .download_complete, and a run is scheduled to fetch it again.
-    repinned = verify_staged_pins()
+    try:
+        repinned = verify_staged_pins()
+    except OSError as e:
+        # Never keep the service from starting: gatk-api and pypgx wait on its health.
+        print(f"Startup check of pinned files failed: {e}")
+        repinned = False
 
     # Schedule downloads to start after the server has fully initialized
     if repinned or os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
