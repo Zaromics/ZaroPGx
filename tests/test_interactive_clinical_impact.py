@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 import app.reports.generator as generator_module
+from app.reports.implications import phenotype_implication
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "app" / "static" / "js" / "pgx-report.js"
@@ -35,7 +36,8 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 context.cases = JSON.parse(fs.readFileSync(0, 'utf8'));
 process.stdout.write(JSON.stringify(vm.runInContext(`({
-    implications: cases.implications.map(([g, p]) => clinicalImplication(g, p)),
+    implications: cases.implications.map(([g, p, i]) => clinicalImplication(g, p, i)),
+    escaped: escapeHtml(cases.escape),
     descriptions: cases.descriptions.map(geneDescription),
     shown: cases.shown.map(diplotypeShown),
 })`, context)));
@@ -57,18 +59,32 @@ def _run(cases):
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_the_gene_panels_say_only_what_the_phenotype_means():
+    # The panel says the tables' line, which the page carries in data-implication
+    # (app/reports/implications.py); an unresolved call is called one.
+    calls = [
+        ["SLCO1B1", "Normal Function or Decreased Function or Poor Function"],
+        ["SLCO1B1", "Normal Function"],
+        ["G6PD", "Normal"],
+        ["RYR1", "Uncertain Susceptibility"],
+        ["CYP2C19", "Normal Metabolizer"],
+        ["CYP2D6", "Poor Metabolizer"],
+        ["CYP2C19", "Likely Intermediate Metabolizer"],
+        ["SLCO1B1", "Decreased Function", ""],
+        # Candidates that share a phenotype: the table's line, which says so.
+        [
+            "CYP2B6",
+            "Intermediate Metabolizer",
+            phenotype_implication("Intermediate Metabolizer", "CYP2B6", True),
+        ],
+    ]
     out = _run(
         {
             "implications": [
-                ["SLCO1B1", "Normal Function or Decreased Function or Poor Function"],
-                ["SLCO1B1", "Normal Function"],
-                ["G6PD", "Normal"],
-                ["RYR1", "Uncertain Susceptibility"],
-                ["CYP2C19", "Normal Metabolizer"],
-                ["CYP2D6", "Poor Metabolizer"],
-                ["CYP2C19", "Likely Intermediate Metabolizer"],
+                call if len(call) == 3 else [*call, phenotype_implication(*call[::-1])]
+                for call in calls
             ],
             "descriptions": ["CYP2D6", "RYR1", "F5"],
+            "escape": '<img src=x onerror="a(1)">&\'',
             "shown": [
                 "*1/*14 or *1/*15 or *1/*20 or *1/*24",
                 "*1/*3 or *1/*18 or *1/*68",
@@ -76,14 +92,32 @@ def test_the_gene_panels_say_only_what_the_phenotype_means():
             ],
         }
     )
-    unresolved, transporter, g6pd, ryr1, normal, poor, intermediate = out[
-        "implications"
-    ]
+    (
+        unresolved,
+        transporter,
+        g6pd,
+        ryr1,
+        normal,
+        poor,
+        intermediate,
+        missing,
+        shared,
+    ) = out["implications"]
+    assert shared.startswith("Every diplotype that fits has this phenotype: reduced")
+    assert "below the table" not in shared
     assert "could not narrow" in unresolved and "normal" not in unresolved.split(";")[0]
     for text in (unresolved, transporter, g6pd, ryr1):
         assert "metaboli" not in text, text
-    assert "metabolized as usual" in normal
-    assert "reduced" in poor and "moderately reduced" in intermediate
+    assert normal == "Standard drug metabolism expected."
+    assert transporter == "Normal transporter function expected."
+    assert poor.startswith("Little to no") and "reduced" in intermediate
+    # A page without the line points to the recommendations.
+    assert missing == "See the drug recommendations under Recs."
+    # The panel writes report data into innerHTML escaped.
+    assert out["escaped"] == "&lt;img src=x onerror=&quot;a(1)&quot;&gt;&amp;&#39;"
+    script = SCRIPT.read_text(encoding="utf-8")
+    for value in ("d.gene", "d.phenotype", "clinicalImplications"):
+        assert f"${{escapeHtml({value})}}" in script, value
     assert out["descriptions"][0].startswith("Cytochrome P450 Family 2 Subfamily D")
     assert out["descriptions"][1:] == ["", ""]
     assert out["shown"] == [
@@ -120,7 +154,7 @@ def test_the_summary_cards_say_only_what_the_phenotype_means(monkeypatch, tmp_pa
     cards = _cards(monkeypatch, tmp_path, "pharmcat.example.v340.report.json")
     assert "Standard drug metabolism expected" in cards["CYP2C19"]
     assert "metaboli" not in cards["ABCG2"], cards["ABCG2"]  # Normal Function
-    assert "medications affected by ABCG2" in cards["ABCG2"]
+    assert "Normal transporter function expected" in cards["ABCG2"]
     assert "metaboli" not in cards["G6PD"], cards["G6PD"]
 
 

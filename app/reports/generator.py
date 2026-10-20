@@ -86,6 +86,7 @@ from app.reports.copy_number import (
 )
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
+from app.reports.implications import row_implication
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
@@ -1589,6 +1590,7 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["message_lines"] = gene_message_lines
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
+    environment.filters["implication"] = row_implication
     environment.filters["called_by_text"] = called_by_text
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel

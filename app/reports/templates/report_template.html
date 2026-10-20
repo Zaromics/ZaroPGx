@@ -1440,21 +1440,12 @@
                        numerically, like the Executive Summary above; print the raw
                        value so stored precision survives. #}
                     <td>{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}</td>
-                    <td>
-                        {% if d.phenotype and 'Normal' in d.phenotype %}
-                            Standard drug metabolism expected
-                        {% elif d.phenotype and 'Poor' in d.phenotype %}
-                            Reduced drug metabolism may require dose adjustments
-                        {% elif d.phenotype and 'Intermediate' in d.phenotype %}
-                            Slightly reduced metabolism may require monitoring
-                        {% elif d.phenotype and ('Rapid' in d.phenotype or 'Ultrarapid' in d.phenotype) %}
-                            Increased metabolism may reduce efficacy at standard doses
-                        {% elif d.phenotype and ('Possibly Wild Type' in d.phenotype or 'Likely Wild Type' in d.phenotype) %}
-                            Reference genotype - consult clinical guidelines for specific drugs
-                        {% else %}
-                            Consult clinical guidelines
-                        {% endif %}
-                    </td>
+                    {# What the phenotype means, as CPIC defines the term, and a pointer
+                       to the drug recommendations: app/reports/implications.py, shared
+                       with the interactive report. Matching words here gave SLCO1B1's
+                       and G6PD's "Normal" metabolism wording, and every phenotype that
+                       is not a metabolizer's "Consult clinical guidelines". #}
+                    <td>{{ d|implication }}</td>
                     <td class="narrow-col tool-source" title="{{ d|called_by_text }}">{{ d.called_by }}</td>
                 </tr>
                 {% endfor %}
