@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Zaromics/ZaroPGx/blob/main/docs/index.md
+    about: Installation, input formats, reports, configuration, troubleshooting and the FAQ. Also served by the app at http://localhost:8765/docs.
+  - name: Report a security vulnerability
+    url: https://github.com/Zaromics/ZaroPGx/security/advisories/new
+    about: Report vulnerabilities privately, never in a public issue. See SECURITY.md.
