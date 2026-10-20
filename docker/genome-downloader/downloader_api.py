@@ -5,6 +5,7 @@ Downloads and indexes reference genomes in the background with progress tracking
 """
 
 from fastapi import FastAPI, HTTPException
+import hashlib
 import threading
 import os
 import time
@@ -270,8 +271,39 @@ def calculate_overall_progress():
     download_status["overall_progress"] = overall
     return overall
 
-def download_file(url, dest_path, genome_name):
-    """Download a file with progress tracking"""
+def sha256_of(path):
+    """The SHA-256 of a file, read in 1 MB blocks."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def discard_unverified(genome):
+    """Remove a pinned file already on disk that does not match its SHA-256.
+
+    The loop below trusts any file it finds at a genome's path, so a wrong chain
+    left by an earlier run (or put there by anything else) would be kept. One that
+    fails its hash goes, and is fetched again and checked like a new download.
+    """
+    expected = genome.get("sha256")
+    path = genome["gz_path"]
+    if not expected or not os.path.exists(path):
+        return
+    actual = sha256_of(path)
+    if actual != expected:
+        print(f"Removing {path}: its SHA-256 is {actual}, expected {expected}")
+        os.remove(path)
+
+
+def download_file(url, dest_path, genome_name, sha256=None):
+    """Download a file with progress tracking.
+
+    With sha256, the download is checked before it is moved into place, and one
+    that does not match is discarded: no file at dest_path is better than a wrong
+    one. The genome's status then says why.
+    """
     # Into place only once the body has arrived in full. Written straight to
     # dest_path, a download cut off by a restart left a truncated file there, and
     # the next run's exists() check took it for a finished one.
@@ -313,6 +345,13 @@ def download_file(url, dest_path, genome_name):
                     calculate_overall_progress()
                     save_status()
 
+        if sha256:
+            actual = sha256_of(part_path)
+            if actual != sha256:
+                raise ValueError(
+                    f"SHA-256 mismatch for {url}: expected {sha256}, got {actual}. "
+                    f"The download was discarded and nothing was written to {dest_path}."
+                )
         os.replace(part_path, dest_path)
         return True
     except Exception as e:
@@ -485,8 +524,21 @@ GENOMES = [
         # and gatk_api.py's LIFTOVER_CHAIN_PATHS points at exactly this path. No
         # extraction and no indexing, so it is flagged is_chain and treated like
         # the VCF/BED entries above: downloaded straight to its final path.
+        #
+        # Its integrity is the pinned SHA-256, checked after every download, not
+        # TLS, so it is fetched over plain http. hgdownload.soe.ucsc.edu's
+        # certificate chains through InCommon to emSign Root TLS CA - G3 and emSign
+        # ECC Root CA - G3. eMudhra revoked G3 intermediates for CA compromise on
+        # 2026-10-18, Mozilla removed the G3 roots from NSS on 2026-10-20 (bug
+        # 2084101), and certifi 2026.10.19 no longer carries them, so https to UCSC
+        # fails verification. Trusting another CA bundle that still has them would
+        # re-trust a distrusted root. The file has not changed since 2014: 227,698
+        # bytes, MD5 35887f73fe5e2231656504d1f6430900 as UCSC's md5sum.txt for
+        # the directory lists. The SHA-256 is of that file as fetched from UCSC,
+        # and of the Internet Archive's 2017 and 2021 copies, fetched over https.
         "name": "hg19_to_hg38_chain",
-        "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+        "url": "http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+        "sha256": "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d",
         "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
         "fasta_path": "/reference/chain/hg19ToHg38.over.chain.gz",
         "is_chain": True
@@ -547,11 +599,16 @@ def download_genomes():
             save_status()
             continue
             
-        # Download
+        # Download (a pinned file already there is checked first)
+        discard_unverified(genome)
         if not os.path.exists(genome["gz_path"]):
-            if not download_file(genome["url"], genome["gz_path"], genome["name"]):
+            if not download_file(
+                genome["url"], genome["gz_path"], genome["name"], sha256=genome.get("sha256")
+            ):
                 success = False
                 continue
+        if genome.get("sha256"):
+            download_status["genomes"][genome["name"]]["sha256_verified"] = genome["sha256"]
         
         # Extract
         if not os.path.exists(genome["fasta_path"]):
