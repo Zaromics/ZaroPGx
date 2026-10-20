@@ -1425,8 +1425,8 @@ class FileProcessor:
                 # star alleles nobody has checked, the same confident-wrong-answer
                 # class the GRCh37-alignment refusal below exists to stop.
                 #
-                # Refusal rather than a liftover lane is a deliberate decision, not
-                # a gap waiting to be filled: the published T2T chains exclude
+                # Refused for now; T2T support is in development. A liftover lane
+                # has these to solve first: the published T2T chains exclude
                 # GRCh38's ALT contigs by construction (GSTT1 lives on one), only
                 # ~60% of T2T's segmental duplications have a clear GRCh38
                 # orthologue -- CYP2D6/2D7/2D8 sits in exactly such a cluster --

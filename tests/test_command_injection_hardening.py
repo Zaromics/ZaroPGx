@@ -476,7 +476,7 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
             annotate_uncovered_genes=lambda *a, **k: None,
             # SV inputs (a whole-genome depth gate, then two pypgx commands) likewise;
             # covered in tests/test_pypgx_structural_variants.py.
-            prepare_sv_inputs=lambda *a, **k: None,
+            prepare_sv_inputs=lambda *a, **k: (None, {}),
             # PharmCAT's force-called input, likewise after the conversion; its
             # subprocess sinks are checked for argv safety in
             # tests/test_pharmcat_explicit_calls.py.

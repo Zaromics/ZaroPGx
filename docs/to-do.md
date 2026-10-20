@@ -27,15 +27,17 @@ curated: true
   NA12878's 30x reads (1.08 GB, 7.6 M pairs) alignment took 11 minutes and peaked at 6.1x
   the FASTQ's size in disk (Oct 2026), so a whole genome would take hours. Open: measure
   disk and MarkDuplicatesSpark's memory on one whole-genome FASTQ.
-- **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
-  pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
+- **Not accepted yet — support in development**: 23andMe, AncestryDNA. Detected by name
+  and refused for now. Converting the file is the easy part; support has to solve what
+  comes after it: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
-  deletion, and PyPGx reads the gaps as homozygous reference — so the report would be
-  confidently wrong rather than incomplete. See `docs/user/file-formats.md`.
-- **Not accepted**: T2T-CHM13, in any format. Detected from the file's own contig lengths
-  or `##reference=` line and refused. Building a liftover lane for it is a separate
-  decision, not a scheduled one: the T2T chains exclude GRCh38's ALT contigs (GSTT1 lives
-  on one), and CYP2D6's CHM13 representation is uncharacterised.
+  deletion, and PyPGx reads the gaps as homozygous reference — so today's pipeline would
+  report confidently wrong calls rather than incomplete ones. See
+  `docs/user/file-formats.md`.
+- **Not accepted yet — support in development**: T2T-CHM13, in any format. Detected from
+  the file's own contig lengths or `##reference=` line and refused for now. A liftover
+  lane for it has to solve two problems: the T2T chains exclude GRCh38's ALT contigs
+  (GSTT1 lives on one), and CYP2D6's CHM13 representation is uncharacterised.
 - **Priority 3   (Research)**: Other sequencing/genotyping formats
 - **Priority 4   (Research)**: BED, TXT formats
 
@@ -97,8 +99,12 @@ curated: true
   calls reach it as diplotype-only outside calls.
 
 - [DONE Oct 2026, feat/realign-alt-loci] Reads on GRCh38's ALT contigs. An alignment
-  made against a GRCh38 that has them (NCBI's full GRCh38, for one) puts some CYP2D6
-  and UGT2B17/UGT2B15 reads there, where PyPGx never reads; not ALT-aware, about half.
+  made against a GRCh38 that has them (NCBI's full GRCh38, for one) without ALT-awareness
+  puts many CYP2D6 and UGT2B17/UGT2B15 reads there as their primary alignment (on
+  NA12878, 529 of CYP2D6's 1,570 stayed on chr22), where PyPGx never reads. ALT-aware,
+  BWA keeps a read with a hit on the main chromosomes there and writes its ALT hit as a
+  supplementary copy; only a read with no such hit is primary on the ALT (1 in
+  NA12878's BAM).
   On NA12878 aligned so, CYP2D6 came out *1/*1 (truth *3/*68+*4) with no flag, at 48%
   MAPQ 0. Those loci's reads are now aligned again to the main contigs (gatk-api
   /realign-reads, BwaSpark) before PyPGx and PharmCAT's positions read them; the 66

@@ -9,6 +9,13 @@ MAPQ 0" flag did not fire. The PyPGx sidecar now sends those loci's reads to gat
 from a patched alignment: the uploaded reads over every region it reads, with the
 loci's reads replaced by their new alignments. The report says what was done, and
 when it could not be done flags the genes whatever their MAPQ 0 share.
+
+A read on an ALT contig is one whose primary alignment is there. BWA in ALT-aware
+mode (NA12878's published BAM) keeps a read with a hit on the main chromosomes there
+and writes its ALT hit as a supplementary record; only a read with no such hit is
+primary on the ALT. The first version counted the supplementary records from the
+index, and re-aligned (or flagged) both loci of NA12878's published BAM and of any
+alignment made so.
 """
 
 from __future__ import annotations
@@ -213,6 +220,131 @@ def test_too_few_alt_reads_or_another_build_means_no_realignment(tmp_path):
     aln = _alignment(tmp_path, _locus_reads(n_alt=9))  # 18 reads on the ALT
     assert NS["alt_loci_to_realign"](aln, "GRCh38") == []
     assert NS["alt_loci_to_realign"](aln, "GRCh37") == []
+
+
+# What NA12878's published BAM holds on these ALT contigs (bwa mem 0.7.15, ALT-aware):
+# 639, 1,177 and 1,613 records on CYP2D6's, 12,976 on GL000257v2, every one a
+# supplementary copy (flags 2195, 2131, 2147, 2211 the most common; MAPQ 8 the most
+# common) of a read whose primary alignment is on the main chromosomes, but one primary
+# read at MAPQ 0 on GL000257v2. bwa mem -M writes the same copies as secondary records.
+SUPP_FLAGS = (2195, 2131, 2147, 2211)
+UGT_AT = 68500000  # chr4, inside the UGT2B17-UGT2B15 span
+
+
+def _alt_aware_reads(n=30, copy=0x800, rg="L1"):
+    """`n` pairs in CYP2D6's gene body and `n` in UGT2B17's span at MAPQ 60, each with
+    a copy of one mate on the locus's ALT contig, flagged `copy`; one primary read on
+    GL000257v2 at MAPQ 0, its mate in the span."""
+    records = []
+    for i in range(n):
+        for contig, at, alt in (
+            ("chr22", SPAN_AT + 10 * i, "chr22_KI270928v1_alt"),
+            ("chr4", UGT_AT + 10 * i, "chr4_GL000257v2_alt"),
+        ):
+            name = f"{contig}-{i}"
+            flag = SUPP_FLAGS[i % len(SUPP_FLAGS)] & ~0x800 | copy
+            mate = (contig, at + 300) if flag & 0x40 else (contig, at)
+            records += [
+                (name, contig, at, P1 | 0x2, (contig, at + 300), rg, 60),
+                (name, contig, at + 300, P2 | 0x2 | REV, (contig, at), rg, 60),
+                (name, alt, 1000 + i, flag, mate, rg, 8),
+            ]
+    records += [
+        ("lone", "chr4_GL000257v2_alt", 5000, P1 | 0x2, ("chr4", UGT_AT), rg, 0),
+        ("lone", "chr4", UGT_AT, P2 | 0x2 | REV, ("chr4_GL000257v2_alt", 5000), rg, 60),
+    ]
+    return records
+
+
+@pytest.mark.parametrize("copy", [0x800, 0x100], ids=["supplementary", "secondary"])
+def test_an_alt_aware_alignment_is_left_alone_and_not_flagged(tmp_path, copy):
+    """Its reads are on the main chromosomes, where PyPGx reads them, but for one
+    primary read on GL000257v2; the ALT hits are copies. Counted from the index, as
+    the first version did, both loci went to be re-aligned (or, without the index
+    image, were flagged)."""
+    aln = _alignment(tmp_path, _alt_aware_reads(copy=copy))
+    with pysam.AlignmentFile(aln) as bam:
+        index = {s.contig: s.mapped for s in bam.get_index_statistics()}
+    assert index["chr22_KI270928v1_alt"] == 30
+    assert index["chr4_GL000257v2_alt"] == 31
+    assert NS["alt_loci_to_realign"](aln, "GRCh38") == []
+    assert NS["realign_alt_loci"](aln, "GRCh38", str(tmp_path / "w")) == (aln, None)
+    output = {
+        "alt_locus_mapq0": NS["alt_locus_mapq0"](aln, "GRCh38"),
+        "alt_realignment": None,
+    }
+    assert output["alt_locus_mapq0"]["CYP2D6"] == {"reads": 60, "mapq0": 0}
+    assert alt_locus_flags(output) == {}
+    assert alt_locus_alert(output) is None
+
+
+def test_only_primary_reads_on_the_alt_contigs_are_counted(tmp_path):
+    copies = [
+        (f"alt{i}", "chr22_GL383582v2_alt", 3000 + i, P1 | 0x800, ("chr22", SPAN_AT))
+        for i in range(25)
+    ]
+    aln = _alignment(tmp_path, _locus_reads(n_alt=9) + copies)
+    # 18 primary reads and 25 copies: under ALT_REALIGN_MIN_READS, whatever the index.
+    assert NS["alt_loci_to_realign"](aln, "GRCh38") == []
+    aln = _alignment(tmp_path, _locus_reads(n_alt=25) + copies, name="more.bam")
+    (locus,) = NS["alt_loci_to_realign"](aln, "GRCh38")
+    assert locus["alt_reads"] == 50
+
+
+def test_a_supplementary_record_is_not_sent_as_another_copy_of_its_read(tmp_path):
+    """A copy on the ALT contig of a read in the span leaves the read's pair as it
+    was; a copy of a read placed outside every locus brings nothing, and no orphan."""
+    alt = "chr22_KI270928v1_alt"
+    records = _locus_reads() + [
+        ("span", alt, 4000, P1 | 0x800, ("chr22", SPAN_AT + 300), "L1"),
+        ("away", alt, 4100, P1 | 0x800, ("chr22", OUTSIDE + 900), "L1"),
+        ("away", "chr22", OUTSIDE + 500, P1, ("chr22", OUTSIDE + 900), "L1", 60),
+        ("away", "chr22", OUTSIDE + 900, P2 | REV, ("chr22", OUTSIDE + 500), "L1", 60),
+    ]
+    aln = _alignment(tmp_path, records)
+    with pysam.AlignmentFile(aln) as bam:
+        reads, orphans = NS["collect_locus_reads"](bam, [LOCI["CYP2D6"]])
+    assert orphans == 1  # "orphan", as before
+    assert "away" not in reads
+    assert [(r.reference_name, r.reference_start, r.flag) for r in reads["span"]] == [
+        ("chr22", SPAN_AT, P1),
+        ("chr22", SPAN_AT + 300, P2 | REV),
+    ]
+
+
+def test_primary_reads_on_an_alt_contig_are_flagged_when_not_realigned(
+    tmp_path, monkeypatch
+):
+    """Placed there by an aligner that is not ALT-aware; the reads over the gene are
+    at MAPQ 60, far under the MAPQ 0 flag, and the gene is flagged all the same."""
+    alt = "chr22_KI270928v1_alt"
+    copies = [
+        (f"c{i}", alt, 6000 + i, P1 | 0x800, ("chr22", SPAN_AT)) for i in range(40)
+    ]
+    placed = [(f"g{i}", "chr22", SPAN_AT + 5 * i, 0, None, "L1", 60) for i in range(30)]
+    aln = _alignment(tmp_path, _locus_reads(n_alt=25) + copies + placed)
+
+    def unavailable(unaligned, paired, out_path):
+        raise NS["RealignmentUnavailable"]("the bwa-mem index image is not built")
+
+    monkeypatch.setitem(NS, "request_realignment", unavailable)
+    calls_from, info = NS["realign_alt_loci"](aln, "GRCh38", str(tmp_path / "w"))
+    assert calls_from == aln and info["status"] == "unavailable"
+    assert info["loci"] == [{"locus": "CYP2D6", "genes": ["CYP2D6"], "alt_reads": 50}]
+    output = {
+        "alt_locus_mapq0": NS["alt_locus_mapq0"](aln, "GRCh38"),
+        "alt_realignment": info,
+    }
+    flags = alt_locus_flags(output)
+    assert flags["CYP2D6"]["alt_reads"] == 50
+    assert flags["CYP2D6"]["percent"] < 50
+    alert = alt_locus_alert(output)
+    assert (
+        "CYP2D6 (50 of its locus's reads with their primary alignment on ALT contigs)"
+        in alert
+    )
+    assert "reads on the ALT contigs by their primary alignment too" in alert
+    assert "could not (the bwa-mem index image is not built)" in alert
 
 
 def test_the_locus_reads_come_with_their_mates(tmp_path):
@@ -656,17 +788,27 @@ def test_loci_left_on_their_alt_contigs_are_flagged_whatever_their_mapq0():
     assert flags["UGT2B15"]["percent"] == 68 and flags["UGT2B15"]["alt_reads"] == 67754
     assert "UGT2B17" not in flags, "its reads do not go to GL000257, which lacks it"
     alert = alt_locus_alert(output)
-    assert "Reads on ALT contigs or with mapping quality 0: CYP2D6 (32,700 reads" in (
+    assert "Reads on ALT contigs or with mapping quality 0: CYP2D6 (32,700 of its " in (
         alert
     )
-    assert "UGT2B15 (68% of 2,428 reads at mapping quality 0; 67,754 reads" in alert
+    assert (
+        "UGT2B15 (68% of 2,428 reads at mapping quality 0; 67,754 of its locus's reads "
+        "with their primary alignment on ALT contigs)"
+    ) in alert
+    assert "kept 529 of the 1,570 reads over CYP2D6, 48% of them" in alert
+    assert "keeps each read" not in alert
     assert "could not (the bwa-mem index image is not built)" in alert
     assert "Re-aligned before genotyping" not in alert
     assert alt_locus_diagram_line(flags).startswith("reads on ALT contigs, not re-al")
     genes = [{"gene": "CYP2D6", "diplotype": "*1/*2"}]
     annotate_alt_locus(genes, flags)
     assert genes[0]["alt_locus"]["note"].startswith(
-        "32,700 reads from this gene's locus were on GRCh38's ALT contigs"
+        "32,700 reads from this gene's locus had their primary alignment on GRCh38's "
+        "ALT contigs"
+    )
+    assert genes[0]["alt_locus"]["call_note"] == (
+        "32,700 of its locus's reads had their primary alignment on ALT contigs: this "
+        "call may be wrong (see Alerts)"
     )
     assert realigned_alt_loci(output) is False
 

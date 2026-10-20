@@ -66,6 +66,12 @@ from app.reports.alt_locus import (
     annotate_alt_locus,
     realigned_alt_loci,
 )
+from app.reports.copy_number import (
+    annotate_copy_number,
+    copy_number_alert,
+    genes_without_copy_number,
+    why_not_assessed,
+)
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
@@ -3727,11 +3733,15 @@ def generate_report(
                 if isinstance(g, dict)
             }
             added_count = 0
-            rows_by_gene = {
-                (g.get("gene") or g.get("name") or "").strip().upper(): g
-                for g in data.get("genes", [])
-                if isinstance(g, dict)
-            }
+            # Every row of a gene: PharmCAT 2.x's JSON has one per guideline source
+            # (CPIC, DPWG). Keyed to the last alone, only the DPWG row was PyPGx's,
+            # and the dedupe kept the CPIC row, its call letter X.
+            rows_by_gene: Dict[str, List[Dict[str, Any]]] = {}
+            for g in data.get("genes", []):
+                if isinstance(g, dict):
+                    rows_by_gene.setdefault(
+                        (g.get("gene") or g.get("name") or "").strip().upper(), []
+                    ).append(g)
             for gene_key, gene_res in results_obj.items():
                 try:
                     if not isinstance(gene_res, dict) or not gene_res.get("success"):
@@ -3745,28 +3755,26 @@ def generate_report(
                         # call: it carries PyPGx's evidence and Call letter. A row
                         # PharmCAT called itself, or an outside call PyPGx did not
                         # make (the manual override file), does not.
-                        row = rows_by_gene.get(gene_name.upper())
-                        if (
-                            row is not None
-                            and str(row.get("call_source") or "").upper() == "OUTSIDE"
-                            and _same_diplotype(
+                        for row in rows_by_gene.get(gene_name.upper(), []):
+                            source = str(row.get("call_source") or "").upper()
+                            if source == "OUTSIDE" and _same_diplotype(
                                 row.get("diplotype"), gene_res.get("diplotype")
-                            )
-                        ):
-                            row["tool_source"] = "PyPGx"
-                            if record:
-                                row["pypgx"] = record
-                            if details.get("positions_note"):
-                                row["positions_note"] = str(details["positions_note"])
-                        elif (
-                            row is not None
-                            and not gene_res.get("diplotype")
-                            and details.get("note")
-                            and not gene_was_called(row.get("diplotype"))
-                        ):
-                            # A gene nobody called, which PharmCAT takes from PyPGx
-                            # alone (CYP2D6): PyPGx's reason is the reason.
-                            row["no_call_note"] = str(details["note"])
+                            ):
+                                row["tool_source"] = "PyPGx"
+                                if record:
+                                    row["pypgx"] = record
+                                if details.get("positions_note"):
+                                    row["positions_note"] = str(
+                                        details["positions_note"]
+                                    )
+                            elif (
+                                not gene_res.get("diplotype")
+                                and details.get("note")
+                                and not gene_was_called(row.get("diplotype"))
+                            ):
+                                # A gene nobody called, which PharmCAT takes from
+                                # PyPGx alone (CYP2D6): PyPGx's reason is the reason.
+                                row["no_call_note"] = str(details["note"])
                         continue
                     diplotype = gene_res.get("diplotype")
                     # PyPGx's own phenotype, only where it has a rule for the gene;
@@ -3843,6 +3851,33 @@ def generate_report(
         logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
     # The note beside each flagged gene's call; the alert above says why.
     annotate_alt_locus(data.get("genes", []), alt_locus)
+    # Genes with SV-defined alleles that PyPGx called without copy number
+    # (app/reports/copy_number.py): a note beside each call and one alert, from
+    # PyPGx's own record, so a whole-genome run, where every such gene has a
+    # copy-number call, gets neither. Same new-list rule for the alert. The input's
+    # type as the job recorded it, not file_type: that defaults to "vcf", and a
+    # report rebuilt without the job (/reprocess-report) would call a BAM a VCF.
+    copy_number_why = why_not_assessed(
+        load_job_file_type(db_session, job_id) or input_file_type, bam2vcf_output
+    )
+    annotate_copy_number(
+        data.get("genes", []),
+        genes_without_copy_number(pypgx_results),
+        copy_number_why,
+    )
+    _copy_number_alert = copy_number_alert(
+        [
+            row["gene"]
+            for row in data.get("genes", [])
+            if isinstance(row, dict)
+            and row.get("copy_number_not_assessed")
+            and gene_was_called(row.get("diplotype"))
+        ],
+        copy_number_why,
+    )
+    if _copy_number_alert:
+        workflow_warnings = list(workflow_warnings) + [_copy_number_alert]
+        template_data["workflow_warnings"] = workflow_warnings
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
     file_type = str(data.get("file_type", "vcf")).lower()

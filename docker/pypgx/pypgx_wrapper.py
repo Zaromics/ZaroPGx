@@ -813,13 +813,15 @@ async def create_input_vcf(
             })
             # The PharmCAT-position counts go on the step row: the report states them
             # from what happened here, the way it states a gVCF's coverage. So do the
-            # MAPQ 0 counts over the ALT-covered genes (ALT_LOCUS_GENES_GRCH38).
+            # MAPQ 0 counts over the ALT-covered genes (ALT_LOCUS_GENES_GRCH38), and
+            # whether SV calling was on (prepare_sv_inputs).
             await job_client.complete_step(
                 "BAM to VCF conversion completed successfully",
                 {
                     "pharmcat_positions": res.get("pharmcat_positions"),
                     "alt_locus_mapq0": res.get("alt_locus_mapq0"),
                     "alt_realignment": res.get("alt_realignment"),
+                    "sv_calling": res.get("sv_calling"),
                 },
             )
 
@@ -836,6 +838,7 @@ async def create_input_vcf(
             "alt_locus_mapq0": res.get("alt_locus_mapq0"),
             "alt_realignment": res.get("alt_realignment"),
             "sv_inputs": res.get("sv_inputs"),
+            "sv_calling": res.get("sv_calling"),
             "assembly": pypgx_assembly,
         }
         if patient_id:
@@ -1412,19 +1415,30 @@ def sv_target_genes() -> frozenset:
 
 def prepare_sv_inputs(
     alignment_path: str, out_prefix: str, assembly: str
-) -> Optional[Tuple[str, str]]:
-    """(depth of coverage, control statistics) archives for SV calling, or None.
+) -> Tuple[Optional[Tuple[str, str]], Dict[str, Any]]:
+    """((depth of coverage, control statistics) archives for SV calling, or None;
+    what was decided, for the report).
 
     None when the alignment is not whole-genome-like (see WGS_PROBE_WINDOWS_GRCH38)
-    or when PyPGx fails: the genes then get the SNV-only call, as before.
+    or when PyPGx fails: the genes then get the SNV-only call, as before. The record
+    says which, as "status" ("on", "not_grch38", "low_depth" or "failed"), with the
+    median depth measured and the gate. The report reads it on the step row to say
+    why a gene's copy number was not assessed (app/reports/copy_number.py).
     """
     depth = whole_genome_depth(alignment_path, assembly)
+    record: Dict[str, Any] = {
+        # Rounded down: 14.96x, under the gate, rounded to 15.0x read "15.0x, under
+        # 15x" in the report.
+        "median_depth": None if depth is None else math.floor(depth * 10) / 10,
+        "min_median_depth": WGS_MIN_MEDIAN_DEPTH,
+    }
     if depth is None or depth < WGS_MIN_MEDIAN_DEPTH:
         logger.info(
             f"SV calling off: median depth {depth} at the whole-genome probe loci "
             f"(needs >= {WGS_MIN_MEDIAN_DEPTH} on GRCh38)"
         )
-        return None
+        status = "not_grch38" if depth is None else "low_depth"
+        return None, dict(record, status=status)
     depth_zip = out_prefix + SV_DEPTH_SUFFIX
     control_zip = out_prefix + SV_CONTROL_SUFFIX
     commands = (
@@ -1445,9 +1459,9 @@ def prepare_sv_inputs(
             for path in (depth_zip, control_zip):
                 if os.path.exists(path):
                     os.remove(path)
-            return None
+            return None, dict(record, status="failed")
     logger.info(f"SV calling on: median depth {depth:.1f}x at the whole-genome probe loci")
-    return depth_zip, control_zip
+    return (depth_zip, control_zip), dict(record, status="on")
 
 
 def sv_inputs_header_line(depth_zip: str, control_zip: str) -> str:
@@ -1642,16 +1656,29 @@ def alt_locus_mapq0(alignment_path: str, assembly: str) -> Optional[Dict[str, Di
 #
 # PyPGx reads main contigs only (and chr22_KI270879v1_alt, GSTT1's): that is the whole
 # of reference/pypgx/pypgx_grch38.fasta. An alignment made against a GRCh38 that has
-# the ALT contigs puts some of these loci's reads on them, where PyPGx never looks.
-# An ALT-aware aligner sends there the reads that fit the ALT haplotype better; one
-# that is not ALT-aware sends about half of all of them, and leaves the rest at MAPQ 0.
-# Measured 2026-10-16 on NA12878's reads from these loci realigned with plain bwa mem
-# 0.7.18 to GRCh38 with its ALT contigs: 526 reads over CYP2D6's gene body, 254 at
-# MAPQ 0, so PyPGx would read CYP2D6 from 272 reads where the published, ALT-aware BAM
-# gives it 1,479 -- and at 48% MAPQ 0 the report's flag (over half) did not fire.
+# the ALT contigs, by an aligner that is not ALT-aware, puts many of these loci's reads
+# on them as their primary alignment, where PyPGx never looks, and many of the rest at
+# MAPQ 0. Measured 2026-10-20 on NA12878's published 1000 Genomes BAM with these loci's
+# reads aligned again (2026-10-16) by plain bwa mem 0.7.18 to GRCh38 with its ALT
+# contigs: over CYP2D6's gene body 529 primary reads stay of the published BAM's 1,570,
+# 254 of them (48%) at MAPQ 0; over UGT2B15's, 2,460 of 5,106, 1,656 (67%) at MAPQ 0.
+# PyPGx would read CYP2D6 from 275 reads where the published BAM gives it 1,479 (272
+# on the loci's reads alone, 2026-10-16) -- and at 48% MAPQ 0 the report's flag (over
+# half) did not fire.
 #
-# So where the alignment holds reads on a locus's ALT contigs, the locus's reads --
-# every read on its primary span and on its ALT contigs, with its mate -- are aligned
+# An ALT-aware aligner does not do this. bwa mem with the reference's .alt file makes a
+# read's hit on the main chromosomes its primary alignment whenever it has one, and
+# writes its ALT hit as a supplementary record (0x800); only a read with no hit off the
+# ALT contigs is written there as primary, its best ALT hit (bwa's README-alt.md).
+# PyPGx reads the first kind where it is. Measured 2026-10-20 on NA12878's published
+# BAM (bwa mem 0.7.15, ALT-aware, GRCh38_full_analysis_set_plus_decoy_hla): 16,405
+# records on the four ALT contigs below, all supplementary but one, a primary at MAPQ 0
+# on GL000257v2; by their SA tags, 16,241 of those reads have their primary alignment
+# on chr22 or chr4, and 15,222 have it at MAPQ 60.
+#
+# So where reads have their primary alignment on a locus's ALT contigs, the locus's
+# reads -- every read on its primary span and on its ALT contigs, with its mate (primary
+# records only: a supplementary or secondary record is a copy) -- are aligned
 # again to the alignment reference (gatk-api /realign-reads: BwaSpark, then
 # MarkDuplicatesSpark), and this step reads a patched alignment: the uploaded reads
 # over every region it reads (patched_alignment_regions), less the locus's reads, plus
@@ -1676,9 +1703,10 @@ ALT_LOCI_GRCH38 = (
         "genes": ("UGT2B17", "UGT2B15"),
     },
 )
-# Reads on a locus's ALT contigs that make it worth aligning again: what the report's
-# MAPQ 0 check asks of a gene before it judges (app/reports/alt_locus.py MIN_READS).
-# NA12878's published BAM has none on any of them.
+# Reads with their primary alignment on a locus's ALT contigs that make it worth aligning
+# again: what the report's MAPQ 0 check asks of a gene before it judges
+# (app/reports/alt_locus.py MIN_READS). NA12878's published BAM has none on CYP2D6's
+# and 1 on UGT2B17's; its reads aligned without ALT-awareness, 34,282 and 72,925.
 ALT_REALIGN_MIN_READS = 20
 # Around the primary span, so a pair across its edge comes along whole.
 ALT_REALIGN_PAD = 1000
@@ -1692,18 +1720,37 @@ ALT_REALIGN_READ_GROUP = "zaropgx-realign"
 
 def alt_loci_to_realign(alignment_path: str, assembly: str) -> List[Dict[str, Any]]:
     """The ALT_LOCI_GRCH38 loci with reads on their ALT contigs, each with
-    ``alt_reads``: how many, from the index (a 100 GB genome answers at once)."""
+    ``alt_reads``: how many reads have their primary alignment there (mapped, not
+    secondary, not supplementary).
+
+    Counted record by record. The index's counts take every record, and an ALT-aware
+    alignment's records on these contigs are mostly supplementary copies of reads PyPGx
+    reads on the main chromosome: NA12878's published BAM has 16,405 there, 1 of them
+    primary, and by the index both loci went to be re-aligned (BwaSpark's 5.4 GB index
+    load and ~100 s) or, without the index image, were flagged. Only what lies on the
+    ALT contigs (74-586 kb) is read. Measured 2026-10-20 on two 41 GB 30x genomes:
+    0.04 s for that BAM, 0.13 s for its reads aligned without ALT-awareness (107,630
+    records there).
+    """
     if assembly != "GRCh38":
         return []
     import pysam
 
-    with pysam.AlignmentFile(alignment_path) as bam:
-        mapped = {s.contig: s.mapped for s in bam.get_index_statistics()}
     found = []
-    for locus in ALT_LOCI_GRCH38:
-        reads = sum(mapped.get(alt, 0) for alt in locus["alts"])
-        if reads >= ALT_REALIGN_MIN_READS:
-            found.append(dict(locus, alt_reads=reads))
+    with pysam.AlignmentFile(alignment_path) as bam:
+        present = set(bam.references)
+        for locus in ALT_LOCI_GRCH38:
+            reads = 0
+            for alt in locus["alts"]:
+                if alt not in present:
+                    continue
+                for read in bam.fetch(alt):
+                    if not (
+                        read.is_unmapped or read.is_secondary or read.is_supplementary
+                    ):
+                        reads += 1
+            if reads >= ALT_REALIGN_MIN_READS:
+                found.append(dict(locus, alt_reads=reads))
     return found
 
 
@@ -1937,7 +1984,8 @@ def write_patched_alignment(
     qc_failed: frozenset = frozenset(),
 ) -> Dict[str, int]:
     """The uploaded reads over `regions` less those named in `replaced`, plus the
-    re-aligned BAMs' reads, sorted and indexed at `out_path`; counts of each.
+    re-aligned BAMs' reads, sorted and indexed at `out_path`; counts of each, in
+    records (a read's supplementary and secondary records count too).
 
     The uploaded header is kept, so every name and read group means what it meant; a
     re-aligned read on a contig the upload's header lacks is dropped and counted.
@@ -2010,11 +2058,11 @@ def realign_alt_loci(
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """(the alignment to call from, what was done), for /create-input-vcf.
 
-    The uploaded alignment and None when no locus has reads on its ALT contigs. When
-    one does: a patched alignment in `work_dir` and status "realigned", or the
-    uploaded one and status "unavailable" (gatk-api cannot align) or "failed", with
-    the reason. Never raises: without re-alignment the step goes on as it did, and the
-    report says why.
+    The uploaded alignment and None when no locus has reads on its ALT contigs (as
+    their primary alignment: see alt_loci_to_realign). When one does: a patched
+    alignment in `work_dir` and status "realigned", or the uploaded one and status
+    "unavailable" (gatk-api cannot align) or "failed", with the reason. Never raises:
+    without re-alignment the step goes on as it did, and the report says why.
     """
     try:
         loci = alt_loci_to_realign(alignment_path, assembly)
@@ -2044,7 +2092,8 @@ def realign_alt_loci(
         }
         logger.info(
             f"Re-aligning {', '.join(l['locus'] for l in loci)}: {info['reads']} "
-            f"({sum(l['alt_reads'] for l in loci)} reads on their ALT contigs)"
+            f"({sum(l['alt_reads'] for l in loci)} reads with their primary alignment "
+            "on their ALT contigs)"
         )
         if not reads:
             # Every read on the ALT contigs lacked its mate (a sliced or filtered
@@ -2644,7 +2693,8 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             alt_locus = None
 
         # SV inputs for /genotype, carried the same way: in the VCF's own header.
-        sv_inputs = prepare_sv_inputs(
+        # Whether they were made, and on what depth, goes to the report.
+        sv_inputs, sv_calling = prepare_sv_inputs(
             calls_from, output_vcf_gz[: -len(".vcf.gz")], str(assembly)
         )
         if sv_inputs:
@@ -2672,6 +2722,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             "alt_locus_mapq0": alt_locus,
             "alt_realignment": alt_realignment,
             "sv_inputs": list(sv_inputs) if sv_inputs else None,
+            "sv_calling": sv_calling,
             "pharmcat_vcf": pharmcat_vcf,
             "pharmcat_status": pharmcat_status,
             "pharmcat_positions": pharmcat_positions,
