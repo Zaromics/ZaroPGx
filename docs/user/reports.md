@@ -150,14 +150,27 @@ risk for an HLA risk allele found, ...) and sent as text where none does (Likely
 G6PD's terms, hedged and uncertain calls); {doc}`../samples/README` has the table. High
 and Low risk (HLA risk alleles, MT-RNR1, malignant hyperthermia) follow CPIC's EHR priority
 for the result, since the IG has no term for the result itself; such a phenotype carries a
-note saying so, and the mapping is provisional. A gene the run did not call, including
-one no tool reported (HLA from a VCF), has the genotype "Unknown", since the IG's
-genotype profile requires a value. The bundle validates against those
-profiles with no errors (HAPI FHIR's
-`$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.
-Bundles written before then do not validate, and their XML is not readable as FHIR. The
-`/fhir` endpoints ({doc}`../developer/api-reference`) also generate, preview and save a
-bundle.
+note saying so, and the mapping is provisional. A gene the run did not call still has a
+genotype, since the IG's genotype profile requires a value, and its value carries a code
+of HL7's DataAbsentReason saying why. `not-performed` (text "Not performed"): nothing
+tested the gene. No tool reported it and none was to examine it, or the run did not run
+the tool that supplies it: no HLA typing (every VCF run, or OptiType turned off: HLA-A,
+HLA-B and HLA-C), no mtDNA calling (MT-RNR1), no PyPGx (CYP2D6, which PharmCAT takes from
+PyPGx), no PharmCAT. `error` (text "Error", and a note saying why): the tool that tried
+the gene failed on it (a PyPGx error, or a PyPGx run the job turned on that ended without
+results); a gene PharmCAT examined itself stays `unknown` whatever PyPGx did. `unknown`:
+a tool tested the gene and could not call it (text as the tool put it: "Unknown",
+"Unknown/Unknown", "Indeterminate"). That includes F2 and F5 after PharmCAT ran: it
+examines them in every run but lists them only when it calls them (its unannotated gene
+calls), so a VCF without their positions leaves them out of its report. The bundle validates against those profiles with no errors (HAPI
+FHIR's `$validate`, October 2026); {doc}`../samples/README` lists the warnings that
+remain and why. Bundles written before then do not validate, and their XML is not
+readable as FHIR. The `/fhir` endpoints ({doc}`../developer/api-reference`) also
+generate, preview and save a bundle. `POST /fhir/save/workflow/{job_id}` and the
+endpoints that take a PharmCAT run id build it from PharmCAT's rows in the database:
+PharmCAT's genes only, without what the report step knew about the run, so a gene with
+no call is `unknown` there. Saving that way overwrites the job's bundle, and a push
+then sends it; regenerating the job's report writes the full bundle again.
 
 Writing the files sends nothing anywhere. To put a job's results on a FHIR server, ask for
 it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_URL`, in
