@@ -57,6 +57,12 @@ except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
         SHORT_READ_PLATFORMS,
         detect_fastq_platform,
     )
+# The liftover chain's pinned SHA-256 and its check, shared with the mtDNA service
+# the same way (Dockerfile.gatk-api copies the file in beside this one).
+try:
+    from liftover_chain import CHAIN_SHA256, chain_mismatch  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
+    from app.utils.liftover_chain import CHAIN_SHA256, chain_mismatch
 
 # Configuration. Read before logging is configured because the progress-log handler
 # below writes into DATA_DIR.
@@ -249,8 +255,10 @@ REFERENCE_PATHS = {
 # by hand) can stage them once and every recreation of this container sees them.
 #
 # There is exactly one entry on purpose. The only liftover ZaroPGx performs is
-# GRCh37 -> GRCh38, with UCSC's hg19ToHg38.over.chain.gz
-# (https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz).
+# GRCh37 -> GRCh38, with UCSC's hg19ToHg38.over.chain.gz, which genome-downloader
+# fetches over http and checks against a pinned SHA-256 (UCSC's https chains to a
+# root Mozilla removed). /liftover-vcf checks it against the same pin
+# (LIFTOVER_CHAIN_SHA256) before use, since the shared /reference can change after.
 # htsjdk reads the chain through a decompressing reader, so it stays gzipped on disk.
 #
 # The chain's *source* contig names are UCSC-style (`chr1`) -- see the contig-prefix
@@ -258,6 +266,7 @@ REFERENCE_PATHS = {
 LIFTOVER_CHAIN_PATHS = {
     ('GRCh37', 'GRCh38'): os.path.join(REFERENCE_DIR, 'chain', 'hg19ToHg38.over.chain.gz'),
 }
+LIFTOVER_CHAIN_SHA256 = CHAIN_SHA256
 
 # PharmCAT's own position list, used by /gvcf-to-vcf as the interval list its
 # reference-confidence pass is emitted over. Under the same /reference bind mount as
@@ -3135,10 +3144,15 @@ async def liftover_vcf(
                 status_code=400,
                 detail=(
                     f"The {canonical_source}->GRCh38 chain file is not present at "
-                    f"{chain_path}. Stage UCSC's hg19ToHg38.over.chain.gz there "
-                    "(genome-downloader fetches it on a fresh deploy)."
+                    f"{chain_path}. genome-downloader fetches UCSC's "
+                    "hg19ToHg38.over.chain.gz there on a fresh deploy; its /status "
+                    "says whether it did, and why not."
                 ),
             )
+        # The shared /reference can change after genome-downloader checked it.
+        mismatch = await asyncio.to_thread(chain_mismatch, chain_path, LIFTOVER_CHAIN_SHA256)
+        if mismatch:
+            raise HTTPException(status_code=400, detail=mismatch)
 
         # Every prerequisite above is checked before any tool runs. LiftoverVcf refuses
         # a reference without its .dict (see ensure_sequence_dictionary).

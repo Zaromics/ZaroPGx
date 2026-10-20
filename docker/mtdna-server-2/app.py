@@ -168,6 +168,12 @@ HAPLOCHECK_JAR = "/opt/haplocheck/haplocheck.jar"
 RCRS_FASTA = "/opt/mtdna-files/rcrs_mutserve.fasta"
 PHYLOTREE = "phylotree-fu-rcrs@1.3"
 CHAIN_PATH = "/reference/chain/hg19ToHg38.over.chain.gz"
+# Its pinned SHA-256 and check, shared with gatk-api (the Dockerfile copies
+# app/utils/liftover_chain.py into /job-client).
+try:
+    from liftover_chain import CHAIN_SHA256, chain_mismatch  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
+    from app.utils.liftover_chain import CHAIN_SHA256, chain_mismatch  # noqa: E402
 
 # The pipeline release this image and the vendored files/ + report.Rmd all come
 # from. They bump as one unit: a report.Rmd that disagrees with the tool output
@@ -471,6 +477,9 @@ async def _call_from_vcf(
                 status_code=503,
                 detail=f"hg19 input needs the liftover chain at {CHAIN_PATH}, which is not staged.",
             )
+        mismatch = chain_mismatch(CHAIN_PATH, CHAIN_SHA256)
+        if mismatch:
+            raise HTTPException(status_code=503, detail=mismatch)
         lifted = os.path.join(work, "lifted.vcf.gz")
         await _run(
             [

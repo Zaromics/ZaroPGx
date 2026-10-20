@@ -5,8 +5,11 @@ Downloads and indexes reference genomes in the background with progress tracking
 """
 
 from fastapi import FastAPI, HTTPException
+import glob
 import hashlib
+import tempfile
 import threading
+from urllib.parse import urlparse
 import os
 import time
 import json
@@ -41,6 +44,7 @@ download_status = {
     "overall_progress": 0
 }
 
+REFERENCE_DIR = '/reference'
 STATUS_FILE = '/reference/download_status.json'
 # Written once every genome above is staged; the reference cache keeps its own markers.
 DOWNLOAD_COMPLETE_FLAG = '/reference/.download_complete'
@@ -297,20 +301,65 @@ def discard_unverified(genome):
         os.remove(path)
 
 
-def download_file(url, dest_path, genome_name, sha256=None):
+# One run at a time. A POST /start-download during the startup delay, or two quick
+# POSTs, started a second download_genomes() beside the first: two writers on one
+# .part file. download_genomes() and the cache-only run take this without waiting
+# and return if it is held.
+_download_lock = threading.Lock()
+
+# (connect, read) seconds: a stalled connection fails the file instead of hanging
+# the run with in_progress stuck at true.
+REQUEST_TIMEOUT = (30, 300)
+
+
+def verify_staged_pins():
+    """At startup, check the pinned files that stay where they were downloaded (the
+    liftover chain), even on an install whose .download_complete says it is done:
+    the run that would check them is skipped then, and gatk-api and the mtDNA
+    service read the chain from the shared /reference. One that fails its hash is
+    removed, and .download_complete with it, so the next run fetches it again.
+    Returns True when something was removed."""
+    removed = False
+    for genome in GENOMES:
+        path = genome["gz_path"]
+        if not genome.get("sha256") or path != genome["fasta_path"]:
+            continue
+        if not os.path.exists(path):
+            continue
+        discard_unverified(genome)
+        if not os.path.exists(path):
+            removed = True
+            entry = download_status["genomes"][genome["name"]]
+            entry.update(status="pending", progress=0)
+            entry.pop("sha256_verified", None)
+    if removed:
+        if os.path.exists(DOWNLOAD_COMPLETE_FLAG):
+            os.remove(DOWNLOAD_COMPLETE_FLAG)
+        download_status["completed"] = False
+        save_status()
+    return removed
+
+
+def download_file(url, dest_path, genome_name, sha256=None, what=None):
     """Download a file with progress tracking.
 
-    With sha256, the download is checked before it is moved into place, and one
-    that does not match is discarded: no file at dest_path is better than a wrong
-    one. The genome's status then says why.
+    With sha256, the download is hashed as it streams and checked before it is
+    moved into place; one that does not match is discarded: no file at dest_path
+    is better than a wrong one. The genome's status then says why (`what` names
+    the file there).
     """
     # Into place only once the body has arrived in full. Written straight to
     # dest_path, a download cut off by a restart left a truncated file there, and
-    # the next run's exists() check took it for a finished one.
-    part_path = dest_path + ".part"
+    # the next run's exists() check took it for a finished one. A unique name per
+    # download (and one run at a time, _download_lock), so no two writers share
+    # one; a stopped run's leftovers are removed first.
+    for stale in glob.glob(glob.escape(dest_path) + ".*.part") + [dest_path + ".part"]:
+        if os.path.exists(stale):
+            os.remove(stale)
+    part_path = None
     try:
         # Get file size
-        response = requests.head(url, allow_redirects=True)
+        response = requests.head(url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
         file_size = int(response.headers.get('content-length', 0))
         file_size_mb = file_size / (1024 * 1024)
         
@@ -319,7 +368,7 @@ def download_file(url, dest_path, genome_name, sha256=None):
         save_status()
         
         # Download with progress tracking
-        response = requests.get(url, stream=True)
+        response = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT)
         # raise_for_status() was missing entirely, and the pharmcat_positions entry made
         # that reachable: its URL is templated on PHARMCAT_VERSION, so a bump to a
         # release whose asset is named differently 404s -- and without this check the
@@ -331,11 +380,22 @@ def download_file(url, dest_path, genome_name, sha256=None):
         # status field can say so.
         response.raise_for_status()
         downloaded = 0
+        digest = hashlib.sha256() if sha256 else None
 
-        with open(part_path, 'wb') as f:
+        fd, part_path = tempfile.mkstemp(
+            dir=os.path.dirname(dest_path) or ".",
+            prefix=os.path.basename(dest_path) + ".",
+            suffix=".part",
+        )
+        # mkstemp makes the file 0600; the other services (the mtDNA one runs as its
+        # own user) read these from the shared /reference.
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, 'wb') as f:
             for chunk in response.iter_content(chunk_size=1024*1024):
                 if chunk:
                     f.write(chunk)
+                    if digest is not None:
+                        digest.update(chunk)
                     downloaded += len(chunk)
                     # Capped: file_size is the HEAD's Content-Length, which for a
                     # gzip-encoded response (GitHub raw) is the compressed size, while
@@ -345,18 +405,22 @@ def download_file(url, dest_path, genome_name, sha256=None):
                     calculate_overall_progress()
                     save_status()
 
-        if sha256:
-            actual = sha256_of(part_path)
+        if digest is not None:
+            actual = digest.hexdigest()
             if actual != sha256:
+                where = urlparse(url)
                 raise ValueError(
                     f"SHA-256 mismatch for {url}: expected {sha256}, got {actual}. "
-                    f"The download was discarded and nothing was written to {dest_path}."
+                    f"The download was discarded; {what or genome_name} was not "
+                    f"installed. Restart genome-downloader to retry; if it repeats, "
+                    f"something between this host and {where.netloc} is altering "
+                    f"{where.scheme} downloads (a proxy or captive portal)."
                 )
         os.replace(part_path, dest_path)
         return True
     except Exception as e:
         print(f"Error downloading {url}: {str(e)}")
-        if os.path.exists(part_path):
+        if part_path and os.path.exists(part_path):
             os.remove(part_path)
         download_status["genomes"][genome_name]["status"] = "error"
         download_status["genomes"][genome_name]["error"] = str(e)
@@ -512,8 +576,10 @@ GENOMES = [
         "is_vcf": True
     },
     {
+        # At the release's tag, like the positions above, not the moving
+        # `development` branch it used to come from (the same 756 bytes today).
         "name": "pharmcat_regions",
-        "url": "https://github.com/PharmGKB/PharmCAT/raw/development/pharmcat_regions.bed",
+        "url": f"https://github.com/PharmGKB/PharmCAT/raw/v{PHARMCAT_VERSION}/pharmcat_regions.bed",
         "gz_path": "/reference/pharmcat/pharmcat_regions.bed",
         "fasta_path": "/reference/pharmcat/pharmcat_regions.bed",
         "is_bed": True
@@ -532,11 +598,15 @@ GENOMES = [
         # 2026-10-18, Mozilla removed the G3 roots from NSS on 2026-10-20 (bug
         # 2084101), and certifi 2026.10.19 no longer carries them, so https to UCSC
         # fails verification. Trusting another CA bundle that still has them would
-        # re-trust a distrusted root. The file has not changed since 2014: 227,698
-        # bytes, MD5 35887f73fe5e2231656504d1f6430900 as UCSC's md5sum.txt for
-        # the directory lists. The SHA-256 is of that file as fetched from UCSC,
-        # and of the Internet Archive's 2017 and 2021 copies, fetched over https.
+        # re-trust a distrusted root. The file has not changed since 2014 (227,698
+        # bytes). The SHA-256 is that of the Internet Archive's 2017 and 2021
+        # captures, fetched over https from web.archive.org (a different CA), and of
+        # UCSC's copy fetched over https with a CA store that still verified it; the
+        # copy fetched over http matches too. UCSC's md5sum.txt for the directory
+        # (MD5 35887f73fe5e2231656504d1f6430900) agrees, but it comes from the same
+        # http host, so it is not an independent check.
         "name": "hg19_to_hg38_chain",
+        "what": "the liftover chain",
         "url": "http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
         "sha256": "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d",
         "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
@@ -573,14 +643,25 @@ def sweep_archives(complete_flag='/reference/.download_complete'):
 
 
 def download_genomes():
-    """Main function to download and process all genomes"""
+    """Main function to download and process all genomes. One run at a time: a
+    call while another runs returns at once."""
+    if not _download_lock.acquire(blocking=False):
+        print("A download run is already in progress; not starting another.")
+        return
+    try:
+        _download_genomes()
+    finally:
+        _download_lock.release()
+
+
+def _download_genomes():
     global download_status
     download_status["in_progress"] = True
     save_status()
     
     # Create required directories
     for dir_name in ["hg19", "hg38", "grch37", "grch38", "pharmcat", "chain"]:
-        os.makedirs(f"/reference/{dir_name}", exist_ok=True)
+        os.makedirs(os.path.join(REFERENCE_DIR, dir_name), exist_ok=True)
 
     success = True
     
@@ -590,6 +671,7 @@ def download_genomes():
         # Status is reloaded from disk at startup, so a previous run's error would
         # otherwise ride along on an item this run completes.
         download_status["genomes"][genome["name"]].pop("error", None)
+        download_status["genomes"][genome["name"]].pop("sha256_verified", None)
 
         # Skip if already completed
         if os.path.exists(genome["fasta_path"] + ".fai"):
@@ -603,7 +685,11 @@ def download_genomes():
         discard_unverified(genome)
         if not os.path.exists(genome["gz_path"]):
             if not download_file(
-                genome["url"], genome["gz_path"], genome["name"], sha256=genome.get("sha256")
+                genome["url"],
+                genome["gz_path"],
+                genome["name"],
+                sha256=genome.get("sha256"),
+                what=genome.get("what"),
             ):
                 success = False
                 continue
@@ -657,10 +743,11 @@ def download_genomes():
     # Create symlink for GRCh38
     if success:
         try:
-            if not os.path.exists("/reference/grch38/Homo_sapiens_assembly38.fasta"):
+            grch38 = os.path.join(REFERENCE_DIR, "grch38", "Homo_sapiens_assembly38.fasta")
+            if not os.path.exists(grch38):
                 os.symlink(
-                    "/reference/hg38/Homo_sapiens_assembly38.fasta", 
-                    "/reference/grch38/Homo_sapiens_assembly38.fasta"
+                    os.path.join(REFERENCE_DIR, "hg38", "Homo_sapiens_assembly38.fasta"),
+                    grch38,
                 )
         except Exception as e:
             print(f"Error creating symlink: {str(e)}")
@@ -701,6 +788,9 @@ def schedule_download(delay_seconds=5):
             print("Reference genomes already downloaded; building the CRAM reference cache.")
 
             def cache_only():
+                if not _download_lock.acquire(blocking=False):
+                    print("A download run is already in progress; not starting another.")
+                    return
                 download_status["in_progress"] = True
                 save_status()
                 try:
@@ -708,6 +798,7 @@ def schedule_download(delay_seconds=5):
                 finally:
                     download_status["in_progress"] = False
                     save_status()
+                    _download_lock.release()
 
             threading.Thread(target=cache_only).start()
             return
@@ -756,9 +847,13 @@ if __name__ == "__main__":
     load_saved_status()
 
     sweep_archives()
-    
+
+    # Even on a finished install: a pinned file that fails its hash is removed with
+    # .download_complete, and a run is scheduled to fetch it again.
+    repinned = verify_staged_pins()
+
     # Schedule downloads to start after the server has fully initialized
-    if os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
+    if repinned or os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
         # Schedule downloads to start after a delay (10 seconds after server startup)
         print("Scheduling reference genome downloads to start shortly after server startup")
         threading.Thread(target=lambda: schedule_download(10)).start()

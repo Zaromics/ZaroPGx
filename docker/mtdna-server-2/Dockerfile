@@ -47,6 +47,8 @@ COPY docker/mtdna-server-2/files/ /opt/mtdna-files/
 COPY docker/mtdna-server-2/LICENSE.mtdna-server-2 /opt/mtdna-files/
 COPY app/utils/job_client.py /job-client/
 COPY app/utils/shared_input.py /job-client/
+# The liftover chain's pinned SHA-256, checked before an hg19 lift uses it.
+COPY app/utils/liftover_chain.py /job-client/
 COPY app/mtdna/ /mtdna-lib/mtdna/
 
 # Pre-built here, as root: /opt/mtdna-files stays root-owned below (only /app,
