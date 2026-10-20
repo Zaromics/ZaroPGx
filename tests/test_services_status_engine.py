@@ -82,3 +82,36 @@ def test_status_check_reports_a_database_the_app_cannot_reach(
         unreachable.dispose()
     assert response.status_code == 200
     assert "database" in response.json()["unhealthy_services"]
+
+
+def test_a_database_that_does_not_answer_in_time_is_unhealthy_without_blocking(
+    client, no_backends, monkeypatch
+):
+    """The SELECT 1 runs in a worker thread for at most the status timeout. Run on
+    the event loop, an exhausted pool (30 s pool_timeout) or a pre-ping on a
+    half-open connection stalled every other request with it."""
+    import threading
+    import time
+
+    started = threading.Event()
+
+    def slow_ping():
+        started.set()
+        time.sleep(1.5)
+        return True
+
+    monkeypatch.setattr(main, "_ping_database", slow_ping)
+    monkeypatch.setattr(main, "DATABASE_STATUS_TIMEOUT", 0.2)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:s3cret-pw@db:5432/x")
+
+    begun = time.monotonic()
+    response = client.get("/services-status")
+    elapsed = time.monotonic() - begun
+
+    assert started.is_set()
+    assert response.status_code == 200
+    unhealthy = response.json()["unhealthy_services"]
+    assert unhealthy["database"] == "Database error: No answer within 0.2 s"
+    assert "s3cret-pw" not in response.text and "db:5432" not in response.text
+    # The answer came at the timeout, not when the ping finished.
+    assert elapsed < 1.5
