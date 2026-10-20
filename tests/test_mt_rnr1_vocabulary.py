@@ -361,8 +361,8 @@ def test_basis_is_never_set_on_a_no_call():
 # finding 1, 2026-08-30) because that module is not importable here (see
 # tests/test_mtdna_vcf_path.py's fixture docstring), so a test pinned against
 # its source text can only assert substrings are present -- which cannot fail
-# when a conjunction silently degrades to a disjunction, or when
-# absent_to_ref stops being checked first. These tests exercise the real
+# when a conjunction silently degrades to a disjunction, or when the no-chrM
+# and consent checks swap order. These tests exercise the real
 # function with real inputs instead.
 
 
@@ -444,9 +444,9 @@ def test_vcf_evidence_tier_e_when_no_chrm_data_beats_everything_else():
     assert basis is None
 
 
-def test_vcf_evidence_checks_consent_before_every_other_tier():
-    """absent_to_ref is gated first: full Tier C evidence must still
-    withhold without the user's consent."""
+def test_vcf_evidence_checks_consent_before_tiers_c_and_d():
+    """With chrM data present, absent_to_ref is gated first: full Tier C
+    evidence must still withhold without the user's consent."""
     reason, basis = vcf_evidence(
         absent_to_ref=False,
         carried_chrm_data=True,
@@ -458,14 +458,13 @@ def test_vcf_evidence_checks_consent_before_every_other_tier():
     assert basis is None
 
 
-def test_vcf_evidence_checks_consent_before_the_chrm_data_gate_too():
-    """Pins the actual ordering between the two earliest checks: with both
-    absent_to_ref and carried_chrm_data false, the reason reported is still
-    NOT_CONSENTED, not NO_CHRM_DATA. Reversing that order (checking
-    carried_chrm_data first) leaves every other test in this file green --
-    none of them exercise both gates failing at once -- so this is the one
-    that actually pins the ordering rather than just the presence of the
-    absent_to_ref check."""
+def test_vcf_evidence_names_missing_chrm_data_before_consent():
+    """Pins the order of the two earliest checks: with both absent_to_ref and
+    carried_chrm_data false, the reason is NO_CHRM_DATA. Consent would not
+    have helped such a file, and NOT_CONSENTED is what the report words as
+    "the option was off": a GRCh37 VCF with no chrM record was told that
+    (2026-10-19). Reversing the order leaves every other test in this file
+    green -- none of them has both gates failing at once."""
     reason, basis = vcf_evidence(
         absent_to_ref=False,
         carried_chrm_data=False,
@@ -473,7 +472,7 @@ def test_vcf_evidence_checks_consent_before_the_chrm_data_gate_too():
         haplogroup=None,
         not_found_polys=None,
     )
-    assert reason == NO_CALL_NOT_CONSENTED
+    assert reason == NO_CALL_NO_CHRM_DATA
     assert basis is None
 
 
