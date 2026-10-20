@@ -493,6 +493,78 @@ def test_powershell_update_refusals_exit_before_startup():
     )
 
 
+def test_powershell_line_ending_resets_refuse_local_changes():
+    """bootstrap.ps1 re-normalizes line endings by clearing the index and running
+    `git reset --hard`, which overwrites local changes to tracked files. Without
+    -Update, a CRLF start-docker.sh used to trigger that with no check at all. Each of
+    the script's two resets must now come after its own tracked-files check; that
+    check failing, and that check finding changes, must both exit before anything is
+    reset. (PowerShell is not in CI; the branch was run under pwsh 7.4 in a
+    container, see its PR text.)"""
+    powershell = _text("bootstrap.ps1")
+    checks = (
+        "git -C $TargetDir status --porcelain --untracked-files=no)",
+        "git -C $TargetDir diff --name-status HEAD --)",
+    )
+    resets = [
+        m.start()
+        for m in re.finditer(
+            re.escape("git -C $TargetDir rm --cached -r ."), powershell
+        )
+    ]
+    assert len(resets) == 2
+    for reset in resets:
+        before = powershell[:reset]
+        guarded = before[max(before.rfind(check) for check in checks) :]
+        # The nearest check is this reset's own, not the previous reset's.
+        assert "rm --cached" not in guarded
+        # Straight after it: its own failure exits (the fetch's exit further down
+        # does not count), and so do the changes it found.
+        failed = re.match(
+            r"[^\n]*\n\s*if \(\$LASTEXITCODE -ne 0\) \{(?P<body>.*?)\n\s*\}",
+            guarded,
+            re.DOTALL,
+        )
+        assert failed, "the check's own failure must be handled"
+        assert re.search(r"Wait-BeforeExit\s*exit 1\s*$", failed["body"])
+        dirty = re.search(
+            r"\n\s*if \(\$(?:status|trackedChanges)\) \{(?P<body>.*?)\n\s*\}",
+            guarded,
+            re.DOTALL,
+        )
+        assert dirty
+        assert re.search(r"Wait-BeforeExit\s*exit 1\s*$", dirty["body"])
+
+    no_update = powershell[
+        powershell.index('"Skipping update') : powershell.index("$startScript = ")
+    ]
+    # Still re-normalizes a CRLF checkout, the reset's purpose.
+    assert '$content -match "`r`n"' in no_update
+    assert "git -C $TargetDir reset --hard" in no_update
+    # Content, not stat: git status lists a file rewritten with CRLF as modified,
+    # so the user who edited nothing would be refused.
+    assert "git -C $TargetDir diff --name-status HEAD --)" in no_update
+    assert "status --porcelain" not in no_update
+    # A release install is a detached HEAD: stash, re-run, pop; not commit.
+    assert "stash pop" in no_update
+    assert "Commit" not in no_update
+
+
+def test_powershell_refusals_wait_for_enter_when_interactive():
+    """Under `iwr | iex`, `exit` ends the caller's own PowerShell (checked under pwsh
+    7.4), so a window opened to run the script closes on a refusal. The pause runs
+    only at a console: never under redirected input, where it would read the pipe."""
+    powershell = _text("bootstrap.ps1")
+    function = powershell[powershell.index("function Wait-BeforeExit") :]
+    function = function[: function.index("\n}\n") + 3]
+    assert "[Environment]::UserInteractive" in function
+    assert "-not [Console]::IsInputRedirected" in function
+    assert 'Read-Host "Press Enter to close"' in function
+    assert powershell.index("function Wait-BeforeExit") < powershell.index(
+        "Wait-BeforeExit\n"
+    )
+
+
 def test_piped_powershell_elevation_downloads_a_complete_script():
     powershell = _text("bootstrap.ps1")
     install_function = powershell[powershell.index("function Install-Dependencies") :]

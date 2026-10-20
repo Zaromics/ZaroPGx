@@ -65,6 +65,16 @@ function Read-ConsoleLine {
     return [Console]::ReadLine()
 }
 
+# Under `iwr | iex` the script runs in the caller's own PowerShell, and `exit` ends
+# it: a window opened just to run this closes before a refusal can be read. Wait for
+# Enter first when someone is at the console (not under -NonInteractive or with
+# input redirected, where Read-Host would fail or read the pipe).
+function Wait-BeforeExit {
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        try { [void](Read-Host "Press Enter to close") } catch { }
+    }
+}
+
 # WSL feature install often cannot start until Windows reboots.
 function Test-RebootPending {
     $cbs = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
@@ -783,8 +793,14 @@ if (-not (Test-Path $TargetDir)) {
             # the checkout and names the file (an ignored file there is
             # overwritten, as before).
             $status = (& git -C $TargetDir status --porcelain --untracked-files=no)
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "git status failed, so local changes cannot be ruled out; refusing to update." -ForegroundColor Red
+                Wait-BeforeExit
+                exit 1
+            }
             if ($status) {
                 Write-Host "Tracked files have local changes; refusing to update. Commit or stash them first (git status lists them)." -ForegroundColor Yellow
+                Wait-BeforeExit
                 exit 1
             } else {
                 # Release hotfix tags may be replaced deliberately. Force-fetch
@@ -808,13 +824,35 @@ if (-not (Test-Path $TargetDir)) {
     } else {
         Write-Host "Skipping update (use -Update to fetch latest)." -ForegroundColor Gray
         
-        # Check if we need to re-normalize line endings even without update
+        # Check if we need to re-normalize line endings even without update.
+        # A checkout made before .gitattributes forced LF on shell scripts, or one
+        # whose scripts were rewritten with CRLF by a Windows editor or tool, has a
+        # start-docker.sh that bash (WSL, the containers) cannot run. Clearing the
+        # index and resetting checks every tracked file out again under the current
+        # .gitattributes. The reset also overwrites local changes to tracked files,
+        # so it refuses when there are any. It compares content, not file stat:
+        # git status lists a file rewritten with CRLF as modified (its size
+        # changed), while git diff applies eol=lf first, so line endings alone are
+        # not a change and real edits, staged or not, are.
         if (Test-Path (Join-Path $TargetDir ".git")) {
             $shFile = Join-Path $TargetDir "start-docker.sh"
             if (Test-Path $shFile) {
                 # Check if file has CRLF line endings
                 $content = Get-Content -Path $shFile -Raw
                 if ($content -match "`r`n") {
+                    $trackedChanges = (& git -C $TargetDir diff --name-status HEAD --)
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "start-docker.sh has Windows (CRLF) line endings, but git diff failed, so local changes cannot be ruled out; not re-normalizing." -ForegroundColor Red
+                        Wait-BeforeExit
+                        exit 1
+                    }
+                    if ($trackedChanges) {
+                        Write-Host "start-docker.sh has Windows (CRLF) line endings. Re-normalizing them would discard local changes to tracked files, so nothing was changed:" -ForegroundColor Yellow
+                        $trackedChanges | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+                        Write-Host "Stash them (git -C $TargetDir stash), re-run, then restore them (git -C $TargetDir stash pop)." -ForegroundColor Yellow
+                        Wait-BeforeExit
+                        exit 1
+                    }
                     Write-Host "Detected incorrect line endings, re-normalizing files..." -ForegroundColor Yellow
                     git -C $TargetDir rm --cached -r . 2>&1 | Out-Null
                     git -C $TargetDir reset --hard 2>&1 | Out-Null
