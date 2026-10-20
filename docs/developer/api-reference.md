@@ -64,7 +64,7 @@ Then:
 | `/api/v1/jobs` | Jobs, their steps and logs, progress, cancel. The pipeline's containers report their steps here (`PUT /api/v1/jobs/{job_id}/steps/{step_name}`) |
 | `/api/v1/workflows` | The workflow recipes and their steps |
 | `/api/pharmcat` | PharmCAT results loaded into the database, by run (`run_id` is the job id) |
-| `/fhir` | FHIR R4 bundles of a run's results: preview, download, save to disk. Present when `FHIR_EXPORT_ENABLED=true` |
+| `/fhir` | FHIR R4 bundles of a run's results: preview, download, save to disk, and send a job's bundle to the FHIR server (`POST /fhir/push/workflow/{job_id}`). Present when `FHIR_EXPORT_ENABLED=true` |
 | `/api/cleanup` | Delete a job's files, or temporary files past an age |
 | `/health`, `/services-status`, `/services-config`, `/api-status` | The app's health, each service's health, the step toggles' defaults, versions |
 

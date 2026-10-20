@@ -105,10 +105,40 @@ JSON, TSV and HTML, and the PDF, whichever were written.
 
 ## FHIR
 
-`<job_id>_pgx_fhir_report.json` and `.xml` hold the run's genotype results as a FHIR R4
-bundle, written with every report while `FHIR_EXPORT_ENABLED=true`. They are files: nothing
-is sent to a health record. The `/fhir` endpoints ({doc}`../developer/api-reference`)
-generate, preview and save the same bundle. The bundled HAPI FHIR server is not written to.
+`<job_id>_pgx_fhir_report.json` and `.xml` hold the run's results as a FHIR R4 bundle,
+written with every report while `FHIR_EXPORT_ENABLED=true`: each gene's genotype and
+phenotype, each drug's implication and recommendations, on the profiles of the HL7 Genomics
+Reporting IG 3.0.0. A phenotype is a therapeutic implication of its genotype, coded from the
+IG's LOINC answers where one says the same thing (Poor metabolizer, Decreased function, High
+risk for an HLA risk allele found, ...) and sent as text where none does (Likely Wild Type,
+G6PD's terms, hedged and uncertain calls); {doc}`../samples/README` has the table. The bundle validates against those profiles with no errors (HAPI FHIR's
+`$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.
+Bundles written before then do not validate, and their XML is not readable as FHIR. The
+`/fhir` endpoints ({doc}`../developer/api-reference`) also generate, preview and save a
+bundle.
+
+Writing the files sends nothing anywhere. To put a job's results on a FHIR server, ask for
+it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_URL`, in
+Compose the bundled HAPI FHIR server (`127.0.0.1:8090/fhir` on the host). Only a completed
+job is pushed (HTTP 409 for one that failed, was cancelled or is still running), and only
+one with a bundle: the bundle is written with the custom report, so a job run with that
+report turned off has none (HTTP 404). It goes as one transaction. The Patient is created
+once per ZaroPGx patient and reused by later pushes; the report and its resources are
+created the first time and updated in place when the job is pushed again, not copied.
+Every resource pushed for a job, the Patient aside, is tagged
+`urn:zaropgx:job-id|<job_id>`, and a push deletes, in the same transaction, the job's
+resources its bundle no longer has: the recommendations a regenerated report dropped, or a
+whole older bundle written before October 2026. The answer says how many resources the
+server created, how many it already had and how many it deleted, and where the report is
+(`DiagnosticReport/<id>`). If the server is down or refuses the bundle, the request fails
+with the reason (HTTP 502) and nothing is changed on the server. If the bundle was sent
+and no answer came back (the server took more than five minutes, or the connection
+dropped), the request fails the same way, but the server may have stored the bundle, or
+may still be storing it; pushing again once it has finished is safe, since a push updates
+the job's resources in place. The job is not affected either way. Credentials in
+`FHIR_SERVER_URL` (`user:password@`) are sent as HTTP Basic auth and never shown. Nothing
+is pushed when a job ends, and the web page has no button for it yet. Sending to an
+outside health record system is not supported.
 
 ## Using the results
 

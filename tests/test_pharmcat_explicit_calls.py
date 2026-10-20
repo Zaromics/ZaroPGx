@@ -20,6 +20,7 @@ to the old path; on the panel the five unsequenced genes became "not called".
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import shutil
@@ -234,6 +235,7 @@ def _load_wrapper(names):
         "Dict": Dict,
         "Any": Any,
         "REFERENCE_DIR": Path("/reference"),
+        "logger": logging.getLogger("pypgx_wrapper"),
     }
     exec(compile(ast.Module(body=wanted, type_ignores=[]), str(WRAPPER), "exec"), ns)
     return ns
@@ -245,6 +247,10 @@ CLASSIFY = [
     "PHARMCAT_MAX_OTHER_FRACTION",
     "PHARMCAT_MIN_BASE_QUALITY",
     "PHARMCAT_PILEUP_PAD",
+    "PHARMCAT_STATUS_COLUMNS",
+    "PHARMCAT_STATUS_KINDS",
+    "pharmcat_status_by_gene",
+    "write_pharmcat_status",
     "allowed_other_reads",
     "classify_pharmcat_record",
 ]
@@ -303,6 +309,75 @@ def test_every_base_of_a_multi_base_record_must_be_reference():
     assert _classify("TT", {100: (20, 0), 101: (0, 20)}) == "uncertain"
     assert _classify("TT", {100: (20, 0), 101: (20, 0)}) == "reference"
     assert _classify("CTT", {100: (12, 0), 101: (12, 0)}) == "uncertain"  # 102 unread
+
+
+def test_the_per_gene_counts_follow_pharmcats_px():
+    """Pure Python, so it runs where the htslib tests skip. A record whose PX names
+    two genes counts under each; the POI record, with none, under none."""
+    ns = _load_wrapper(CLASSIFY)
+    by_gene = ns["pharmcat_status_by_gene"](
+        {
+            ("chr1", 1): "reference",
+            ("chr1", 2): "uncertain",
+            ("chr1", 3): "no_reads",
+            ("chr10", 4): "reference",
+        },
+        {
+            ("chr1", 1): ("A",),
+            ("chr1", 2): ("A", "B"),
+            ("chr1", 3): ("B",),
+            ("chr10", 4): (),
+        },
+    )
+    zero = {"reference": 0, "variant": 0, "no_reads": 0, "uncertain": 0}
+    assert by_gene == {
+        "A": {**zero, "positions": 2, "reference": 1, "uncertain": 1},
+        "B": {**zero, "positions": 2, "uncertain": 1, "no_reads": 1},
+    }
+
+
+def test_the_status_file_lists_every_position_with_its_reads(tmp_path):
+    ns = _load_wrapper(CLASSIFY)
+    path = tmp_path / "status.tsv"
+    records = [
+        ("chr1", 100, "rs1", "A", ("A", "C")),
+        ("chr1", 200, "rs2", "CTT", ("CTT", "C")),  # three bases: fewest, most
+        ("chr1", 300, None, "G", ("G", "T")),
+    ]
+    ok = ns["write_pharmcat_status"](
+        str(path),
+        records,
+        {("chr1", 100): ("A",), ("chr1", 200): ("A", "B"), ("chr1", 300): ()},
+        {
+            ("chr1", 100): "reference",
+            ("chr1", 200): "uncertain",
+            ("chr1", 300): "no_reads",
+        },
+        {("chr1", 100): (12, 0), ("chr1", 200): (9, 0), ("chr1", 201): (4, 2)},
+    )
+    assert ok
+    assert path.read_text(encoding="utf-8").splitlines() == [
+        "chrom\tposition\trsid\tgene\tstatus\treference_reads\tother_reads",
+        "chr1\t100\trs1\tA\treference\t12\t0",
+        "chr1\t200\trs2\tA,B\tuncertain\t4\t2",
+        "chr1\t300\t\t\tno_reads\t\t",
+    ]
+
+
+def test_a_status_file_that_cannot_be_written_costs_only_the_file(tmp_path):
+    """main.nf publishes it as optional: a failed write is logged, leaves nothing
+    behind for the report to half-read, and the step goes on."""
+    ns = _load_wrapper(CLASSIFY)
+    path = tmp_path / "gone" / "status.tsv"  # its directory does not exist
+    ok = ns["write_pharmcat_status"](
+        str(path),
+        [("chr1", 100, "rs1", "A", ("A", "C"))],
+        {},
+        {("chr1", 100): "reference"},
+        {},
+    )
+    assert ok is False
+    assert not path.exists() and not path.parent.exists()
 
 
 def test_every_subprocess_in_the_force_call_is_an_argv_list():
@@ -424,11 +499,21 @@ def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
 
     ns = _load_wrapper(
         CLASSIFY
-        + ["tabix_index", "PHARMCAT_POSITIONS_VCF", "genotype_pharmcat_positions"]
+        + [
+            "tabix_index",
+            "PHARMCAT_POSITIONS_VCF",
+            "alignment_sample_name",
+            "genotype_pharmcat_positions",
+        ]
     )
     out = tmp_path / "pharmcat.vcf.gz"
+    status_tsv = tmp_path / "pharmcat.status.tsv"
     stats = ns["genotype_pharmcat_positions"](
-        str(bam), str(fasta), str(out), positions=str(positions)
+        str(bam),
+        str(fasta),
+        str(out),
+        positions=str(positions),
+        status_tsv=str(status_tsv),
     )
 
     with pysam.VariantFile(str(out)) as vf:
@@ -445,6 +530,28 @@ def test_the_force_call_writes_calls_and_leaves_the_rest_out(tmp_path):
     assert stats["n_variant"] == 2
     assert stats["n_no_reads"] == 1
     assert stats["n_uncertain"] == 2
+    # Per gene, by PharmCAT's PX; and each position's fate, with its reads.
+    assert stats["by_gene"] == {
+        "TEST": {
+            "positions": 7,
+            "reference": 2,
+            "variant": 2,
+            "no_reads": 1,
+            "uncertain": 2,
+        }
+    }
+    rows = [l.split("\t") for l in status_tsv.read_text(encoding="utf-8").splitlines()]
+    assert rows[0] == list(ns["PHARMCAT_STATUS_COLUMNS"])
+    fate = {int(r[1]): (r[3], r[4], r[5], r[6]) for r in rows[1:]}
+    assert fate == {
+        100: ("TEST", "reference", "10", "0"),
+        150: ("TEST", "reference", "10", "0"),
+        200: ("TEST", "variant", "5", "5"),
+        250: ("TEST", "uncertain", "3", "0"),
+        280: ("TEST", "uncertain", "9", "1"),
+        330: ("TEST", "variant", "0", "20"),
+        390: ("TEST", "no_reads", "", ""),
+    }
 
 
 # 300 bp of GRCh38 around CYP2C19 rs28399504 (chr10:94762556-94762855); the
@@ -525,7 +632,12 @@ def test_evidence_the_caller_does_not_call_still_blocks_reference(tmp_path):
 
     ns = _load_wrapper(
         CLASSIFY
-        + ["tabix_index", "PHARMCAT_POSITIONS_VCF", "genotype_pharmcat_positions"]
+        + [
+            "tabix_index",
+            "PHARMCAT_POSITIONS_VCF",
+            "alignment_sample_name",
+            "genotype_pharmcat_positions",
+        ]
     )
     out = tmp_path / "pharmcat.vcf.gz"
     stats = ns["genotype_pharmcat_positions"](
@@ -544,6 +656,14 @@ def test_evidence_the_caller_does_not_call_still_blocks_reference(tmp_path):
 # --------------------------------------------------------------------------
 
 
+def _missing(*positions):
+    """missing_positions as pharmcat_parser.position_coverage gives them."""
+    return [
+        {"position": pos, "rsid": f"rs{i}", "alleles": list(alleles)}
+        for i, (pos, alleles) in enumerate(positions)
+    ]
+
+
 def test_a_partly_covered_call_is_named_with_what_it_could_not_assess():
     """Measured on the panel: NUDT15 *1/*1 with *4, *15, *20, *21 unassessed."""
     from app.reports.generator import partial_coverage_alert
@@ -554,19 +674,169 @@ def test_a_partly_covered_call_is_named_with_what_it_could_not_assess():
                 "gene": "NUDT15",
                 "diplotype": "*1/*1",
                 "uncalled_haplotypes": ["*4", "*15", "*20", "*21"],
+                "n_positions": 20,
+                "missing_positions": _missing(
+                    ("chr13:1", ["*4"]),
+                    ("chr13:2", ["*15"]),
+                    ("chr13:3", ["*20"]),
+                    ("chr13:4", ["*21"]),
+                    ("chr13:5", ["*4"]),
+                ),
             },
-            {"gene": "CYP2C19", "diplotype": "*1/*1", "uncalled_haplotypes": []},
-            # No call at all: already named under "Genes examined without a call".
+            {
+                "gene": "CYP2C19",
+                "diplotype": "*1/*1",
+                "uncalled_haplotypes": [],
+                "n_positions": 35,
+                "missing_positions": [],
+            },
+            # No call, and no position missing: already named under "Genes examined
+            # without a call", with nothing about positions to add.
             {
                 "gene": "RYR1",
                 "diplotype": "Unknown/Unknown",
                 "uncalled_haplotypes": ["Reference", "c.38T>G"],
             },
-        ]
+        ],
+        "bam",
     )
-    assert "NUDT15 (*4, *15, *20, *21)" in text
+    assert (
+        "<li><strong>NUDT15</strong>: 5 of 20 positions not read; alleles not "
+        "assessable: *4, *15, *20, *21</li>"
+    ) in text
     assert "CYP2C19" not in text and "RYR1" not in text
     assert "could not be assessed" in text
+    # No statuses were kept, so no reasons are claimed.
+    assert "no reads" not in text.lower()
+
+
+def test_each_line_says_why_the_positions_were_missing():
+    """The alignment's own per-position statuses give the reasons; an allele PharmCAT
+    still assessed from its other positions is named as such, not as assessed."""
+    from app.reports.generator import partial_coverage_alert
+
+    text = partial_coverage_alert(
+        [
+            {
+                "gene": "CYP2B6",
+                "diplotype": "*1/*6",
+                "uncalled_haplotypes": ["*30"],
+                "n_positions": 48,
+                "missing_positions": _missing(
+                    ("chr19:100", ["*30"]), ("chr19:200", ["*6", "*7"])
+                ),
+            },
+            {
+                "gene": "VKORC1",
+                "diplotype": "Unknown/Unknown",
+                "uncalled_haplotypes": ["rs9923231 variant (T)"],
+                "n_positions": 1,
+                "missing_positions": _missing(("chr16:300", ["rs9923231 variant (T)"])),
+            },
+            {
+                "gene": "TPMT",
+                "diplotype": "*1/*1",
+                "uncalled_haplotypes": [],
+                "n_positions": 45,
+                "missing_positions": _missing(("chr6:400", ["*3B"])),
+            },
+        ],
+        "cram",
+        {
+            "chr19:100": "no_reads",
+            "chr19:200": "uncertain",
+            "chr16:300": "no_reads",
+            "chr6:400": "variant",
+            "chr6:999": "uncertain",  # read as missing by no gene PharmCAT called
+        },
+    )
+    assert (
+        "<li><strong>CYP2B6</strong>: 2 of 48 positions not read (no reads 1, "
+        "uncertain 1); alleles not assessable: *30; assessed on their other "
+        "positions only: *6, *7</li>"
+    ) in text
+    # A gene with no call gets its count: that may be why.
+    assert (
+        "<li><strong>VKORC1</strong>: 1 of 1 position not read (no reads 1); "
+        "no call</li>"
+    ) in text
+    # The reads showed something there: not "no reads", and not nothing.
+    assert (
+        "<li><strong>TPMT</strong>: 1 of 45 positions not read (variant 1); "
+        "assessed on their other positions only: *3B</li>"
+    ) in text
+    # Each reason used is explained once, and only those.
+    assert (
+        "In brackets, <em>no reads</em>: no read of mapping quality 1 or more" in text
+    )
+    assert "<em>uncertain</em>: reads did, but did not settle the genotype" in text
+    assert (
+        "<em>variant</em>: the reads showed a non-reference allele that PharmCAT"
+        in text
+    )
+    assert "<em>other</em>" not in text and "position list" not in text
+
+
+def test_the_reasons_always_add_up_to_the_count():
+    """A position the status file does not have (its copy of PharmCAT's positions
+    was stale: an upgrade without restaging reference/pharmcat/) and a status the
+    alert does not name each get a bucket, never a silent shortfall."""
+    from app.reports.generator import partial_coverage_alert
+
+    text = partial_coverage_alert(
+        [
+            {
+                "gene": "NUDT15",
+                "diplotype": "*1/*1",
+                "uncalled_haplotypes": ["*4"],
+                "n_positions": 20,
+                "missing_positions": _missing(
+                    *[(f"chr13:{i}", ["*4"]) for i in range(1, 6)]
+                ),
+            }
+        ],
+        "bam",
+        {"chr13:1": "no_reads", "chr13:2": "no_reads", "chr13:3": "reference"},
+    )
+    assert (
+        "<strong>NUDT15</strong>: 5 of 20 positions not read (no reads 2, other 1, "
+        "not in this run's position list 2)"
+    ) in text
+    assert "<em>other</em>: another status" in text
+    assert (
+        "<em>not in this run's position list</em>: the alignment was genotyped" in text
+    )
+
+
+def test_a_plain_vcf_says_not_in_the_vcf_and_leaves_uncalled_genes_alone():
+    """A variants-only VCF leaves most of PharmCAT's panel uncalled; those are
+    explained under "Genes examined without a call", not listed again here."""
+    from app.reports.generator import partial_coverage_alert
+
+    text = partial_coverage_alert(
+        [
+            {
+                "gene": "CYP2C19",
+                "diplotype": "*1/*2",
+                "uncalled_haplotypes": ["*35"],
+                "n_positions": 35,
+                "missing_positions": _missing(("chr10:1", ["*35"])),
+            },
+            {
+                "gene": "CFTR",
+                "diplotype": "Unknown/Unknown",
+                "uncalled_haplotypes": [],
+                "n_positions": 93,
+                "missing_positions": _missing(*[(f"chr7:{i}", []) for i in range(93)]),
+            },
+        ],
+        "vcf",
+        {"chr10:1": "no_reads"},  # not an alignment's: never claimed as reads
+    )
+    assert "Positions not in the VCF" in text
+    assert "1 of 35 positions not in the VCF" in text
+    assert "CFTR" not in text
+    assert "not read" not in text and "no reads" not in text.lower()
 
 
 def test_no_partial_coverage_means_no_alert():
@@ -574,7 +844,15 @@ def test_no_partial_coverage_means_no_alert():
 
     assert (
         partial_coverage_alert(
-            [{"gene": "TPMT", "diplotype": "*1/*1", "uncalled_haplotypes": []}]
+            [
+                {
+                    "gene": "TPMT",
+                    "diplotype": "*1/*1",
+                    "uncalled_haplotypes": [],
+                    "n_positions": 45,
+                    "missing_positions": [],
+                }
+            ]
         )
         is None
     )
@@ -590,6 +868,64 @@ def test_a_long_list_is_cut_and_counted_and_escaped():
     )
     assert "and 5 more" in text
     assert "<x>" not in text
+
+
+def test_the_position_statuses_are_read_from_the_published_file(tmp_path):
+    from app.reports.generator import POSITION_STATUS_FILE, read_position_statuses
+
+    path = tmp_path / POSITION_STATUS_FILE
+    path.parent.mkdir()
+    path.write_text(
+        "chrom\tposition\trsid\tgene\tstatus\treference_reads\tother_reads\n"
+        "chr19\t15878886\trs3952537\tCYP4F2\tuncertain\t4\t0\n"
+        "chrX\t154532439\trs1\tG6PD\tno_reads\t\t\n"
+        "chr1\t97078987\trs114096998\tDPYD\treference\t31\t0\n",
+        encoding="utf-8",
+    )
+    assert read_position_statuses(str(tmp_path)) == {
+        "chr19:15878886": "uncertain",
+        "chrX:154532439": "no_reads",
+        "chr1:97078987": "reference",
+    }
+    # A run without one (any input but an alignment, or a run before the file).
+    assert read_position_statuses(str(tmp_path / "elsewhere")) == {}
+
+
+def test_the_parser_counts_the_positions_pharmcat_had_no_genotype_for():
+    """PharmCAT's report lists every position of a gene, a null call where it had
+    no genotype: NA12878's CYP4F2, from a real run, is 20 positions, two of them
+    (rs3952537 for *19, rs4020346 for *17) missing."""
+    from app.pharmcat.pharmcat_parser import position_coverage
+
+    def variant(pos, rsid, call, alleles):
+        return {
+            "chromosome": "chr19",
+            "position": pos,
+            "dbSnpId": rsid,
+            "call": call,
+            "alleles": alleles,
+        }
+
+    gene = {
+        "variants": [variant(15873000 + i, f"rs{i}", "C/C", ["*2"]) for i in range(18)]
+        + [
+            variant(15878886, "rs3952537", None, ["*19"]),
+            variant(15878920, "rs4020346", None, ["*17"]),
+        ]
+    }
+    assert position_coverage(gene) == {
+        "n_positions": 20,
+        "missing_positions": [
+            {"position": "chr19:15878886", "rsid": "rs3952537", "alleles": ["*19"]},
+            {"position": "chr19:15878920", "rsid": "rs4020346", "alleles": ["*17"]},
+        ],
+    }
+    # An outside call (CYP2D6, HLA) has no positions of PharmCAT's own.
+    assert position_coverage({"variants": []}) == {
+        "n_positions": 0,
+        "missing_positions": [],
+    }
+    assert position_coverage(None)["missing_positions"] == []
 
 
 def test_the_uncalled_haplotypes_reach_the_report_genes():
@@ -616,11 +952,67 @@ def test_the_uncalled_haplotypes_reach_the_report_genes():
     assert genes[0]["uncalled_haplotypes"] == ["*4"]
 
 
+def test_the_missing_positions_reach_the_report_genes():
+    from app.services.pharmcat_data_service import PharmCATDataService
+
+    missing = [{"position": "chr13:1", "rsid": "rs1", "alleles": ["*4"]}]
+    service = PharmCATDataService.__new__(PharmCATDataService)
+    genes = service._transform_genes_for_reports(
+        [
+            {
+                "gene_symbol": "NUDT15",
+                "call_source": "MATCHER",
+                "uncalled_haplotypes": ["*4"],
+                "n_positions": 20,
+                "missing_positions": missing,
+            }
+        ],
+        [{"gene_symbol": "NUDT15", "diplotype_label": "*1/*1"}],
+    )
+    assert genes[0]["n_positions"] == 20
+    assert genes[0]["missing_positions"] == missing
+
+
+def test_an_unannotated_genes_missing_positions_reach_the_report_too():
+    """F2 and F5 come from PharmCAT's unannotatedGeneCalls, straight from its JSON.
+    Shaped as NA12878's F5 is in a real run's JSON, with the position missing."""
+    from app.services.pharmcat_data_service import PharmCATDataService
+
+    f5 = {
+        "geneSymbol": "F5",
+        "callSource": "MATCHER",
+        "sourceDiplotypes": [],
+        "uncalledHaplotypes": ["rs6025 Factor V Leiden (T)"],
+        "variants": [
+            {
+                "gene": "F5",
+                "chromosome": "chr1",
+                "position": 169549811,
+                "dbSnpId": "rs6025",
+                "call": None,
+                "alleles": ["rs6025 Factor V Leiden (T)"],
+            }
+        ],
+    }
+    service = PharmCATDataService.__new__(PharmCATDataService)
+    (gene,) = service._transform_unannotated_calls_for_reports([f5], set())
+    assert gene["gene"] == "F5"
+    assert gene["n_positions"] == 1
+    assert gene["missing_positions"] == [
+        {
+            "position": "chr1:169549811",
+            "rsid": "rs6025",
+            "alleles": ["rs6025 Factor V Leiden (T)"],
+        }
+    ]
+
+
 def test_the_parser_reads_them_back_from_the_stored_gene_json():
     src = (REPO / "app" / "pharmcat" / "pharmcat_parser.py").read_text(encoding="utf-8")
     body = src[src.index("def get_gene_summary") :]
     body = body[: body.index("\n    def ", 1)]
     assert '(r.gene_full_data or {}).get("uncalledHaplotypes")' in body
+    assert "**position_coverage(r.gene_full_data)" in body
 
 
 def test_the_generator_appends_the_alert_to_the_rendered_warnings():
@@ -628,6 +1020,23 @@ def test_the_generator_appends_the_alert_to_the_rendered_warnings():
     assert "coverage_alert = partial_coverage_alert(" in src
     assert '(meta.get("file_analysis") or {}).get("file_type")' in src
     assert "workflow_warnings.append(coverage_alert)" in src
+    assert "read_position_statuses(output_dir)" in src
+
+
+def test_the_position_statuses_are_published_beside_pharmcats_vcf():
+    """The wrapper hands the file's path back; main.nf copies it where the report
+    reads it (generator.POSITION_STATUS_FILE). Optional: it explains PharmCAT's VCF,
+    which is used without it."""
+    from app.reports.generator import POSITION_STATUS_FILE
+
+    body = _process("PyPGxBam2Vcf")
+    line = next(l for l in body.splitlines() if "pharmcat_position_status.tsv" in l)
+    assert f'path "{POSITION_STATUS_FILE}", optional: true' in line
+    assert "pharmcat_status_path" in body
+    assert f'cp "$STATUS_PATH" {POSITION_STATUS_FILE}' in body
+    assert '"pharmcat_status_path": res.get("pharmcat_status")' in WRAPPER.read_text(
+        encoding="utf-8"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -893,11 +1302,26 @@ def test_a_plain_vcf_is_not_told_its_data_did_not_cover_a_position():
     """Review: on a variants-only VCF a position is not listed, not uncovered."""
     from app.reports.generator import partial_coverage_alert
 
-    genes = [{"gene": "CYP2C9", "diplotype": "*1/*1", "uncalled_haplotypes": ["*8"]}]
+    genes = [
+        {
+            "gene": "CYP2C9",
+            "diplotype": "*1/*1",
+            "uncalled_haplotypes": ["*8"],
+            "n_positions": 88,
+            "missing_positions": [{"position": "chr10:1", "alleles": ["*8"]}],
+        }
+    ]
     vcf = partial_coverage_alert(genes, "vcf")
-    assert "has no record at the positions" in vcf and "did not cover" not in vcf
+    assert (
+        "The VCF has no genotype at" in vcf
+        and "1 of 88 positions not in the VCF" in vcf
+    )
+    assert "not read" not in vcf
     bam = partial_coverage_alert(genes, "bam")
-    assert "did not cover the positions" in bam
+    assert "The alignment gave no genotype at" in bam
+    assert "1 of 88 positions not read" in bam
+    gvcf = partial_coverage_alert(genes, "gvcf")
+    assert "1 of 88 positions without a genotype" in gvcf
 
 
 # --------------------------------------------------------------------------

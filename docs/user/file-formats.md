@@ -11,7 +11,7 @@ title: Input formats
 | gVCF | GRCh38, GATK reference blocks | genotyped (GATK GenotypeGVCFs) |
 | BAM, SAM | GRCh38 | SAM converted to BAM (samtools) |
 | CRAM | GRCh38, written against one of three references (below) | converted to BAM (samtools) |
-| FASTQ | short reads, up to 20 GB | aligned to GRCh38 (bwa-mem) |
+| FASTQ | short reads, up to 20 GB by default | aligned to GRCh38 (bwa-mem) |
 | 23andMe, AncestryDNA, BED, FASTA, T2T-CHM13 | refused, with the reason | |
 
 One data file per analysis; a FASTQ's two mates count as one. A VCF, BCF or gVCF must hold
@@ -111,10 +111,11 @@ Upload both files of a paired-end run. R1 alone can miss heterozygous variants i
 Refused, with the reason:
 
 - **Long reads** (Oxford Nanopore, PacBio). Align them with minimap2 against GRCh38 and upload the BAM or CRAM.
-- **Over 20 GB in total.** This covers targeted panels and exomes, not whole genomes. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+- **Over 20 GB in total**, unless `FASTQ_MAX_UPLOAD_BYTES` sets another limit ({doc}`configuration`). This covers targeted panels and exomes, not whole genomes. Align whole-genome reads yourself (nf-core/sarek, or `bwa-mem` against GRCh38) and upload the BAM or CRAM.
+- **More than the free disk can hold.** Alignment keeps several BAM-sized files at once until it finishes, up to about 9 times the gzipped FASTQ's size in all (measured: 6 times, on 1 GB of reads; an uncompressed FASTQ counts as a third of its size), so the GATK service checks the free disk before it starts and refuses with how much is needed and how much is free.
 - **No detectable sequencing platform.** The platform is read from the read names, which SRA re-exports lose. Upload the original run files, or align the reads yourself.
 
-Alignment is slow. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
+The limit is about disk and time: alignment is slow, and a whole genome would take hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
 
 ## Consumer genotyping arrays (23andMe, AncestryDNA): refused for now
 

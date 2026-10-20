@@ -26,7 +26,7 @@ set the same, and a bare port there would listen on every interface.
 | `zarohla` | `zaromicsresearch/zaropgx-zarohla` | 5060 → 5000 | OptiType 1.5.0: HLA class I typing from alignments |
 | `mtdna` | `zaromicsresearch/zaropgx-mtdna` | 5062 → 5000 | mtDNA-Server 2 v2.1.16: mitochondrial variants, haplogroup, the MT-RNR1 outside call |
 | `pharmcat` | `zaromicsresearch/zaropgx-pharmcat` | 5001 → 5000 | PharmCAT 3.4.0 with the outside calls; writes its HTML, JSON and TSV |
-| `fhir-server` | `hapiproject/hapi:v8.12.0-2` | 8090 → 8080 | HAPI FHIR server; the app only reads its version |
+| `fhir-server` | `hapiproject/hapi:v8.12.0-2` | 8090 → 8080 | HAPI FHIR server; the app reads its version, and sends a job's FHIR bundle to it when asked (`POST /fhir/push/workflow/{job_id}`) |
 | `kroki`, `mermaid` | `yuzutech/kroki:0.32.1`, `kroki-mermaid` | 8001 → 8000; mermaid not published | Render the workflow diagram in the reports |
 | `docs` | built locally, profile `optional` | 5070 → 8000 | Live-reloading docs preview |
 

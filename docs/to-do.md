@@ -20,8 +20,13 @@ curated: true
   (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
   gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
-  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over 20 GB, long
-  reads (ONT, PacBio), or a platform that cannot be read from the read names.
+  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over the cap
+  (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
+  the FASTQ, checked before alignment starts), long reads (ONT, PacBio), or a platform that
+  cannot be read from the read names. The cap is about scratch disk and run time. On 2% of
+  NA12878's 30x reads (1.08 GB, 7.6 M pairs) alignment took 11 minutes and peaked at 6.1x
+  the FASTQ's size in disk (Oct 2026), so a whole genome would take hours. Open: measure
+  disk and MarkDuplicatesSpark's memory on one whole-genome FASTQ.
 - **Not accepted**: 23andMe, AncestryDNA. Detected by name and refused. A decision, not
   pending work: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
   that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
@@ -140,13 +145,13 @@ curated: true
 - Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
 - Add preprocessing glyph (e.g., Liftover) where applicable & mtDNA glyph
 - Unify/clean redundant text
-- **Front-end test harness — nothing renders the page today.** What exists is
+- **Front-end test harness.** Until Oct 2026 nothing rendered the page. What existed was
   Node-executed *logic* tests: `tests/test_ui_workflow_flag_reads.py` and
   `tests/test_upload_story_coherence.py` pull the inline `<script>` out of
   `index.html`, run it against real API JSON, and assert on the HTML string (CI
   installs Node 22 so they cannot silently skip). Everything else is source-text
-  assertions. There is no `package.json`, no jsdom, and no browser driver, so
-  nothing computes a style, clicks anything, or looks at the page.
+  assertions. There was no `package.json`, no jsdom, and no browser driver, so
+  nothing computed a style, clicked anything, or looked at the page.
   That gap produced three bugs in one sitting on 2026-08-29, each invisible to
   the 1700-test suite:
   - PharmCAT popup text unreadable in dark mode (a white card inheriting the
@@ -157,9 +162,12 @@ curated: true
     the report links actually resolve.
   Cheapest useful order: (1) [DONE Oct 2026] every compose E2E lane fetches each
   `/reports/` link its completed job lists and requires a 200 with a body
-  (`tests/e2e/report_links.py`); (2) Playwright smoke over upload → progress →
-  report in both themes, with a contrast assertion on the popups; (3) only then
-  consider visual snapshots.
+  (`tests/e2e/report_links.py`); (2) [DONE Oct 2026] Playwright smoke over upload →
+  progress → report in both themes, with a contrast assertion on the popups and the
+  results card (`tests/e2e/test_ui_smoke.py`; with the 08-29 popup CSS put back, the
+  dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, so the liftover
+  freeze above still needs a GRCh37 run watched); (3) only then consider visual
+  snapshots.
 
 ## Data & Database
 
@@ -170,14 +178,39 @@ curated: true
 
 ## FHIR & Exporting
 
+- [DONE Oct 2026, feat/fhir-push-hapi] The FHIR bundle validates against the HL7 Genomics
+  Reporting IG 3.0.0 profiles with no errors (HAPI FHIR 8.12 `$validate` with the IG
+  loaded, tx.fhir.org for LOINC and SNOMED CT). The 30x NA12878 bundle had 731 errors:
+  observations without the Genetics category, a Task code outside LOINC LL4049-4, the
+  genomic study's category. The XML bundle is now FHIR XML; before, no FHIR parser could
+  read it. Warnings left: no narrative, no performer, recommendations matching two of the
+  IG's profiles, HGNC codes no reachable terminology server checks
+  (docs/samples/README.md).
+- [DONE Oct 2026, feat/fhir-push-hapi] `POST /fhir/push/workflow/{job_id}` sends a job's
+  bundle to the bundled HAPI server (`FHIR_SERVER_URL`) as a transaction, on request
+  only; pushing again updates in place and deletes the job's resources the bundle no
+  longer has (tagged `urn:zaropgx:job-id`). A server that is down gives 502; the job is
+  untouched. `tests/test_fhir_push_hapi.py` runs it against a throwaway HAPI
+  (`ZAROPGX_FHIR_TEST_URL`).
+- No UI for the push yet: an action on a finished job in the web page.
+- Push a finished job automatically when a deployment asks for it (a setting, off by
+  default)?
+- [DONE Oct 2026, feat/fhir-coded-implications] Phenotypes are therapeutic implications of
+  their genotypes, coded from the IG's LOINC answers where one says the same thing, text
+  elsewhere (table in docs/samples/README.md). Open: also repeat each gene's phenotype in
+  its drugs' implications, as the IG's examples do (needs labelling which gene each is
+  for); codes for G6PD's terms and the hedged calls, if LOINC or the IG adds them.
+- Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
+  an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
+- Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
 - [DONE Oct 2026, feat/hapi-genomics-ig] The bundled HAPI server loads the Genomics
   Reporting IG 3.0.0 and the two packages it depends on, so its `$validate` checks a bundle
   against the IG's profiles. They are pinned files in `docker/fhir-server/packages/`, not
   downloads: the IG changes every year or two, so it is updated with the code (decided
   2026-10-19). Offline, `$validate` does not check LOINC, SNOMED CT or HGNC codes. How to
   call it and how to update the packages: docs/developer/architecture.md.
-- HAPI FHIR server integration; adjust `ddl-auto` appropriately for prod vs dev
-- Implement export per HL7 Genomics Reporting IG v3 via FHIr r4
+- HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
+- Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR
 
 ## Security & Privacy
