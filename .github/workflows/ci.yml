@@ -146,6 +146,9 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 30 \
             -o "$RUNNER_TEMP/GRCh38_reference_fasta.tar" \
             https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar
+          # The SHA-256 genome-downloader and the pharmcat image pin it by.
+          echo "7aeb9c9b7ddb262aab32fe97a48317a4a54d97680dea27b81af4561cf502f839  $RUNNER_TEMP/GRCh38_reference_fasta.tar" \
+            | sha256sum -c -
           tar -xf "$RUNNER_TEMP/GRCh38_reference_fasta.tar" -C .cache/pharmcat-reference
           gzip -t .cache/pharmcat-reference/reference.fna.bgz
           ls -l .cache/pharmcat-reference

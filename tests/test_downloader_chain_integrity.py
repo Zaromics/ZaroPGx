@@ -80,12 +80,6 @@ def test_the_chain_is_pinned_and_not_trusted_to_tls(downloader):
     )
 
 
-def test_only_the_chain_is_pinned(downloader):
-    """The other entries are verified by TLS (certifi) or are not fixed content."""
-    pinned = [g["name"] for g in downloader.GENOMES if g.get("sha256")]
-    assert pinned == ["hg19_to_hg38_chain"]
-
-
 def test_a_download_that_matches_its_hash_is_kept(downloader, tmp_path, monkeypatch):
     body = b"chain 1000 chr1 10 + 0 10 chr1 10 + 0 10 1\n10\n"
     _serve(downloader, monkeypatch, body)

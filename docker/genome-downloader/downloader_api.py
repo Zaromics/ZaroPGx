@@ -26,6 +26,52 @@ app = FastAPI(title="Genome Downloader API", version="0.4.0", description="REST 
 # Defaulted rather than required so a bare `python downloader_api.py` still runs.
 PHARMCAT_VERSION = os.environ.get("PHARMCAT_VERSION", "3.4.0")
 
+# The SHA-256 of every download whose content is fixed, checked while it streams
+# and before it moves into place (download_file); one that does not match is
+# discarded and its status says why. Each was taken from a full download whose MD5
+# matched the provider's own published checksum, given beside it with its source.
+# All the files predate 0.3.2 (2026-09-28), so what earlier installs fetched is
+# these same bytes. Derived files (the gunzipped FASTAs, their .fai, the CRAM
+# reference cache) are not pinned: they are made from these.
+REFERENCE_SHA256 = {
+    # UCSC hg19.fa.gz, 948,731,419 bytes, Last-Modified 2018-08-21. MD5
+    # 806c02398f5ac5da8ffd6da2d1d5d1a9: goldenPath/hg19/bigZips/md5sum.txt, and
+    # the same line in the Internet Archive's 2023 and 2026 captures of it,
+    # fetched over https.
+    "hg19": "ac73947d38df63ccb00724520a5c31d880c1ca423702ca7ccb7e6c2182a362d9",
+    # UCSC hg38.fa.gz, 983,659,424 bytes, Last-Modified 2014-01-16. MD5
+    # 1c9dcaddfa41027f17cd8f7a82c7293b: goldenPath/hg38/bigZips/md5sum.txt, and
+    # the same line in the Internet Archive's 2023 and 2026 captures.
+    "hg38": "c1dd87068c254eb53d944f71e51d1311964fce8de24d6fc0effc9c61c01527d4",
+    # 1000 Genomes human_g1k_v37.fasta.gz, 892,331,003 bytes, 2011-07-12. MD5
+    # 45f81df94f0408d082363e34a081ed81: the FTP site's own list of every file and
+    # its MD5, vol1/ftp/current.tree (https). Hashed from NCBI's mirror of the tree
+    # (ftp-trace.ncbi.nih.gov/1000genomes/ftp), whose copy has that MD5.
+    "grch37": "8b6c538abf0dd92d3f3020f36cc1dd67ce004ffa421c2781205f1eb690bdb442",
+    # Zenodo record 7288118 (PharmCAT's GRCh38 reference, created 2022-11-04),
+    # GRCh38_reference_fasta.tar, 882,785,724 bytes. MD5
+    # a4047175ae90e2df36900f039f1cf260: the file's checksum in Zenodo's API.
+    # docker/pharmcat/start.sh checks the same pin.
+    "pharmcat_grch38": "7aeb9c9b7ddb262aab32fe97a48317a4a54d97680dea27b81af4561cf502f839",
+    # UCSC hg19ToHg38.over.chain.gz: see its GENOMES entry.
+    "hg19_to_hg38_chain": "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d",
+    # 1000 Genomes GRCh38_full_analysis_set_plus_decoy_hla.fa (the CRAM cache's
+    # source), 3,263,683,042 bytes, 2015-03-09. MD5 64b32de2fc934679c16e83a2bc072064:
+    # vol1/ftp/current.tree; hashed from NCBI's mirror, as for GRCh37.
+    "ref_cache_1kg_analysis_set": "3b103f4742abfd54938fb0333e19ad067635c8eb86f1dbf0ce44b165c4292b50",
+}
+# PharmCAT's files, per release: a release with no entry is fetched unpinned.
+PHARMCAT_SHA256 = {
+    "3.4.0": {
+        # Release asset pharmcat_positions_3.4.0.vcf, 64,934 bytes: the SHA-256 is
+        # the asset digest GitHub publishes for it (release of 2026-07-14).
+        "pharmcat_positions": "63f49b9004b6a5ca921deebe8ec59f8e45f6990543e07b7890c0d6201f5e69fc",
+        # pharmcat_regions.bed at tag v3.4.0 (blob 00edabc9), 756 bytes. Not a
+        # release asset: the file as the tag holds it.
+        "pharmcat_regions": "9755c524125481c6140e9996e9569b8fb01544322ee704e854f2f7c6eaf4e14a",
+    },
+}
+
 # Global variable to track download progress
 download_status = {
     "in_progress": False,
@@ -145,6 +191,8 @@ REF_CACHE_SOURCES = [
             "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/"
             "GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa"
         ),
+        "what": "the 1000 Genomes GRCh38 analysis set",
+        "sha256": REFERENCE_SHA256["ref_cache_1kg_analysis_set"],
         "fasta_path": "/reference/ref_cache_sources/GRCh38_full_analysis_set_plus_decoy_hla.fa",
         "remove_after": True,
     },
@@ -178,9 +226,14 @@ def populate_reference_cache():
             save_status()
             continue
         fasta = src["fasta_path"]
+        if src.get("url"):
+            # A download left by an earlier run is checked before it is cached.
+            discard_unverified(src, fasta)
         if src.get("url") and not os.path.exists(fasta):
             os.makedirs(os.path.dirname(fasta), exist_ok=True)
-            if not download_file(src["url"], fasta, src["name"]):
+            if not download_file(
+                src["url"], fasta, src["name"], sha256=src.get("sha256"), what=src.get("what")
+            ):
                 success = False
                 continue
         if not os.path.exists(fasta):
@@ -286,21 +339,26 @@ def sha256_of(path):
     return digest.hexdigest()
 
 
-def discard_unverified(genome):
+def discard_unverified(genome, path=None):
     """Remove a pinned file already on disk that does not match its SHA-256.
 
-    The loop below trusts any file it finds at a genome's path, so a wrong chain
-    left by an earlier run (or put there by anything else) would be kept. One that
-    fails its hash goes, and is fetched again and checked like a new download.
+    The loops below trust any file they find at a download's path, so a wrong or
+    partial file left by an earlier run (or put there by anything else) would be
+    kept. One that fails its hash goes, and is fetched again and checked like a
+    new download. This reads the file once; it runs only where a download is
+    already on disk and not yet unpacked, never for a finished genome.
     """
     expected = genome.get("sha256")
-    path = genome["gz_path"]
+    path = path or genome["gz_path"]
     if not expected or not os.path.exists(path):
         return
+    started = time.perf_counter()
     actual = sha256_of(path)
     if actual != expected:
         print(f"Removing {path}: its SHA-256 is {actual}, expected {expected}")
         os.remove(path)
+    else:
+        print(f"{path}: SHA-256 verified in {time.perf_counter() - started:.1f} s")
 
 
 # One run at a time. A POST /start-download during the startup delay, or two quick
@@ -398,6 +456,7 @@ def download_file(url, dest_path, genome_name, sha256=None, what=None):
         response.raise_for_status()
         downloaded = 0
         digest = hashlib.sha256() if sha256 else None
+        hash_seconds = 0.0
 
         fd, part_path = tempfile.mkstemp(
             dir=os.path.dirname(dest_path) or ".",
@@ -412,7 +471,9 @@ def download_file(url, dest_path, genome_name, sha256=None, what=None):
                 if chunk:
                     f.write(chunk)
                     if digest is not None:
+                        started = time.perf_counter()
                         digest.update(chunk)
+                        hash_seconds += time.perf_counter() - started
                     downloaded += len(chunk)
                     # Capped: file_size is the HEAD's Content-Length, which for a
                     # gzip-encoded response (GitHub raw) is the compressed size, while
@@ -433,6 +494,10 @@ def download_file(url, dest_path, genome_name, sha256=None, what=None):
                     f"something between this host and {where.netloc} is altering "
                     f"{where.scheme} downloads (a proxy or captive portal)."
                 )
+            print(
+                f"{genome_name}: SHA-256 verified, {downloaded / 1e6:.1f} MB, "
+                f"{hash_seconds:.2f} s of hashing"
+            )
         os.replace(part_path, dest_path)
         return True
     except Exception as e:
@@ -533,13 +598,17 @@ def index_genome(fasta_path, genome_name):
 GENOMES = [
     {
         "name": "hg19",
+        "what": "the hg19 FASTA",
         "url": "http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz",
+        "sha256": REFERENCE_SHA256["hg19"],
         "gz_path": "/reference/hg19/ucsc.hg19.fasta.gz",
         "fasta_path": "/reference/hg19/ucsc.hg19.fasta"
     },
     {
         "name": "hg38",
+        "what": "the hg38 FASTA",
         "url": "http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz",
+        "sha256": REFERENCE_SHA256["hg38"],
         "gz_path": "/reference/hg38/Homo_sapiens_assembly38.fasta.gz",
         "fasta_path": "/reference/hg38/Homo_sapiens_assembly38.fasta"
     },
@@ -547,13 +616,17 @@ GENOMES = [
         "name": "grch37",
         # https, not ftp: requests has no FTP adapter, so the ftp:// URL failed on
         # every install. EBI serves the same tree over HTTPS.
+        "what": "the GRCh37 FASTA",
         "url": "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz",
+        "sha256": REFERENCE_SHA256["grch37"],
         "gz_path": "/reference/grch37/human_g1k_v37.fasta.gz",
         "fasta_path": "/reference/grch37/human_g1k_v37.fasta"
     },
     {
         "name": "pharmcat_grch38",
+        "what": "PharmCAT's GRCh38 reference",
         "url": "https://zenodo.org/record/7288118/files/GRCh38_reference_fasta.tar",
+        "sha256": REFERENCE_SHA256["pharmcat_grch38"],
         "gz_path": "/reference/pharmcat/GRCh38_reference_fasta.tar",
         # The file the tarball actually contains. It ships its own .fai/.gzi, so
         # the ".fai exists" skip check below works and no indexing step runs.
@@ -592,6 +665,8 @@ GENOMES = [
             f"https://github.com/PharmGKB/PharmCAT/releases/download/"
             f"v{PHARMCAT_VERSION}/pharmcat_positions_{PHARMCAT_VERSION}.vcf"
         ),
+        "what": "PharmCAT's positions VCF",
+        "sha256": PHARMCAT_SHA256.get(PHARMCAT_VERSION, {}).get("pharmcat_positions"),
         "gz_path": "/reference/pharmcat/pharmcat_positions.vcf",
         "fasta_path": "/reference/pharmcat/pharmcat_positions.vcf",
         "is_vcf": True
@@ -600,7 +675,9 @@ GENOMES = [
         # At the release's tag, like the positions above, not the moving
         # `development` branch it used to come from (the same 756 bytes today).
         "name": "pharmcat_regions",
+        "what": "PharmCAT's regions BED",
         "url": f"https://github.com/PharmGKB/PharmCAT/raw/v{PHARMCAT_VERSION}/pharmcat_regions.bed",
+        "sha256": PHARMCAT_SHA256.get(PHARMCAT_VERSION, {}).get("pharmcat_regions"),
         "gz_path": "/reference/pharmcat/pharmcat_regions.bed",
         "fasta_path": "/reference/pharmcat/pharmcat_regions.bed",
         "is_bed": True
@@ -629,7 +706,7 @@ GENOMES = [
         "name": "hg19_to_hg38_chain",
         "what": "the liftover chain",
         "url": "http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
-        "sha256": "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d",
+        "sha256": REFERENCE_SHA256["hg19_to_hg38_chain"],
         "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
         "fasta_path": "/reference/chain/hg19ToHg38.over.chain.gz",
         "is_chain": True

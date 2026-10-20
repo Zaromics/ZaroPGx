@@ -99,7 +99,7 @@ def test_the_cache_stage_downloads_caches_and_removes_the_extra_build(
     local, remote = _sources(downloader, monkeypatch, tmp_path)
     fetched = []
 
-    def download(url, dest, name):
+    def download(url, dest, name, sha256=None, what=None):
         fetched.append(name)
         Path(dest).write_text(">chr1\nACGTACGA\n>HLA-A*01:01:01:01\nGGCC\n")
         return True
@@ -127,7 +127,7 @@ def test_the_cache_stage_downloads_caches_and_removes_the_extra_build(
 
 def test_a_failed_download_leaves_that_build_pending(downloader, monkeypatch, tmp_path):
     _sources(downloader, monkeypatch, tmp_path)
-    monkeypatch.setattr(downloader, "download_file", lambda *a: False)
+    monkeypatch.setattr(downloader, "download_file", lambda *a, **k: False)
 
     assert downloader.populate_reference_cache() is False
     assert [s["name"] for s in downloader.ref_cache_pending()] == [
