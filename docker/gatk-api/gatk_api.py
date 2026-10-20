@@ -4823,6 +4823,11 @@ COVERAGE_MEASURED_ON_HEADER_KEY = "ZaroPGx_coverage_measured_on"
 # on 22_KI270879v1_alt, for a gVCF made against a GRCh38 without ALT contigs): no
 # reads there is not "not sequenced, or deleted".
 OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
+# For each gene with a record with reads in its region, its allele-defining positions
+# under none, "GENE:POS;POS,..." or ".": a neighbour's reads in a gene's region are not
+# reads at it (UGT1A4's and UGT1A6's regions span UGT1A1's exon 1). The wrapper reads
+# such a position as having no genotype (its position_evidence).
+POSITIONS_WITHOUT_READS_HEADER_KEY = "ZaroPGx_positions_without_reads"
 
 
 def pypgx_gene_table_path():
@@ -4840,6 +4845,55 @@ def pypgx_gene_table_path():
         if os.path.isfile(candidate):
             return candidate
     return os.path.join(here, "pypgx-gene-table.csv")
+
+
+def pypgx_allele_table_path():
+    """PyPGx's allele table, found as pypgx_gene_table_path finds the gene table.
+
+    lexicon/allele-table.csv is PyPGx 0.27.0's own; Dockerfile.gatk-api copies it in.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (
+        os.path.join(here, "pypgx-allele-table.csv"),
+        os.path.join(here, "..", "..", "lexicon", "allele-table.csv"),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(here, "pypgx-allele-table.csv")
+
+
+def pypgx_gene_positions_grch38(gene_table, allele_table):
+    """{gene: [(contig, start, end)]}: the GRCh38 positions PyPGx defines each gene's
+    star alleles at, 0-based half-open over each defining variant's REF, for the genes
+    it calls from small variants. pypgx_wrapper's load_gene_positions, spelled again
+    (no PyPGx here); tests/test_pypgx_vcf_without_genotypes.py keeps them equal."""
+    import csv
+
+    with open(gene_table, newline="", encoding="utf-8") as fh:
+        genes = {
+            row["Gene"].strip().upper()
+            for row in csv.DictReader(fh)
+            if (row.get("GRCh38Region") or "").strip()
+            and (row.get("Variants") or "").strip().upper() == "TRUE"
+        }
+    ends = {}
+    with open(allele_table, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            gene = row["Gene"].strip().upper()
+            if gene not in genes:
+                continue
+            for variant in (row.get("GRCh38Core") or "").split(","):
+                parts = variant.strip().split("-")
+                if len(parts) != 4:  # "N/A": an allele without a variant
+                    continue
+                key = (parts[0], int(parts[1]))
+                end = key[1] - 1 + max(len(parts[2]), 1)
+                spans = ends.setdefault(gene, {})
+                spans[key] = max(spans.get(key, 0), end)
+    return {
+        gene: sorted((contig, pos - 1, end) for (contig, pos), end in spans.items())
+        for gene, spans in ends.items()
+    }
 
 
 def pypgx_gene_spans_grch38(table_path):
@@ -4888,22 +4942,41 @@ def _gvcf_record_has_reads(fields):
 
 
 def genes_without_gvcf_reads(gvcf_record_lines, spans):
-    """The genes in `spans` that no gVCF record with reads overlaps. Pure over text.
+    """The genes in `spans` that no gVCF record with reads overlaps (gvcf_reads_over)."""
+    return gvcf_reads_over(gvcf_record_lines, spans, {})[0]
+
+
+def gvcf_reads_over(gvcf_record_lines, spans, positions):
+    """(the genes in `spans` that no gVCF record with reads overlaps, and {gene: [POS]}
+    of each other gene's `positions` that none overlaps). Pure over text.
 
     A record's extent is its INFO END for a block, its REF otherwise; a block that
     starts upstream of a gene and runs into it covers the gene. One record with reads
     is enough, as one read is for an alignment (uncovered_genes_in_alignment): the
-    question is whether anything was sequenced there, not how well.
+    question is whether anything was sequenced there, not how well. The same for a
+    position: one record with reads over it.
     """
+    import bisect
+
     by_contig = {}
     for contig, start, end, gene in spans:
         by_contig.setdefault(_pypgx_contig(contig), []).append((start, end, gene))
+    at = {}
+    for gene, gene_positions in positions.items():
+        for contig, start, end in gene_positions:
+            at.setdefault(_pypgx_contig(contig), []).append((start, end, gene))
+    for listed in at.values():
+        listed.sort()
+    starts = {c: [p[0] for p in listed] for c, listed in at.items()}
+    longest = {c: max(e - s for s, e, _ in listed) for c, listed in at.items()}
     covered = set()
+    read_at = set()
     for line in gvcf_record_lines:
         if not line.strip() or line.startswith("#"):
             continue
         f = line.rstrip("\n").split("\t")
-        genes = by_contig.get(_pypgx_contig(f[0]))
+        contig = _pypgx_contig(f[0])
+        genes = by_contig.get(contig)
         pos = _as_int(f[1]) if len(f) >= 10 else None
         if not genes or pos is None or not _gvcf_record_has_reads(f):
             continue
@@ -4919,27 +4992,47 @@ def genes_without_gvcf_reads(gvcf_record_lines, spans):
         for gene_start, gene_end, gene in genes:
             if start < gene_end and end > gene_start:
                 covered.add(gene)
-    return sorted({gene for _, _, _, gene in spans} - covered)
+        listed = at.get(contig) or []
+        i = bisect.bisect_left(starts.get(contig) or [], end)
+        while i > 0:
+            i -= 1
+            p_start, p_end, gene = listed[i]
+            if p_start < start - longest[contig]:
+                break
+            if start < p_end and end > p_start:
+                read_at.add((gene, p_start))
+    uncovered = sorted({gene for _, _, _, gene in spans} - covered)
+    without = {}
+    for gene, gene_positions in positions.items():
+        if gene in uncovered:
+            continue
+        unread = [s + 1 for _, s, _ in gene_positions if (gene, s) not in read_at]
+        if unread:
+            without[gene] = unread
+    return uncovered, without
 
 
-def gvcf_uncovered_genes(job_label, staged_gvcf, table_path, work_dir):
-    """genes_without_gvcf_reads over the staged gVCF's records in PyPGx's GRCh38 regions.
+def gvcf_coverage(job_label, staged_gvcf, table_path, allele_table, work_dir):
+    """gvcf_reads_over the staged gVCF's records in PyPGx's GRCh38 regions: the genes
+    with no reads, and the other genes' positions with none.
 
     `bcftools view -R` with --regions-overlap record, so a block starting upstream is
     returned, through the tabix index. Each region is listed under both namings, `1`
     and `chr1`: bcftools 1.24 skips a region on a contig the file does not have.
     """
-    if not os.path.isfile(table_path):
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"PyPGx's gene table is not at {table_path}. The gVCF conversion "
-                "records which PyPGx genes the gVCF has reads over, and cannot without "
-                "it. It is copied into the gatk-api image from lexicon/gene-table.csv; "
-                "rebuild the image."
-            ),
-        )
+    for path, name in ((table_path, "gene"), (allele_table, "allele")):
+        if not os.path.isfile(path):
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"PyPGx's {name} table is not at {path}. The gVCF conversion "
+                    "records which PyPGx genes and positions the gVCF has reads over, "
+                    "and cannot without it. It is copied into the gatk-api image from "
+                    f"lexicon/{name}-table.csv; rebuild the image."
+                ),
+            )
     spans = pypgx_gene_spans_grch38(table_path)
+    positions = pypgx_gene_positions_grch38(table_path, allele_table)
     bed = os.path.join(work_dir, "pypgx_genes.bed")
     with open(bed, "w", encoding="utf-8") as out:
         for contig, start, end, _ in spans:
@@ -4963,9 +5056,9 @@ def gvcf_uncovered_genes(job_label, staged_gvcf, table_path, work_dir):
         "Reading the gVCF's records over PyPGx's genes (bcftools view)",
     )
     if not os.path.exists(overlapping):
-        return sorted({gene for _, _, _, gene in spans})
+        return sorted({gene for _, _, _, gene in spans}), {}
     with _open_vcf_text(overlapping) as handle:
-        return genes_without_gvcf_reads(handle, spans)
+        return gvcf_reads_over(handle, spans, positions)
 
 
 def vcf_header_contigs(path):
@@ -5287,8 +5380,9 @@ def convert_gvcf_to_vcf(
        reference. This is what makes the conversion worth doing. Judged by
        judge_pgx_pass into PharmCAT's own file (`<output>.pharmcat.vcf.gz`, returned as
        pharmcat_vcf_path) and the rows the merged output carries. The merged output's
-       header also says which PyPGx genes the gVCF has no reads over
-       (gvcf_uncovered_genes), the one thing its reference blocks tell PyPGx.
+       header also says which PyPGx genes, and which of the other genes' positions, the
+       gVCF has no reads over (gvcf_coverage), the one thing its reference blocks tell
+       PyPGx.
     3. The variant pass: everything OUTSIDE that list, variants only -- for PyPGx
        (which reads the whole call set, not just PharmCAT's positions) and for the
        mtDNA sidecar (pharmcat_positions.vcf carries no chrM at all; see
@@ -5378,10 +5472,14 @@ def convert_gvcf_to_vcf(
     # UNCOVERED_GENES_HEADER_KEY), in the header of the file the merge starts from.
     # `bcftools concat` carries a header line of either input into its output
     # (measured, bcftools 1.24); the output is checked for it below.
-    uncovered = gvcf_uncovered_genes(
-        job_label, staged, pypgx_gene_table_path(), work_dir
+    uncovered, without_reads = gvcf_coverage(
+        job_label, staged, pypgx_gene_table_path(), pypgx_allele_table_path(), work_dir
     )
     uncovered_line = f"##{UNCOVERED_GENES_HEADER_KEY}={','.join(uncovered) or '.'}"
+    unread = ",".join(
+        f"{g}:{';'.join(str(p) for p in sorted(ps))}"
+        for g, ps in sorted(without_reads.items())
+    )
     off_reference = genes_off_reference(
         vcf_header_contigs(staged), pypgx_gene_spans_grch38(pypgx_gene_table_path())
     )
@@ -5392,11 +5490,13 @@ def convert_gvcf_to_vcf(
             uncovered_line,
             f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
             f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
+            f"##{POSITIONS_WITHOUT_READS_HEADER_KEY}={unread or '.'}",
         ],
     )
     logger.info(
         f"Job {job_label}: {len(uncovered)} PyPGx gene(s) with no reads in the gVCF"
         + (f": {', '.join(uncovered)}" if uncovered else "")
+        + f"; positions with none in {len(without_reads)} more"
     )
     general_text = os.path.join(work_dir, 'pgx_positions.general.vcf')
     with open(general_text, 'w', encoding='utf-8') as fh:

@@ -1715,6 +1715,81 @@ def test_which_gvcf_records_show_reads_over_a_gene(gatk_api, record, covered):
     assert set(uncovered) == {"CYP2D6", "CYP2E1", "GSTT1"} - covered
 
 
+def _lexicon_positions(gatk_api):
+    root = REPO_ROOT / "lexicon"
+    return gatk_api.pypgx_gene_positions_grch38(
+        root / "gene-table.csv", root / "allele-table.csv"
+    )
+
+
+def test_a_neighbours_block_covers_a_region_not_its_positions(gatk_api):
+    """Reads over UGT1A1's exon 1 only, as a panel's gVCF has them. UGT1A4's and
+    UGT1A6's regions span that exon, so they are not uncovered genes; none of their
+    own positions is under the block, and the conversion names every one of them."""
+    positions = _lexicon_positions(gatk_api)
+    spans = [
+        s
+        for s in gatk_api.pypgx_gene_spans_grch38(gatk_api.pypgx_gene_table_path())
+        if s[3] in ("UGT1A1", "UGT1A4", "UGT1A6", "CYP2E1")
+    ]
+    wanted = {g: positions[g] for g in ("UGT1A1", "UGT1A4", "UGT1A6", "CYP2E1")}
+    uncovered, without = gatk_api.gvcf_reads_over(
+        [
+            _block("chr2", 233759700, 233761100),
+            _block("chr2", 233761101, 233790000, dp=0),  # GATK's zero-depth block
+        ],
+        spans,
+        wanted,
+    )
+    assert uncovered == ["CYP2E1"]
+    assert without == {
+        "UGT1A4": [s + 1 for _, s, _ in positions["UGT1A4"]],
+        "UGT1A6": [233693631],
+    }
+
+
+def test_a_position_under_a_block_without_reads_is_named(gatk_api):
+    positions = {"CYP2E1": [("10", 133526100, 133526101), ("10", 133535368, 133535369)]}
+    spans = [("10", 133517362, 133549123, "CYP2E1")]
+    uncovered, without = gatk_api.gvcf_reads_over(
+        [
+            _block("chr10", 133520000, 133530000),
+            _block("chr10", 133530001, 133540000, dp=0),
+        ],
+        spans,
+        positions,
+    )
+    assert uncovered == [] and without == {"CYP2E1": [133535369]}
+    # A variant row with reads, its REF over the position, reads it.
+    variant = "chr10\t133535368\t.\tGA\tG,<NON_REF>\t50\t.\t.\tGT:DP\t0/1:20\n"
+    _, without = gatk_api.gvcf_reads_over(
+        [_block("chr10", 133520000, 133530000), variant], spans, positions
+    )
+    assert without == {}
+
+
+def test_the_merged_vcf_names_positions_without_reads(client, tools):
+    tools.gene_records = [_block("chr2", 233759700, 233761100)]
+    resp = _post(client)
+    assert resp.status_code == 200, resp.text
+    line = next(
+        h
+        for h in _merged_header(tools)
+        if h.startswith("##ZaroPGx_positions_without_reads=")
+    )
+    unread = dict(item.split(":") for item in line.split("=", 1)[1].split(","))
+    assert unread["UGT1A6"] == "233693631"
+    assert "UGT1A1" not in unread  # all four of its positions under the block
+    assert "CYP2E1" not in unread  # no reads at all: an uncovered gene instead
+
+
+def test_the_allele_table_is_found_beside_the_module_or_in_the_repo(gatk_api):
+    path = gatk_api.pypgx_allele_table_path()
+    assert os.path.samefile(path, REPO_ROOT / "lexicon" / "allele-table.csv")
+    dockerfile = (REPO_ROOT / "docker" / "gatk-api" / "Dockerfile.gatk-api").read_text()
+    assert "COPY lexicon/allele-table.csv /app/pypgx-allele-table.csv" in dockerfile
+
+
 def test_the_gene_table_is_found_beside_the_module_or_in_the_repo(gatk_api):
     path = gatk_api.pypgx_gene_table_path()
     assert os.path.samefile(path, REPO_ROOT / "lexicon" / "gene-table.csv")
