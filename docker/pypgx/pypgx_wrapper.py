@@ -1056,7 +1056,9 @@ def prepare_sv_inputs(
     """
     depth = whole_genome_depth(alignment_path, assembly)
     record: Dict[str, Any] = {
-        "median_depth": None if depth is None else round(depth, 1),
+        # Rounded down: 14.96x, under the gate, rounded to 15.0x read "15.0x, under
+        # 15x" in the report.
+        "median_depth": None if depth is None else math.floor(depth * 10) / 10,
         "min_median_depth": WGS_MIN_MEDIAN_DEPTH,
     }
     if depth is None or depth < WGS_MIN_MEDIAN_DEPTH:

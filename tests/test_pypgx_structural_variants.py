@@ -180,6 +180,17 @@ def test_a_panel_gets_no_sv_inputs(pypgx, monkeypatch, tmp_path, sv_genes):
     }
 
 
+def test_a_depth_just_under_the_gate_is_recorded_under_it(
+    pypgx, monkeypatch, tmp_path, sv_genes
+):
+    """Rounded, 14.96x read "15.0x, under 15x" in the report."""
+    monkeypatch.setattr(pypgx, "whole_genome_depth", lambda *a: 14.96)
+    monkeypatch.setattr(pypgx.subprocess, "run", _Recorder())
+    inputs, record = pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh38")
+    assert inputs is None
+    assert record["median_depth"] == 14.9
+
+
 def test_another_build_is_recorded_as_such(pypgx, monkeypatch, tmp_path, sv_genes):
     monkeypatch.setattr(pypgx.subprocess, "run", _Recorder())
     inputs, record = pypgx.prepare_sv_inputs("x.bam", str(tmp_path / "s"), "GRCh37")

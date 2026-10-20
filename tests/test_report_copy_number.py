@@ -106,7 +106,39 @@ def test_the_whole_gene_deletion_genes_are_the_sidecars():
             getattr(t, "id", None) == "WHOLE_GENE_DELETION_GENES" for t in n.targets
         )
     ]
-    assert set(ast.literal_eval(node.value.args[0])) == NULL_DELETION
+    assert set(ast.literal_eval(node.value.args[0])) == set(NULL_DELETION)
+
+
+def _table(name):
+    with open(ROOT / "lexicon" / name, newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+# SV alleles in PyPGx's allele table that no copy-number state of its genotypers
+# yields (pypgx/api/genotype.py, PyPGx 0.27): no call can show them either way.
+NEVER_CALLED = {("CYP2B6", "*30"), ("CYP2D6", "*61"), ("CYP2D6", "*63")}
+
+
+def test_each_gene_names_the_sv_alleles_pypgx_calls():
+    """Every SV allele of the gene in PyPGx's allele table, and nothing else."""
+    sv = {}
+    for row in _table("allele-table.csv"):
+        if row["SV"] == "TRUE" and row["Gene"] in MISSED:
+            sv.setdefault(row["Gene"], set()).add(row["StarAllele"])
+    for gene, text in MISSED.items():
+        named = set(re.findall(r"\*\w+|\bMALE\b", text))
+        expected = {a for a in sv.get(gene, set()) if (gene, a) not in NEVER_CALLED}
+        assert named == expected, gene
+
+
+def test_the_phenotype_genes_are_those_pypgx_gives_a_phenotype():
+    from app.reports.copy_number import _PHENOTYPE_GENES
+
+    assert _PHENOTYPE_GENES == {
+        row["Gene"]
+        for row in _table("gene-table.csv")
+        if row["Gene"] in MISSED and row["PhenotypeMethod"] != "N/A"
+    }
 
 
 def test_a_vcf_runs_sv_genes_are_flagged_and_no_other():
@@ -178,11 +210,16 @@ def test_the_other_alignment_reasons(status, words):
     assert words in why_not_assessed("cram", {"sv_calling": record})["sentence"]
 
 
-def test_an_alignment_without_the_record_has_no_reason():
-    """A sidecar from before the record: the notes say what, not why."""
-    assert why_not_assessed("bam", {"alt_locus_mapq0": {}}) is None
-    assert why_not_assessed("bam", None) is None
-    assert why_not_assessed(None, None) is None
+@pytest.mark.parametrize(
+    "file_type, output",
+    [("bam", {"alt_locus_mapq0": {}}), ("bam", None), (None, None)],
+    ids=["sidecar-before-the-record", "no-step-row", "type-not-recorded"],
+)
+def test_without_a_known_reason_it_says_only_what_is_certain(file_type, output):
+    """No input type is asserted that the run did not record."""
+    why = why_not_assessed(file_type, output)
+    assert why["short"] == "no read depth"
+    assert why["sentence"] == "No depth of coverage reached PyPGx in this run."
 
 
 # --------------------------------------------------------------------------
@@ -199,15 +236,15 @@ def test_cyp2d6s_notes_name_what_it_misses_and_that_the_phenotype_can_move():
     )
     assert copy_number_note("CYP2D6", VCF) == (
         "Copy number was not assessed (VCF input), so this call cannot show a *5 "
-        "deletion, a duplication or a CYP2D7 hybrid (*13, *36, *68), which can "
-        "change the phenotype. See Alerts and Warnings."
+        "deletion, extra copies (x2, x3) or a CYP2D7 hybrid (*13, *36, *68), which "
+        "can change the phenotype. See Alerts and Warnings."
     )
 
 
 @pytest.mark.parametrize("gene", sorted(NULL_DELETION))
 def test_a_deletion_genes_notes_do_not_imply_both_copies(gene):
     call_note = copy_number_call_note(gene, VCF)
-    assert "one or both copies may be deleted" in call_note
+    assert "may be deleted" in call_note
     note = copy_number_note(gene, VCF)
     assert "the common null allele" in note
     assert "how many copies there are, if any" in note
@@ -216,9 +253,10 @@ def test_a_deletion_genes_notes_do_not_imply_both_copies(gene):
             assert claim not in text.lower(), (gene, text)
 
 
-def test_without_a_reason_the_note_says_what_not_why():
-    assert copy_number_call_note("GSTT1", None) == (
-        "Copy number not assessed: one or both copies may be deleted (*0) (see Alerts)"
+def test_without_a_known_reason_the_note_asserts_none():
+    assert copy_number_call_note("GSTT1", why_not_assessed(None, None)) == (
+        "Copy number not assessed (no read depth): one or both copies may be "
+        "deleted (*0) (see Alerts)"
     )
 
 
@@ -227,7 +265,7 @@ def test_every_gene_has_both_notes_and_a_short_call_note():
     as long as the ALT-locus note beside it (app/reports/alt_locus.py)."""
     assert set(CALL_NOTE) == set(MISSED)
     for gene in MISSED:
-        assert len(copy_number_call_note(gene, VCF)) <= 90, gene
+        assert len(copy_number_call_note(gene, VCF)) <= 95, gene
         assert copy_number_note(gene, VCF).endswith("See Alerts and Warnings."), gene
 
 
@@ -244,15 +282,43 @@ def test_the_alert_names_the_genes_why_and_what_would_assess_them():
 
 def test_rows_of_flagged_genes_carry_the_notes():
     rows = [
-        {"gene": "CYP2D6", "diplotype": "*1/*4", "call_source": "OUTSIDE"},
-        {"gene": "ABCB1", "diplotype": "*1/*2"},
+        {
+            "gene": "CYP2D6",
+            "diplotype": "*1/*4",
+            "call_source": "OUTSIDE",
+            "tool_source": "PyPGx",
+        },
+        {"gene": "GSTM1", "diplotype": "*A/*A", "tool_source": "PyPGx"},
+        {"gene": "ABCB1", "diplotype": "*1/*2", "tool_source": "PyPGx"},
     ]
-    annotate_copy_number(rows, ["CYP2D6"], VCF)
+    annotate_copy_number(rows, ["CYP2D6", "GSTM1"], VCF)
     assert rows[0]["copy_number_not_assessed"] == {
         "note": copy_number_note("CYP2D6", VCF),
         "call_note": copy_number_call_note("CYP2D6", VCF),
     }
-    assert "copy_number_not_assessed" not in rows[1]
+    assert rows[1]["copy_number_not_assessed"]
+    assert "copy_number_not_assessed" not in rows[2]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        # OUTSIDECALLSOVERRIDE's file: a lab's call, which PyPGx did not make.
+        {"gene": "CYP2D6", "diplotype": "*1/*5", "call_source": "OUTSIDE"},
+        # PharmCAT's own call from small variants, PyPGx's beside it unused.
+        {
+            "gene": "CYP2B6",
+            "diplotype": "*1/*6",
+            "call_source": "MATCHER",
+            "tool_source": "PyPGx",
+        },
+    ],
+    ids=["override-file", "pharmcat-matcher"],
+)
+def test_a_call_pypgx_did_not_make_is_not_noted(row):
+    rows = [dict(row)]
+    annotate_copy_number(rows, ["CYP2D6", "CYP2B6"], VCF)
+    assert "copy_number_not_assessed" not in rows[0]
 
 
 # --------------------------------------------------------------------------
@@ -286,7 +352,12 @@ def _rows():
             "call_source": "OUTSIDE",
             "tool_source": "PyPGx",
         },
-        {"gene": "GSTM1", "diplotype": "*A/*A", "phenotype": "N/A"},
+        {
+            "gene": "GSTM1",
+            "diplotype": "*A/*A",
+            "phenotype": "N/A",
+            "tool_source": "PyPGx",
+        },
         {"gene": "CYP2C19", "diplotype": "*1/*2", "phenotype": "Intermediate"},
     ]
     annotate_copy_number(rows, ["CYP2D6", "GSTM1"], VCF)
@@ -354,8 +425,9 @@ def test_an_unflagged_report_is_unchanged():
 def test_an_uncalled_gene_gets_no_note():
     from app.reports.generator import env
 
-    rows = [{"gene": "CYP2D6", "diplotype": "Unknown/Unknown"}]
+    rows = [{"gene": "CYP2D6", "diplotype": "Unknown/Unknown", "tool_source": "PyPGx"}]
     annotate_copy_number(rows, ["CYP2D6"], VCF)
+    assert rows[0]["copy_number_not_assessed"]
     macros = env.get_template("_pypgx_evidence.html").module
     assert "copy-number-note" not in str(macros.call_notes(rows[0]))
 
@@ -366,7 +438,7 @@ def test_the_interactive_report_notes_the_call():
     macros = env.get_template("_pypgx_evidence.html").module
     note = str(macros.call_notes(_rows()[1]))
     assert 'class="call-note copy-number-note"' in note
-    assert "one or both copies may be deleted (*0)" in note
+    assert "copies may be deleted (*0) or duplicated" in note
     interactive = (
         ROOT / "app" / "reports" / "templates" / "interactive_report.html"
     ).read_text(encoding="utf-8")
@@ -407,6 +479,7 @@ def test_a_vcf_report_says_so_and_a_whole_genome_does_not(monkeypatch, tmp_path)
     # PharmCAT's row for CYP2D6, an outside call from PyPGx, carries the note.
     rows = {r["gene"]: r for r in result["processed_data"]["genes"]}
     assert rows["CYP2D6"]["call_source"] == "OUTSIDE"
+    assert rows["CYP2D6"]["called_by"] == "P"
     assert rows["CYP2D6"]["copy_number_not_assessed"]
     assert "⚠ Copy number not assessed: see the notes" in body
     assert "ABCB1" in rows and "copy_number_not_assessed" not in rows["ABCB1"]
@@ -419,8 +492,48 @@ def test_a_vcf_report_says_so_and_a_whole_genome_does_not(monkeypatch, tmp_path)
     assert "copy-number-note" not in page.split("</style>")[-1]
 
 
+def test_pharmcats_rows_from_pypgx_are_all_its_call(monkeypatch, tmp_path):
+    """PharmCAT 2.x's JSON (the example) has a CYP2D6 row per guideline source.
+    Only the last was marked PyPGx's, the dedupe kept the first, and the Call column
+    said X (an outside call, tool not recorded) for PyPGx's own call."""
+    pypgx = {"results": {"CYP2D6": _result("*1/*3", "Normal", cnv_model=True)}}
+    result = _report(monkeypatch, tmp_path, pypgx)
+    (row,) = [r for r in result["processed_data"]["genes"] if r["gene"] == "CYP2D6"]
+    assert (row["called_by"], row["tool_source"]) == ("P", "PyPGx")
+
+
+def test_an_outside_call_pypgx_did_not_make_gets_no_note(monkeypatch, tmp_path):
+    """OUTSIDECALLSOVERRIDE: PharmCAT took a lab's CYP2D6, not PyPGx's *1/*4."""
+    result = _report(monkeypatch, tmp_path, _vcf_run())
+    rows = {r["gene"]: r for r in result["processed_data"]["genes"]}
+    assert rows["CYP2D6"]["diplotype"] == "*1/*3"
+    assert rows["CYP2D6"]["called_by"] == "X"
+    assert "copy_number_not_assessed" not in rows["CYP2D6"]
+    page = (tmp_path / result["html_path"].split("/")[-1]).read_text()
+    body = _clean(page.split("</style>")[-1])
+    assert "Copy number not assessed: GSTM1 and UGT2B17." in body
+    assert "see the notes" not in body
+
+
+def test_an_input_type_the_job_did_not_record_is_not_asserted(monkeypatch, tmp_path):
+    """/reprocess-report rebuilds a report without the job's metadata: the data's
+    file type then defaults to "vcf", whatever was uploaded."""
+    pypgx = _vcf_run()
+    pypgx["results"]["CYP2D6"] = _result("*1/*3", cnv_model=False)
+    result = _report(monkeypatch, tmp_path, pypgx, file_type=None)
+    page = (tmp_path / result["html_path"].split("/")[-1]).read_text()
+    body = _clean(page.split("</style>")[-1])
+    assert (
+        "Copy number not assessed: CYP2D6, GSTM1 and UGT2B17. No depth of coverage "
+        "reached PyPGx in this run." in body
+    )
+    assert "VCF" not in body[: body.index("Executive Summary")]
+
+
 def test_the_interactive_report_has_the_alert_and_the_notes(monkeypatch, tmp_path):
-    result = _report(monkeypatch, tmp_path, _vcf_run(), interactive=True)
+    pypgx = _vcf_run()
+    pypgx["results"]["CYP2D6"] = _result("*1/*3", cnv_model=False)
+    result = _report(monkeypatch, tmp_path, pypgx, interactive=True)
     page = (tmp_path / result["interactive_html_path"].split("/")[-1]).read_text()
     body = _clean(page.split("</style>")[-1])
     assert "Copy number not assessed: CYP2D6, GSTM1 and UGT2B17." in body
