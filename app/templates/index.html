@@ -1644,9 +1644,11 @@
                     this.progressBar.style.width = '0%';
                     this.progressBar.textContent = '0%';
                     this.progressBar.setAttribute('aria-valuenow', 0);
-                    // Drop the completion colour, or the next run starts green.
-                    this.progressBar.classList.remove('progress-bar-complete');
-                    this.progressBar.classList.add('bg-info');
+                    // Drop the completion and failure colours, or the next run starts
+                    // green, red or grey (Bootstrap's bg-danger outranks bg-info), and
+                    // put back the stripes a failed or cancelled run took off.
+                    this.progressBar.classList.remove('progress-bar-complete', 'bg-danger', 'bg-secondary');
+                    this.progressBar.classList.add('bg-info', 'progress-bar-striped', 'progress-bar-animated');
                     if (this.progressStatus) {
                         this.progressStatus.textContent = 'Preparing...';
                     }
@@ -1660,6 +1662,10 @@
                     }
                     this.isAnimating = false;
                     this.stopSimulation();
+                    // A stage update still waiting out minStageDuration is stale once
+                    // the bar stops: fired later, it moved a finished or failed bar
+                    // again and replaced its final status line.
+                    this.pendingStageUpdate = null;
 
                     // Settle on the target instead of freezing wherever the
                     // animation happened to be. onComplete calls
@@ -2956,6 +2962,55 @@
         };
 
         // Enhanced progress monitoring that integrates with new workflow system
+        // A job that ended without completing (failed or cancelled), told as such:
+        // in the progress bar, the log and the results card.
+        window.showJobEnded = function(status, smoothProgress) {
+            const failed = status !== 'cancelled';
+            if (smoothProgress) {
+                smoothProgress.stopAnimation();
+            }
+            const bar = document.getElementById('progressBar');
+            if (bar) {
+                bar.classList.remove('bg-info', 'progress-bar-animated', 'progress-bar-striped');
+                bar.classList.add(failed ? 'bg-danger' : 'bg-secondary');
+            }
+            const progressStatus = document.getElementById('progressStatus');
+            if (progressStatus) {
+                progressStatus.textContent = failed ? 'Analysis failed' : 'Analysis cancelled';
+            }
+            // The stage row is left as it is: onProgress, from this same message, has
+            // just marked the step that failed. updateStageIndicators resets the whole
+            // row before marking, so calling it here with no step erased that mark.
+            window.addLogMessage(
+                failed ? `Workflow ended: ${status}` : 'Workflow cancelled',
+                failed ? 'danger' : 'warning'
+            );
+            const cancelButton = document.getElementById('cancelButton');
+            if (cancelButton) {
+                cancelButton.classList.add('d-none');
+            }
+
+            const resultsDiv = document.getElementById('analysisResults');
+            if (!resultsDiv) {
+                return;
+            }
+            const alert = document.createElement('div');
+            alert.className = failed ? 'alert alert-danger' : 'alert alert-secondary';
+            const heading = document.createElement('h4');
+            heading.textContent = failed ? 'Analysis Failed' : 'Analysis Cancelled';
+            const text = document.createElement('p');
+            text.textContent = failed
+                ? 'The job stopped before it finished, so it has no reports. The processing log above says where it stopped and why.'
+                : 'The job was cancelled before it finished, so it has no reports.';
+            alert.append(heading, text);
+            resultsDiv.replaceChildren(alert);
+            resultsDiv.classList.remove('d-none');
+            const workflowPanel = document.getElementById('workflowAnalysisPanel');
+            if (workflowPanel) {
+                workflowPanel.classList.add('d-none');
+            }
+        };
+
         window.monitorProgress = function(jobId) {
             console.log('Starting workflow monitoring for job:', jobId);
             
@@ -3034,8 +3089,17 @@
                     },
                     onComplete: (data) => {
                         console.log('Workflow completed:', data);
-                        
-                        
+
+                        // The monitor calls this however the job ended: completed,
+                        // failed or cancelled. Only "completed" is a success; a
+                        // failed job showed a green bar at 100% and "Analysis
+                        // Complete! ... completed successfully".
+                        const endedAs = String((data && data.status) || 'completed').toLowerCase();
+                        if (endedAs !== 'completed') {
+                            window.showJobEnded(endedAs, smoothProgress);
+                            return;
+                        }
+
                         // Use completion data directly from the API
                         if (smoothProgress) {
                             smoothProgress.updateProgress(100, 'completed', 'Analysis complete!');
