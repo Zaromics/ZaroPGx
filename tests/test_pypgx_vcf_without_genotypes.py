@@ -467,7 +467,7 @@ def test_the_note_offers_the_option_except_where_it_would_not_help(pypgx):
     assert "Assume absent" in pypgx.no_genotype_note("CYP2E1", 7, no_calls=3)
 
 
-def test_a_partial_call_says_how_many_positions_were_read_as_reference(pypgx):
+def test_the_partial_call_note_counts_positions_with_no_genotype(pypgx):
     assert pypgx.positions_read_as_reference_note(120, 121) == (
         "120 of 121 positions had no genotype in the file and were read as reference"
     )
@@ -628,7 +628,7 @@ def test_with_the_option_off_a_gene_without_a_genotype_is_not_called(genotype):
     assert seen["vcf"] == seen["dropped"][0] and seen["vcf"].endswith(".gz")
 
 
-def test_a_partial_call_says_how_many_positions_were_read_as_reference(genotype):
+def test_a_call_from_some_positions_says_how_many_were_read_as_reference(genotype):
     """CYP2D6 from one genotyped position of its 121: called, and the call says so."""
     seen, post = genotype
     body = post([(*CYP2D6_38, "0/1")], absent_to_ref="false")
