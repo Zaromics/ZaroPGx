@@ -37,9 +37,12 @@ Every `zaromicsresearch/zaropgx-*` image must come from the same release, `pypgx
 `gatk-api` above all. gatk-api 0.4.0 writes a `##ZaroPGx_uncovered_genes` line into the VCF
 it makes from a gVCF, which pypgx 0.4.0 reads to tell which genes the gVCF covered; without
 that line, a gVCF loses the PyPGx call for every gene where the sample matches the reference.
-pypgx 0.4.0 also asks gatk-api to re-align reads (`/realign-reads`, below). The start
-scripts move every image together; this matters only with a custom tag, or after
-`docker compose build` of a single service.
+pypgx 0.4.0 also asks gatk-api to re-align reads (`/realign-reads`, below). `nextflow` and
+`pypgx` must match too: pypgx 0.4.0 believes that line only when nextflow 0.4.0 tells it
+the upload was a gVCF (`upload_type`). Behind an older nextflow, a gVCF loses its PyPGx
+calls wherever its genes have positions without a record. The start scripts move every
+image together; this matters only with a custom tag, or after `docker compose build` of a
+single service.
 
 ### The app binds to loopback in new installs
 

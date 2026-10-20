@@ -1026,6 +1026,34 @@ def test_a_lanes_own_coverage_lines_are_believed(genotype, said):
 
 
 @pytest.mark.parametrize("form", ["plain", "bgzip"])
+def test_the_copy_is_exact_and_a_line_behind_a_lone_cr_is_dropped(
+    pypgx, tmp_path, form
+):
+    """Bytes that are not UTF-8 (latin-1 in the sample name and in INFO), CRLF line
+    ends and a lone CR inside a record come through as they were. A ##ZaroPGx_ line
+    hidden behind a lone CR in another header line is a line of its own to the
+    readers, which split on universal newlines: it is dropped too."""
+    kept_head = b"##fileformat=VCFv4.2\r\n##source=x\r"
+    hidden = b"##ZaroPGx_uncovered_genes=.\r\n"
+    rest = (
+        b"##contig=<ID=chr22>\r\n"
+        b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tJos\xe9\r\n"
+        b"chr22\t42128945\t.\tC\tT\t50\tPASS\tNOTE=caf\xe9\rx\tGT\t0/1\r\n"
+    )
+    path = tmp_path / "in.vcf"
+    raw = kept_head + hidden + rest
+    path.write_bytes(gzip.compress(raw) if form == "bgzip" else raw)
+    # The readers do see the hidden line.
+    assert pypgx.uncovered_genes_from_vcf(str(path)) == set()
+
+    stripped, dropped = pypgx.without_zaropgx_header_lines(path)
+
+    assert dropped == 1
+    assert stripped.read_bytes() == kept_head + rest
+    assert pypgx.uncovered_genes_from_vcf(str(stripped)) is None
+
+
+@pytest.mark.parametrize("form", ["plain", "bgzip"])
 def test_the_lines_are_dropped_and_the_records_kept(pypgx, tmp_path, form):
     vcf = _vcf(
         tmp_path / "in.vcf", [(*CYP2D6_38, "0/1"), (*GSTM1_38, "1/1")], form=form

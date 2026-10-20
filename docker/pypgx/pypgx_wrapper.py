@@ -883,11 +883,13 @@ def _reference_fasta_for_assembly(assembly: str) -> Path:
 #
 # Coverage can only be observed on the alignment, so it is measured in
 # /create-input-vcf and written into the VCF's own header, where it travels with the
-# file through Nextflow to /genotype without new plumbing. A gVCF records it too, in
-# its reference blocks' depth, which GenotypeGVCFs drops: gatk-api /gvcf-to-vcf
-# measures it on the blocks and writes the same line, with COVERAGE_MEASURED_ON_HEADER_KEY
-# saying where it came from. An uploaded VCF has no such line: it carries no coverage
-# evidence, and its genes are checked for genotypes instead (position_evidence).
+# file through Nextflow to /genotype. A gVCF records it too, in its reference blocks'
+# depth, which GenotypeGVCFs drops: gatk-api /gvcf-to-vcf measures it on the blocks and
+# writes the same line, with COVERAGE_MEASURED_ON_HEADER_KEY saying where it came from.
+# /genotype believes the line only when Nextflow's upload_type says this lane wrote it
+# (ZAROPGX_HEADER_PREFIX). An uploaded VCF's own is dropped: an upload carries no
+# coverage evidence, and its genes are checked for genotypes instead
+# (position_evidence).
 UNCOVERED_GENES_HEADER_KEY = "ZaroPGx_uncovered_genes"
 # "gVCF" when gatk-api wrote the line above; absent for an alignment's VCF. Only the
 # note's wording depends on it. gatk_api.py spells the keys again;
@@ -997,12 +999,19 @@ def without_zaropgx_header_lines(vcf_path: Path) -> Tuple[Path, int]:
     one; otherwise a plain-text copy beside it, the original removed. Plain text,
     streamed in Python: prepare_vcf_for_pypgx bgzips it as it does a plain upload, and
     nothing here needs bcftools.
+
+    Lines split as the readers split them (_header_value: universal newlines), so a
+    ##ZaroPGx_ line hidden behind a lone \\r in another header line is found and
+    dropped; a \\n-only split would let it through. And the copy is otherwise exact:
+    newline="" keeps every line ending as it was (CRLF, a lone \\r in a record), and
+    surrogateescape every byte that is not UTF-8 (a latin-1 sample name).
     """
     with open(vcf_path, "rb") as probe:
         gzipped = probe.read(2) == b"\x1f\x8b"
     opener = gzip.open if gzipped else open
+    exact = {"encoding": "utf-8", "errors": "surrogateescape", "newline": ""}
     found = 0
-    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as handle:
+    with opener(vcf_path, "rt", **exact) as handle:
         for line in handle:
             if not line.startswith("##"):
                 break
@@ -1012,9 +1021,7 @@ def without_zaropgx_header_lines(vcf_path: Path) -> Tuple[Path, int]:
         return vcf_path, 0
     stripped = vcf_path.with_name(f"{vcf_path.name}.own-records-only.vcf")
     in_header = True
-    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as src, open(
-        stripped, "w", encoding="utf-8"
-    ) as out:
+    with opener(vcf_path, "rt", **exact) as src, open(stripped, "w", **exact) as out:
         for line in src:
             if in_header and not line.startswith("##"):
                 in_header = False
@@ -3101,7 +3108,13 @@ async def genotype(
         with open(input_filepath, "wb") as f:
             while chunk := await file.read(UPLOAD_CHUNK_BYTES):
                 f.write(chunk)
+        
+        # Get file size for memory optimization
+        file_size_gb = os.path.getsize(input_filepath) / (1024**3)
+        memory_info = get_memory_usage()
         # An upload's own coverage lines are not evidence; see ZAROPGX_HEADER_PREFIX.
+        # After the size: the copy without them is plain text, a bgzipped upload's
+        # decompressed size.
         if not lane_wrote_coverage_lines(upload_type, input_type):
             input_filepath, dropped = without_zaropgx_header_lines(input_filepath)
             if dropped:
@@ -3110,10 +3123,6 @@ async def genotype(
                     f"(upload_type={upload_type!r}, input_type={input_type!r}): it is "
                     "judged by its own records"
                 )
-        
-        # Get file size for memory optimization
-        file_size_gb = os.path.getsize(input_filepath) / (1024**3)
-        memory_info = get_memory_usage()
         
         logger.info(f"Processing PyPGx genotyping for {len(requested_genes)} genes")
         logger.info(f"File size: {file_size_gb:.2f}GB, Available memory: {memory_info['available_gb']:.2f}GB")
