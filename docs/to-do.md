@@ -172,7 +172,11 @@ curated: true
 
 ## UI/UX
 
-- Responsive glyphs: wrapping on small screens; grey-out non-applicable steps; size/flex adjustments
+- [DONE Oct 2026, fix/ui-stage-row-fits] The stage row and the header fit a phone: in a
+  form narrower than about 520px the stages sit four to a row (they ran off the card, and
+  the page scrolled sideways), and a stage's popup stays on screen
+  (`tests/e2e/test_ui_smoke.py` at 320, 375 and 768px). Open: grey out the steps a job
+  will not run.
 - A glyph for preprocessing (e.g. liftover), which lights the GATK glyph now. mtDNA has its
   own glyph (Aug 2026).
 - Unify/clean redundant text
