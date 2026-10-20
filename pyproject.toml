@@ -59,6 +59,12 @@ dev = [
   "playwright>=1.63.0,<2.0.0",  # tests/e2e/test_ui_smoke.py (browser: playwright install chromium)
 ]
 
+[tool.uv]
+# The uv the images copy (ghcr.io/astral-sh/uv) and CI's setup-uv install; a floor
+# here, so a newer local uv still works. tests/test_dockerfile_uv_pin.py keeps them
+# together.
+required-version = ">=0.12.23"
+
 [tool.isort]
 # Without this, isort's default multi-line import style (grid wrap) fights
 # black's hanging-indent style, and the two tools flip-flop on every run.
