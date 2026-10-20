@@ -38,6 +38,13 @@ as reference and need no note; `./.` positions still do. Turn the option on only
 whole-genome call set. Even then, *GSTM1* is called present when both its copies are
 deleted, since a VCF does not record that deletion.
 
+The VCF ZaroPGx makes from an alignment or a gVCF carries header lines (`##ZaroPGx_…`)
+saying which genes and positions had reads. They are read only in the run that wrote them.
+An uploaded VCF's are ignored, a VCF ZaroPGx wrote included: a file can be edited or
+filtered after export (to `PASS` records, say, which drops the reference calls), and its
+header would then claim reads its records no longer show. To have the reads counted, upload
+the alignment or the gVCF itself.
+
 ### Processing path: VCF
 ```
 VCF → [liftover, if GRCh37] → PyPGx and [mtDNA] → PharmCAT → reports
