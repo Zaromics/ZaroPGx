@@ -691,6 +691,22 @@
             text-indent: -4ch;
             min-height: 1.35em;
         }
+        /* PharmCAT's own messages (_pharmcat_messages.html): with the gene under
+           Genetic Results, with the drug under Drug Recommendations. */
+        .pharmcat-messages { margin: 12px 0; }
+        .pharmcat-messages h4,
+        .pharmcat-messages > .header-note { margin: 0 0 4px 0; break-after: avoid; page-break-after: avoid; }
+        .pharmcat-message-list {
+            margin: 4px 0 10px 0;
+            padding-left: 1.2em;
+            font-size: 0.95em;
+            color: #333;
+        }
+        .pharmcat-message-list li { margin: 0 0 4px 0; break-inside: avoid; page-break-inside: avoid; }
+        .pharmcat-message-source { font-weight: bold; color: #555; }
+        /* A drug's notes stay with its heading and its first card: Warfarin and its
+           three notes ended page 74 with the cards on page 75. */
+        .drug-messages { break-inside: avoid; page-break-inside: avoid; break-after: avoid; page-break-after: avoid; }
         .header-note {
             font-size: 0.95em;
             color: #555;
@@ -1165,6 +1181,7 @@
 <body>
 {% import "_pypgx_evidence.html" as pypgx %}
 {% import "_unresolved_calls.html" as unresolved %}
+{% import "_pharmcat_messages.html" as pcmsg %}
     <div class="header">
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -1436,6 +1453,7 @@
         </table>
         {{ pypgx.na_legend(called_genes) }}
         {{ unresolved.candidates_note(called_genes) }}
+        {{ pcmsg.gene_notes(diplotypes|sort(attribute='gene'), (pharmcat_notes or {}).general or []) }}
 
         {% if uncalled_genes %}
         <div class="uncalled-genes">
@@ -1563,6 +1581,7 @@
             {% set drug_recs = grouped_recommendations[drug_name] %}
             <div class="drug-recommendation" id="drug-rec-{{ drug_name|lower|replace(' ', '-') }}">
                 <h3>{{ drug_name|title }}</h3>
+                {{ pcmsg.drug_notes(drug_recs) }}
                 {% set recommendation_groups = {} %}
                 {% for rec in drug_recs %}
                     {% set rec_key = (rec.recommendation or '') + "|" + (rec.classification or '') + "|" + (rec.guideline_source if rec.guideline_source else 'General') %}
@@ -1600,6 +1619,7 @@
                 {% endfor %}
             </div>
         {% endfor %}
+        {{ pcmsg.unplaced_drug_notes((pharmcat_notes or {}).drugs or []) }}
     </div>
     
     

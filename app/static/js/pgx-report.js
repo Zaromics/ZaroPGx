@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', function() {
         pgxData.diplotypes.push({
             gene: element.dataset.gene,
             diplotype: element.dataset.diplotype,
+            pharmcatMessages: JSON.parse(element.dataset.pharmcatMessages || '[]'),
             phenotype: element.dataset.phenotype,
             implication: element.dataset.implication,
             activityScore: element.dataset.activityScore
@@ -563,6 +564,7 @@ function createGeneInfoSection() {
             <h4>Clinical Implications</h4>
             <p>${escapeHtml(clinicalImplications)}</p>
             ${relatedMedications ? `<h4>Related Medications</h4><ul>${relatedMedications}</ul>` : ''}
+            ${pharmcatMessagesHtml(d.pharmcatMessages)}
         `;
         
         geneInfoSection.appendChild(geneInfo);
@@ -650,6 +652,7 @@ function getPgxData() {
         pgxData.diplotypes.push({
             gene: element.dataset.gene,
             diplotype: element.dataset.diplotype,
+            pharmcatMessages: JSON.parse(element.dataset.pharmcatMessages || '[]'),
             phenotype: element.dataset.phenotype,
             implication: element.dataset.implication,
             activityScore: element.dataset.activityScore
@@ -672,3 +675,22 @@ function getPgxData() {
     
     return pgxData;
 } 
+
+/**
+ * PharmCAT's own notes on this call (data-pharmcat-messages: its text, one string a
+ * message, a line for each of its paragraphs), as its own report shows them with
+ * the gene. Escaped: the text comes from PharmCAT's report.json.
+ */
+function pharmcatMessagesHtml(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return '';
+    }
+    const escape = (value) => String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    return `<h4>PharmCAT's notes</h4><ul class="pharmcat-message-list">${messages.map(m => `<li>${escape(m).replace(/\n/g, '<br>')}</li>`).join('')}</ul>`;
+}
+

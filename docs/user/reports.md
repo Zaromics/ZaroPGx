@@ -106,6 +106,23 @@ whole genome's report too. *G6PD* gets no note: PharmCAT lists no structural *G6
 An outside call neither tool made, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets no
 note either.
 
+**PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
+shows them where PharmCAT's own report does, in PharmCAT's words (a link as its words and
+its address): a gene's under Genetic Results ("PharmCAT's notes on these calls"), called or
+not, and in the interactive report's gene panel; a drug's at the head of the drug under
+Drug Recommendations, each marked with the gene it is about. A drug with no recommendation
+for this sample still gets its notes, in a list after the recommendations: PharmCAT's own
+report gives such a drug its section too. Among them: an unphased call's "The assigned
+genotype is \*1/\*15; however, \*5/\*37 cannot be ruled out without phased data.", the
+G6PD hemizygous-sample note, the reverse-strand footnotes, the warfarin notes with the
+rs12777823 genotype PharmCAT highlights for warfarin, and, where RYR1 has data but no call,
+its malignant hyperthermia warning on RYR1 and the anaesthetics. Left out: PharmCAT's
+outside-call note (the Call column names the tool), its note that a reference allele means
+no variant at the positions its definition uses (the call's name says so), and, when Alerts
+and Warnings lists the positions PharmCAT did not read, its own notes on those positions.
+A report rebuilt from a report.json alone has no such alert, and shows them. None appears
+on the Executive Summary.
+
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
 

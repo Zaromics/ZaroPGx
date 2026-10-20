@@ -1,0 +1,66 @@
+{#- PharmCAT's own messages (app/pharmcat/pharmcat_messages.py), where PharmCAT's
+    own report shows them: a gene's with the gene, a drug's with the drug. Its text,
+    its markup removed (a link as "words (url)"). generator.attach_pharmcat_messages
+    puts them on the rows ("pharmcat_messages"): each {kind, rule, gene,
+    paragraphs}; what has no row is in pharmcat_notes (general, drugs). -#}
+
+{% macro message_body(m) -%}
+{%- if m.kind == 'report-as-genotype' %}Genotype PharmCAT reports with this drug: {% endif -%}
+{%- for p in m.paragraphs %}{{ p }}{% if not loop.last %}<br>{% endif %}{% endfor -%}
+{%- endmacro %}
+
+{#- A drug's note names its gene: an ambiguity's text never does, and a drug can
+    rest on two genes (amitriptyline: CYP2C19 and CYP2D6). -#}
+{% macro source(m) -%}
+<span class="pharmcat-message-source">PharmCAT{% if m.gene %} ({{ m.gene }}){% endif %}:</span>
+{%- endmacro %}
+
+{#- Every row with messages, called or not: PharmCAT gives an uncalled RYR1 (data,
+    but no call) its malignant hyperthermia warning. -#}
+{% macro gene_notes(rows, general=[]) -%}
+{%- set with_messages = rows|selectattr('pharmcat_messages')|list %}
+{%- if with_messages or general %}
+<div class="pharmcat-messages">
+    <h4>PharmCAT's notes on these calls</h4>
+    <p class="header-note">In PharmCAT's words, from its report.</p>
+    <ul class="pharmcat-message-list">
+    {%- for m in general %}
+        <li>{{ source(m) }} {{ message_body(m) }}</li>
+    {%- endfor %}
+    {%- for d in with_messages %}
+        {%- for m in d.pharmcat_messages %}
+        <li><strong>{{ d.gene }}</strong>{% if d.diplotype is not a_call %} (not called){% endif %}: {{ message_body(m) }}</li>
+        {%- endfor %}
+    {%- endfor %}
+    </ul>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro drug_notes(recs) -%}
+{%- set first = recs|selectattr('pharmcat_messages')|first %}
+{%- if first %}
+<ul class="pharmcat-message-list drug-messages">
+{%- for m in first.pharmcat_messages %}
+    <li>{{ source(m) }} {{ message_body(m) }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- endmacro %}
+
+{#- Notes on drugs with no recommendation for this sample. PharmCAT's own report
+    still gives such a drug its section, the notes at its head (an uncalled RYR1's
+    anaesthetics, the G6PD note on chloroquine); this report has no block for it,
+    so they follow the recommendations, each note once with its drugs. -#}
+{% macro unplaced_drug_notes(notes) -%}
+{%- if notes %}
+<div class="pharmcat-messages drug-messages-unplaced">
+    <h4>PharmCAT's notes on drugs without a recommendation for this sample</h4>
+    <ul class="pharmcat-message-list">
+    {%- for m in notes %}
+        <li><strong>{{ m.drugs|map('title')|join(', ') }}</strong> &mdash; {{ source(m) }} {{ message_body(m) }}</li>
+    {%- endfor %}
+    </ul>
+</div>
+{%- endif %}
+{%- endmacro %}

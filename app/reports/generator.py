@@ -56,6 +56,11 @@ from app.mtdna.mt_rnr1 import (
     REFERENCE,
 )
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
+from app.pharmcat.pharmcat_messages import (
+    drug_messages,
+    gene_message_lines,
+    gene_messages,
+)
 from app.pharmcat.report_json import (
     SUPPORTED_VERSION_SERIES,
     extract_matcher_metadata,
@@ -1171,6 +1176,83 @@ def probe_matcher_metadata(report_dir: str, report_id: str) -> Dict[str, Optiona
     return dict(_EMPTY_MATCHER_METADATA)
 
 
+def probe_pharmcat_report(report_dir: str, report_id: str) -> Optional[Dict[str, Any]]:
+    """The run's PharmCAT report.json, from the files probe_matcher_metadata reads,
+    or None. Never raises."""
+    candidates = [
+        os.path.join(report_dir, f"{report_id}{suffix}")
+        for suffix in _MATCHER_METADATA_FILE_SUFFIXES
+    ]
+    for suffix in _MATCHER_METADATA_FILE_SUFFIXES:
+        try:
+            others = glob.glob(os.path.join(report_dir, f"*{suffix}"))
+            others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            candidates.extend(others)
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as fh:
+                report = json.load(fh)
+            if isinstance(report, dict) and isinstance(report.get("genes"), dict):
+                return report
+        except Exception as e:
+            logger.debug("Swallowed exception: %s", e, exc_info=True)
+    return None
+
+
+def attach_pharmcat_messages(
+    report: Optional[Mapping[str, Any]],
+    genes: List[Dict[str, Any]],
+    recommendations: List[Dict[str, Any]],
+    positions_stated: bool = False,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Put PharmCAT's messages (app/pharmcat/pharmcat_messages.py) on the gene rows
+    (``pharmcat_messages``) and on each recommendation of a drug
+    (``pharmcat_messages``), in place: every report lane renders those objects.
+
+    ``positions_stated``: the report's positions alert was produced, so PharmCAT's
+    missing-positions notes are left out. Returns what has no row to sit on:
+    ``general``, the report's top-level messages, and ``drugs``, the notes on drugs
+    with no recommendation for this sample (PharmCAT's own report still gives such
+    a drug its section, its messages at the head), each note once with the drugs
+    it is on."""
+    extra: Dict[str, List[Dict[str, Any]]] = {"general": [], "drugs": []}
+    if not report:
+        return extra
+    by_gene = gene_messages(report, positions_stated)
+    by_drug = drug_messages(report, positions_stated)
+    for row in genes or []:
+        if isinstance(row, dict):
+            entries = by_gene.get(str(row.get("gene") or "").strip().upper())
+            if entries:
+                row["pharmcat_messages"] = entries
+    with_recs = set()
+    for rec in recommendations or []:
+        if isinstance(rec, dict):
+            drug = str(rec.get("drug") or "").strip().lower()
+            with_recs.add(drug)
+            entries = by_drug.get(drug)
+            if entries:
+                rec["pharmcat_messages"] = entries
+    extra["general"] = by_gene.get("", [])
+    grouped: Dict[tuple, Dict[str, Any]] = {}
+    for drug in sorted(by_drug):
+        if drug in with_recs:
+            continue
+        for entry in by_drug[drug]:
+            key = (entry["rule"], entry.get("gene"), tuple(entry["paragraphs"]))
+            grouped.setdefault(key, dict(entry, drugs=[]))["drugs"].append(drug)
+    extra["drugs"] = list(grouped.values())
+    return extra
+
+
 # Upstream's own floor (docker/mtdna-server-2/app.py's MIN_MEAN_COVERAGE,
 # nextflow.config params.min_mean_coverage upstream). Repeated here only for
 # the no-call explanation below -- not read back from the sidecar, which
@@ -1505,6 +1587,7 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["allele_results_unbroken"] = allele_results_unbroken
     environment.filters["name_breaks"] = name_breaks
     environment.filters["code_breaks"] = code_breaks
+    environment.filters["message_lines"] = gene_message_lines
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.filters["implication"] = row_implication
@@ -2422,6 +2505,7 @@ def create_interactive_html_report(
     missing_positions_not_assumed: bool = False,
     downloads: Optional[List[Dict[str, str]]] = None,
     workflow_diagram: Optional[Dict[str, Any]] = None,
+    pharmcat_notes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -2521,6 +2605,7 @@ def create_interactive_html_report(
                 organize_gene_drug_recommendations(template_recommendations)
             ),
             "mtdna": mtdna_context,
+            "pharmcat_notes": pharmcat_notes or {"general": [], "drugs": []},
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
             "workflow_png_data_uri": workflow_png_data_uri,
@@ -3439,6 +3524,9 @@ def generate_report(
     data = None
     job_metadata: Dict[str, Any] = {}
     workflow_warnings = []  # Initialize warnings list
+    # Whether Alerts and Warnings lists the positions PharmCAT did not read
+    # (partial_coverage_alert): PharmCAT's own notes on them are then left out.
+    positions_alert_shown = False
     pharmcat_assume_ref_methodology = None
     liftover_provenance = None
     # What PharmCAT ran with for positions absent from the file (the workflow
@@ -3532,6 +3620,7 @@ def generate_report(
                 )
                 if coverage_alert:
                     workflow_warnings.append(coverage_alert)
+                    positions_alert_shown = True
                 add_preprocessor_drops((data or {}).get("genes"), output_dir)
                 unread_alert = unread_variants_alert((data or {}).get("genes"))
                 if unread_alert:
@@ -3897,6 +3986,16 @@ def generate_report(
     )
     matcher_meta = probe_matcher_metadata(output_dir, _report_id_for_meta)
 
+    # PharmCAT's own messages on each call and drug: from the report.json it was
+    # given, else the run's copy beside the report (the database lane keeps the
+    # messages but not where PharmCAT put them).
+    _raw = pharmcat_results.get("data") if isinstance(pharmcat_results, dict) else None
+    pharmcat_report = (
+        _raw
+        if isinstance(_raw, dict) and isinstance(_raw.get("genes"), dict)
+        else probe_pharmcat_report(output_dir, _report_id_for_meta)
+    )
+
     # What this report credits: the tools and data this job used, at the versions
     # that ran (app/reports/credits.py). Built once for every output; `platform`
     # is its software, which the workflow diagram labels its steps with.
@@ -4248,6 +4347,19 @@ def generate_report(
         logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
     # The note beside each flagged gene's call; the alert above says why.
     annotate_alt_locus(data.get("genes", []), alt_locus)
+    # PharmCAT's own messages, on the final gene rows and the recommendations;
+    # those with no row to sit on are passed to the templates. A report.json that
+    # does not parse as expected costs its messages, not the report.
+    try:
+        pharmcat_notes = attach_pharmcat_messages(
+            pharmcat_report,
+            data.get("genes", []),
+            template_recommendations,
+            positions_stated=positions_alert_shown,
+        )
+    except Exception as e:
+        logger.warning("PharmCAT's messages not attached: %s", e, exc_info=True)
+        pharmcat_notes = {"general": [], "drugs": []}
     # Genes with SV-defined alleles that PyPGx called without copy number
     # (app/reports/copy_number.py): a note beside each call and one alert, from
     # PyPGx's own record, so a whole-genome run, where every such gene has a
@@ -4458,6 +4570,8 @@ def generate_report(
                 # is load-bearing: a key set only on the first dict silently
                 # never reaches the page).
                 "mtdna": mtdna_report_context(report_dir, data.get("genes", [])),
+                # PharmCAT's notes with no gene row or recommendation to sit on.
+                "pharmcat_notes": pharmcat_notes,
                 "disclaimer": get_disclaimer(),
                 "credits": credits,
                 **report_branding_context(),
@@ -4848,6 +4962,7 @@ def generate_report(
                 missing_positions_not_assumed=missing_positions_not_assumed,
                 downloads=export_downloads(report_dir, report_id),
                 workflow_diagram=workflow_diagram,
+                pharmcat_notes=pharmcat_notes,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 
