@@ -666,6 +666,12 @@ process PyPGxGenotypeAll {
     // the workflow body.
     val input_type
     val reference
+    // The run's EFFECTIVE "Assume absent sites = reference", PharmCAT's own
+    // (pharmcat_absent_ch): off for an input whose VCF says which genes were covered
+    // (an alignment's, a gVCF's). Off, a gene a VCF has no genotype in gets no PyPGx
+    // call, where PyPGx would read it as the reference sequence; see
+    // genotype_evidence in the pypgx wrapper.
+    val absent_to_ref
     val outdir
 
     output:
@@ -687,6 +693,8 @@ process PyPGxGenotypeAll {
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=pypgx_analysis )
     fi
+    # Always sent, even as 'false', like PharmCATRun's: the field decides, not a default.
+    CURL_ARGS+=( -F absent_to_ref=!{absent_to_ref} )
     if curl "${CURL_ARGS[@]}" http://pypgx:5000/genotype > pypgx_result.json 2>pypgx_stderr.log; then
       echo "PyPGx API call succeeded" >&2
       export PYPGX_SUCCESS=true
@@ -1074,7 +1082,10 @@ workflow {
     // reference -- measured on a real panel, every RYR1, CACNA1S, CFTR, F2 and F5
     // position, all unsequenced, reported as reference. So the flags are off for them,
     // whatever the form or the .env says. The mtDNA call keeps the user's setting: for
-    // MT-RNR1 it is a consent, read by a different rule (app/mtdna/mt_rnr1.py).
+    // MT-RNR1 it is a consent, read by a different rule (app/mtdna/mt_rnr1.py). PyPGx
+    // gets the same effective absent flag: on, it calls a gene a VCF has no record in
+    // as reference. For these inputs their VCF's header says which genes had reads, and
+    // the flag is not read.
     //
     // app/utils/pharmcat_assume_ref.py EXPLICIT_CALL_INPUT_TYPES is the report's copy
     // of this list; tests/test_pharmcat_explicit_calls.py keeps the two identical.
@@ -1113,6 +1124,7 @@ workflow {
             report_id_ch,
             Channel.value(analysed_input_type),
             reference_ch,
+            pharmcat_absent_ch,
             outdir_ch
         )
         // Handle PyPGx results: if PyPGx completely failed (service unavailable),

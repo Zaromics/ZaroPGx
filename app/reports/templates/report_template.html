@@ -1163,6 +1163,10 @@
        its proportions when it would run over (app/reports/pdf_fit.py). #}
     {% set rows = summary_rows(execsum_from_tsv or [], diplotypes) %}
     {% set called = rows|selectattr('called')|list %}
+    {% set summary_uncalled_rows = rows|rejectattr('called')|list %}
+    {# The notes name these genes and say why a variant-only file left them
+       uncalled; Genetic Results repeats the reason only when they name none. #}
+    {% set summary_names_uncalled = summary_uncalled_rows|rejectattr('diplotype', 'a_call')|list|length > 0 %}
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
@@ -1184,7 +1188,7 @@
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
         {% endfor %}
         {{ unresolved.summary_legend(called) }}
-        {{ unresolved.summary_uncalled(rows|rejectattr('called')|list, missing_positions_not_assumed) }}
+        {{ unresolved.summary_uncalled(summary_uncalled_rows, missing_positions_not_assumed) }}
         {% if summary_beyond %}
         <p class="header-note">The {{ summary_beyond|length }} other gene{{ 's' if summary_beyond|length != 1 }} this run called, outside the genes PharmCAT's guidelines use, {{ 'are' if summary_beyond|length != 1 else 'is' }} listed under Genetic Results.</p>
         {% endif %}
@@ -1353,8 +1357,15 @@
                uncalled genes, so they would appear in the key and nowhere in the
                document. The provenance is the point of BACKLOG 28/216; it travels
                with the gene rather than being dropped for tidiness. #}
-            <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
-            {{ unresolved.uncalled_reason(missing_positions_not_assumed) }}
+            {# Why PyPGx made no call, where it said (generator: no_call_note): one
+               footnote per reason, since one VCF can leave many genes with the same
+               one (59 on the demo VCF). #}
+            {% set no_call_notes = uncalled_genes|selectattr('no_call_note')|map(attribute='no_call_note')|unique(case_sensitive=true)|list %}
+            <p class="uncalled-list">{% for d in uncalled_genes %}{{ d.gene }} ({{ d.called_by or '?' }}){% if d.no_call_note %}<sup>{{ no_call_notes.index(d.no_call_note) + 1 }}</sup>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {% for note in no_call_notes %}
+            <p class="no-call-note"><sup>{{ loop.index }}</sup> {{ note }}.</p>
+            {% endfor %}
+            {% if not summary_names_uncalled %}{{ unresolved.uncalled_reason(missing_positions_not_assumed) }}{% endif %}
         </div>
         {% endif %}
     </div>

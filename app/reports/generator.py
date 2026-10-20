@@ -340,23 +340,29 @@ def _count(value) -> Optional[int]:
         return None
 
 
-def pypgx_gene_counts(output: Dict[str, Any]) -> Optional[Tuple[int, int, int, int]]:
-    """(genotyped, panel, with no reads, failed) from the PyPGx step's output.
+def pypgx_gene_counts(
+    output: Dict[str, Any],
+) -> Optional[Tuple[int, int, int, int, int, int]]:
+    """(genotyped, panel, with no reads, with no genotype in the VCF, failed, genotyped
+    with positions read as reference) from the PyPGx step's output.
 
     The wrapper's step_gene_counts records these directly, with
-    ``not_sequenced_genes``. Steps recorded before it counted genes with no reads
-    as successful and dropped them from ``total_genes`` (a sliced BAM read "66 of 1
-    genes genotyped"); the true counts follow from the same record: the genes it
-    ran were ``total_genes`` and those that failed are ``failed_genes``.
+    ``not_sequenced_genes`` and ``no_genotype_genes``. Steps recorded before it counted
+    genes with no reads as successful and dropped them from ``total_genes`` (a sliced
+    BAM read "66 of 1 genes genotyped"); the true counts follow from the same record:
+    the genes it ran were ``total_genes`` and those that failed are ``failed_genes``.
     """
     done, of = _count(output.get("successful_genes")), _count(output.get("total_genes"))
     if done is None or not of:
         return None
     failed = _count(output.get("failed_genes")) or 0
     if "not_sequenced_genes" in output:
-        return done, of, _count(output.get("not_sequenced_genes")) or 0, failed
+        no_reads = _count(output.get("not_sequenced_genes")) or 0
+        no_genotype = _count(output.get("no_genotype_genes")) or 0
+        partial = _count(output.get("partially_genotyped_genes")) or 0
+        return done, of, no_reads, no_genotype, failed, partial
     panel = done + failed
-    return of - failed, panel, max(panel - of, 0), failed
+    return of - failed, panel, max(panel - of, 0), 0, failed, 0
 
 
 def workflow_run_facts(
@@ -435,10 +441,14 @@ def workflow_run_facts(
     pypgx = (by_name.get("pypgx_analysis") or {}).get("output") or {}
     counts = pypgx_gene_counts(pypgx)
     if counts:
-        done, of, no_reads, failed = counts
+        done, of, no_reads, no_genotype, failed, partial = counts
         line = f"{done} of {of} genes genotyped"
+        if partial:
+            line += f" ({partial} with positions read as reference)"
         if no_reads:
             line += f", {no_reads} with no reads"
+        if no_genotype:
+            line += f", {no_genotype} with no genotype in the VCF"
         if failed:
             line += f", {failed} failed"
         facts.details["pypgx_analysis"] = [line]
@@ -3753,6 +3763,18 @@ def generate_report(
                                 row["tool_source"] = "PyPGx"
                                 if record:
                                     row["pypgx"] = record
+                                if details.get("positions_note"):
+                                    row["positions_note"] = str(
+                                        details["positions_note"]
+                                    )
+                            elif (
+                                not gene_res.get("diplotype")
+                                and details.get("note")
+                                and not gene_was_called(row.get("diplotype"))
+                            ):
+                                # A gene nobody called, which PharmCAT takes from
+                                # PyPGx alone (CYP2D6): PyPGx's reason is the reason.
+                                row["no_call_note"] = str(details["note"])
                         continue
                     diplotype = gene_res.get("diplotype")
                     # PyPGx's own phenotype, only where it has a rule for the gene;
@@ -3782,6 +3804,16 @@ def generate_report(
                     }
                     if record:
                         gene_entry["pypgx"] = record
+                    # Why PyPGx made no call, where it says: no reads over the gene,
+                    # no genotype in the VCF (docker/pypgx's no_reads_note and
+                    # no_genotype_note), or no small-variant alleles to call.
+                    if not diplotype and details.get("note"):
+                        gene_entry["no_call_note"] = str(details["note"])
+                    # How many of the positions behind a call PyPGx read as the
+                    # reference with nothing in the file to say so (docker/pypgx's
+                    # positions_read_as_reference_note).
+                    if diplotype and details.get("positions_note"):
+                        gene_entry["positions_note"] = str(details["positions_note"])
                     # activity_score is already included in the gene_entry above
                     data.setdefault("genes", []).append(gene_entry)
                     existing_genes.add(gene_name.upper())

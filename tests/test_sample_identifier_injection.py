@@ -107,6 +107,10 @@ runner = _load_runner()
 #                                           ("true"/"false") already audited above,
 #                                           just referenced through the process's
 #                                           own local parameter name.
+#   absent_to_ref (PyPGxGenotypeAll's     - audited 2026-10-20: pharmcat_absent_ch,
+#   local var)                              the same Channel.value as PharmCATRun's
+#                                           below (the literal 'false' or the params
+#                                           boolean).
 #   absent_to_ref / unspecified_to_ref    - re-audited 2026-09-27 for PharmCATRun,
 #   (PharmCATRun's local vars)              which stopped interpolating the params
 #                                           directly: each is a Channel.value of a

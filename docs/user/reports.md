@@ -51,7 +51,10 @@ two letters:
   X an outside call whose tool was not recorded, – no call, ? not recorded.
 - **Guide**: the guideline behind the phenotype. C CPIC, D DPWG, F FDA, P PharmGKB.
 
-Genes examined without a call are listed after the table, with the reason when one is known.
+Genes examined without a call are listed after the table, with the reason when one is known:
+for a PyPGx gene, no reads over it in the alignment or gVCF, or no genotype in a VCF. A PyPGx
+call made from only some of its positions says beside it how many of the rest were read as
+the reference.
 
 **Copy number not assessed.** Some alleles are structural variants: a whole-gene deletion, a
 duplication, or a hybrid with a neighbouring gene, such as *CYP2D6* \*5, \*1x2, \*36 and

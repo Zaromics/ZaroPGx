@@ -24,6 +24,20 @@ Alignments also get HLA typing, and a VCF made from their reads at every PharmCA
 
 ## Variant Call Format (VCF)
 
+A VCF usually lists only the sites where the sample differs from the reference, so a
+position with no record in it may match the reference or may not have been sequenced at
+all. PyPGx reads it as the reference ([pypgx#142](https://github.com/sbslee/pypgx/issues/142)).
+So ZaroPGx checks the positions PyPGx calls each gene from (its star alleles' defining
+variants). A gene with no genotype at any of them (no record, or only `./.`) is not
+called. A gene with a genotype at some is called, with a note saying how many of the
+rest were read as the reference. The report shows both. A `./.` is never passed to
+PyPGx, which would fill it in from population data.
+
+With "Assume absent sites = reference" on ({doc}`usage`), positions with no record count
+as reference and need no note; `./.` positions still do. Turn the option on only for a
+whole-genome call set. Even then, *GSTM1* is called present when both its copies are
+deleted, since a VCF does not record that deletion.
+
 ### Processing path: VCF
 ```
 VCF → [liftover, if GRCh37] → PyPGx and [mtDNA] → PharmCAT → reports
@@ -44,7 +58,7 @@ BCF → bcftools (VCF conversion) → [liftover, if GRCh37] → PyPGx and [mtDNA
 ## Genomic VCF (gVCF)
 A gVCF records *reference-confidence blocks* alongside the variant calls. PharmCAT refuses a gVCF, so ZaroPGx genotypes it first with GATK `GenotypeGVCFs`: over PharmCAT's positions, then over everything else. Reference genotypes at the pharmacogene positions come from your file's reference blocks rather than being assumed, which makes a gVCF a better input than a plain VCF.
 
-PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls.
+PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls. PyPGx reads the genotyped VCF, which keeps no reference blocks, so the conversion also records which of PyPGx's genes the blocks show reads over; a gene with none is not called. A position the conversion leaves a no-call is not passed to PyPGx; under a call, it is counted in the call's note.
 
 The report states:
 
@@ -70,7 +84,7 @@ For aligned input (BAM, CRAM, SAM, and FASTQ once aligned), PharmCAT gets a call
 
 Structural variants (gene deletions, duplications and hybrids, such as *CYP2D6* \*5, \*36 and \*68, or *GSTM1*, *GSTT1* and *UGT2B17* deletions) are called by PyPGx from read depth, normalised against the *VDR* gene, for GRCh38 whole-genome data only: the alignment needs a median depth of at least 15x at a set of loci no pharmacogene panel targets. A targeted panel does not qualify, because depth across capture targets is too uneven to count gene copies from one sample, and its genes get calls from small variants alone, as every VCF, BCF and gVCF's do. The report marks each call PyPGx made this way "Copy number not assessed", with the reason ({doc}`reports`).
 
-GRCh38 also carries alternate copies of some loci as ALT contigs, among them *CYP2D6*, *UGT2B17*/*UGT2B15* and *HLA-A*, *-B* and *-C*. PyPGx reads only the main chromosomes (and GSTT1's ALT contig), so a read whose alignment is on an ALT copy is a read it never sees. An alignment to a GRCh38 with ALT contigs that is not ALT-aware puts many of these genes' reads on the ALT copy as their primary alignment, and many of the rest at mapping quality 0, which PyPGx also ignores. Measured on NA12878's 30x genome: aligned without ALT-awareness, 529 reads over *CYP2D6* stayed on the main chromosome, 48% of them at mapping quality 0, where its published, ALT-aware alignment has 1,570, 5.8% at mapping quality 0; PyPGx would have had 275 usable *CYP2D6* reads instead of 1,479 (*UGT2B15*: 2,460 reads, 67% at mapping quality 0, instead of 5,106, 0.6%). In ALT-aware mode (the reference's `.alt` file beside its index, as NA12878's published 1000 Genomes BAM was made), BWA keeps a read's alignment on the main chromosomes whenever it has a hit there, and writes its hit on the ALT copy only as a supplementary record, a copy PyPGx does not need; only a read with no hit outside the ALT contigs is placed there (NA12878's BAM has 1 such read on these loci's ALT contigs, beside 16,404 supplementary copies). Such a file is normally read as it is.
+GRCh38 also carries alternate copies of some loci as ALT contigs, among them *CYP2D6*, *UGT2B17*/*UGT2B15* and *HLA-A*, *-B* and *-C*. PyPGx reads only the main chromosomes (and GSTT1's ALT contig, `chr22_KI270879v1_alt`; against a GRCh38 without it, GSTT1 is not called and the report says why), so a read whose alignment is on an ALT copy is a read it never sees. An alignment to a GRCh38 with ALT contigs that is not ALT-aware puts many of these genes' reads on the ALT copy as their primary alignment, and many of the rest at mapping quality 0, which PyPGx also ignores. Measured on NA12878's 30x genome: aligned without ALT-awareness, 529 reads over *CYP2D6* stayed on the main chromosome, 48% of them at mapping quality 0, where its published, ALT-aware alignment has 1,570, 5.8% at mapping quality 0; PyPGx would have had 275 usable *CYP2D6* reads instead of 1,479 (*UGT2B15*: 2,460 reads, 67% at mapping quality 0, instead of 5,106, 0.6%). In ALT-aware mode (the reference's `.alt` file beside its index, as NA12878's published 1000 Genomes BAM was made), BWA keeps a read's alignment on the main chromosomes whenever it has a hit there, and writes its hit on the ALT copy only as a supplementary record, a copy PyPGx does not need; only a read with no hit outside the ALT contigs is placed there (NA12878's BAM has 1 such read on these loci's ALT contigs, beside 16,404 supplementary copies). Such a file is normally read as it is.
 
 So when an alignment, ALT-aware or not, has reads on the *CYP2D6* or *UGT2B17*/*UGT2B15* ALT contigs (20 or more whose primary alignment is there; supplementary and secondary records are not counted), ZaroPGx aligns the reads of that locus again, to GRCh38's main chromosomes (BWA-MEM through GATK's BwaSpark, with the index the FASTQ lane uses, then duplicates marked), and PyPGx and PharmCAT's positions read those genes from the new alignments; every other gene is read as uploaded. The report says so under Alerts and Warnings, with each gene's read count and mapping-quality-0 share before and after. It needs the alignment index (`scripts/build-align-index.sh`). Without it, or if the re-alignment fails, the genes are flagged beside their calls and under Alerts and Warnings, with the reason: their calls may be wrong. Without reads on the ALT contigs, a gene is still flagged where more than half its reads had mapping quality 0. Aligning to a GRCh38 without ALT contigs (an analysis set such as NCBI's no-ALT set) avoids all of this, and BWA in ALT-aware mode (the reference's `.alt` file beside its index) nearly all. HLA typing is not affected: OptiType is given every read in the MHC and on its ALT contigs, whatever its mapping quality.
 

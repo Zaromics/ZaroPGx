@@ -415,6 +415,29 @@ def determine_pypgx_gene_set(preference: str, input_type: str) -> str:
         else:
             return 'pypgx'
 
+
+def prepare_vcf_for_pypgx(vcf_path: str) -> str:
+    """The VCF bgzipped, tabix-indexed and with PyPGx's contig names; its path.
+
+    PyPGx wants Ensembl-style unprefixed contigs; a chr-prefixed VCF (GATK/UCSC,
+    and PharmCAT's own example) makes every gene raise "invalid contig 'chrN'".
+    Each step is skipped when already done, so preparing the result again returns it.
+    """
+    vcf_path = str(vcf_path)
+    vcf_gz = vcf_path if vcf_path.endswith(".gz") else f"{vcf_path}.gz"
+    tbi_path = f"{vcf_gz}.tbi"
+
+    if not os.path.exists(vcf_gz):
+        logger.info(f"bgzip compressing VCF for tabix: {vcf_path} -> {vcf_gz}")
+        bgzip_to(vcf_path, vcf_gz)
+
+    if not os.path.exists(tbi_path):
+        logger.info(f"Indexing VCF with tabix: {vcf_gz}")
+        tabix_index(vcf_gz)
+
+    return normalize_contigs_for_pypgx(vcf_gz)
+
+
 async def process_gene_batch_parallel(
     genes: List[str], 
     vcf_path: str, 
@@ -441,23 +464,9 @@ async def process_gene_batch_parallel(
         except Exception as e:
             logger.warning(f"Failed to check workflow cancellation status: {e}")
     
-    # Ensure VCF is compressed and indexed BEFORE parallel processing
-    vcf_path = str(vcf_path)
-    vcf_gz = vcf_path if vcf_path.endswith('.gz') else f"{vcf_path}.gz"
-    tbi_path = f"{vcf_gz}.tbi"
-    
-    if not os.path.exists(vcf_gz):
-        logger.info(f"bgzip compressing VCF for tabix: {vcf_path} -> {vcf_gz}")
-        bgzip_to(vcf_path, vcf_gz)
-
-    if not os.path.exists(tbi_path):
-        logger.info(f"Indexing VCF with tabix: {vcf_gz}")
-        tabix_index(vcf_gz)
-
-    # PyPGx wants Ensembl-style unprefixed contigs; a chr-prefixed VCF (GATK/UCSC,
-    # and PharmCAT's own example) makes every gene raise "invalid contig 'chrN'".
-    # Normalize once here, before fanning the genes out, and run them all against it.
-    vcf_gz = normalize_contigs_for_pypgx(vcf_gz)
+    # Ensure VCF is compressed and indexed BEFORE parallel processing. A path
+    # /genotype already prepared passes through unchanged.
+    vcf_gz = prepare_vcf_for_pypgx(vcf_path)
 
     # Log memory usage before processing
     memory_before = get_memory_usage()
@@ -874,9 +883,23 @@ def _reference_fasta_for_assembly(assembly: str) -> Path:
 #
 # Coverage can only be observed on the alignment, so it is measured in
 # /create-input-vcf and written into the VCF's own header, where it travels with the
-# file through Nextflow to /genotype without new plumbing. An uploaded VCF has no such
-# line: it carries no coverage evidence, and keeps the chromosome-level behaviour.
+# file through Nextflow to /genotype without new plumbing. A gVCF records it too, in
+# its reference blocks' depth, which GenotypeGVCFs drops: gatk-api /gvcf-to-vcf
+# measures it on the blocks and writes the same line, with COVERAGE_MEASURED_ON_HEADER_KEY
+# saying where it came from. An uploaded VCF has no such line: it carries no coverage
+# evidence, and its genes are checked for genotypes instead (position_evidence).
 UNCOVERED_GENES_HEADER_KEY = "ZaroPGx_uncovered_genes"
+# "gVCF" when gatk-api wrote the line above; absent for an alignment's VCF. Only the
+# note's wording depends on it. gatk_api.py spells the keys again;
+# tests/test_pypgx_vcf_without_genotypes.py keeps the copies equal.
+COVERAGE_MEASURED_ON_HEADER_KEY = "ZaroPGx_coverage_measured_on"
+# Genes whose region is on a contig the input's reference does not have, as
+# "GENE:contig": GSTT1, on 22_KI270879v1_alt, for an alignment or gVCF made against a
+# GRCh38 without ALT contigs (NCBI's no-ALT analysis set, say). Such a gene has no reads
+# because it could not have any, and "no reads: either not sequenced, or both copies
+# deleted" would hint at a deletion the data cannot show. With whole-genome depth it
+# would also go to PyPGx's copy-number model with zero depth.
+OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
 
 
 def uncovered_genes_header_line(genes) -> str:
@@ -911,6 +934,63 @@ def uncovered_genes_from_vcf(vcf_path: str) -> Optional[set]:
     return None
 
 
+def _header_value(vcf_path: str, key: str) -> Optional[str]:
+    """The value of a VCF's first ``##key=`` header line, or None."""
+    prefix = f"##{key}="
+    with open(vcf_path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip()
+    return None
+
+
+def coverage_measured_on(vcf_path: str) -> str:
+    """What the uncovered-genes line was measured on: "gVCF", or "alignment"."""
+    measured_on = _header_value(vcf_path, COVERAGE_MEASURED_ON_HEADER_KEY)
+    return "gVCF" if measured_on == "gVCF" else "alignment"
+
+
+def genes_off_reference_header_line(genes: Dict[str, str]) -> str:
+    """The header line naming each gene off the input's reference, with its contig."""
+    listed = ",".join(f"{gene}:{contig}" for gene, contig in sorted(genes.items()))
+    return f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}"
+
+
+def genes_off_reference_from_vcf(vcf_path: str) -> Dict[str, str]:
+    """{gene: contig} from the VCF's OFF_REFERENCE_HEADER_KEY line; empty without one."""
+    value = _header_value(vcf_path, OFF_REFERENCE_HEADER_KEY) or "."
+    pairs = (item.partition(":") for item in value.split(",") if item not in ("", "."))
+    return {gene: contig for gene, _, contig in pairs if gene and contig}
+
+
+def genes_off_reference(contigs, assembly: str) -> Dict[str, str]:
+    """{gene: PyPGx's contig for it} for each PyPGx gene on an ALT contig (a "_" in
+    its name) that is not among ``contigs`` (the alignment's @SQ names), with or
+    without "chr". gatk_api's genes_off_reference applies the same rule to a gVCF."""
+    from pypgx.api import utils as pypgx_utils
+
+    regions = pypgx_utils.create_regions_bed(assembly=assembly, add_chr_prefix=False)
+    names = {_canonical_contig(c) for c in contigs}
+    return {
+        gene: str(chrom)
+        for chrom, gene in regions.gr.df[["Chromosome", "Name"]].itertuples(index=False)
+        if "_" in str(chrom) and _canonical_contig(str(chrom)) not in names
+    }
+
+
+def off_reference_note(contig: str, measured_on: str = "alignment") -> str:
+    """What to say about a gene whose contig the input's reference does not have."""
+    return (
+        f"The {measured_on}'s reference has no {contig} contig, where PyPGx reads this "
+        "gene, so it could not be read"
+    )
+
+
 # Genes whose common null allele deletes the whole of PyPGx's region for them, so a
 # homozygous carrier's alignment has no reads there even when the gene was targeted.
 # Sizes from lexicon/gene-table.csv: GSTM1 11.9 kb, GSTT1 14.2 kb, UGT2B17 37.3 kb,
@@ -918,14 +998,14 @@ def uncovered_genes_from_vcf(vcf_path: str) -> Optional[set]:
 WHOLE_GENE_DELETION_GENES = frozenset({"GSTM1", "GSTT1", "UGT2B17"})
 
 
-def no_reads_note(gene: str) -> str:
+def no_reads_note(gene: str, measured_on: str = "alignment") -> str:
     """What to say about a gene with no reads, which is not always "not sequenced".
 
     For a gene whose both copies are commonly deleted, no reads is also what a real
     homozygous deletion looks like, and this alignment cannot tell the two apart.
     Saying only "not sequenced" would report a positive finding as a gap.
     """
-    note = "No reads over this gene in the alignment"
+    note = f"No reads over this gene in the {measured_on}"
     if gene in WHOLE_GENE_DELETION_GENES:
         note += (
             f": either not sequenced, or both copies deleted (common for {gene})"
@@ -934,7 +1014,10 @@ def no_reads_note(gene: str) -> str:
 
 
 def step_gene_counts(
-    panel: List[str], results: Dict[str, Any], not_sequenced: Dict[str, Any]
+    panel: List[str],
+    results: Dict[str, Any],
+    not_sequenced: Dict[str, Any],
+    no_genotype: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
     """The PyPGx step's gene counts, which the report's workflow diagram prints.
 
@@ -943,16 +1026,304 @@ def step_gene_counts(
     genes and out of the genes left after removing them, a sliced or targeted BAM
     read "66 of 1 genes genotyped". ``not_sequenced_genes`` also marks the record
     as carrying these meanings (generator.workflow_run_facts reads older ones).
+    A gene a VCF has no genotype in (position_evidence) is the same kind of result,
+    counted apart as ``no_genotype_genes``: it is not a gene with no reads.
+    Genotyped means a diplotype came back. PyPGx's own no-calls (a chromosome the VCF
+    has no record on, a gene without small-variant alleles) are successful results
+    too, and on the demo VCF they made "66 of 66 genes genotyped" of 40 calls.
+    ``partially_genotyped_genes`` are the genotyped genes some of whose positions were
+    read as reference unvouched, ``positions_without_genotype`` how many in all.
     """
+    no_genotype = no_genotype or {}
     genotyped = [
-        g for g, r in results.items() if r.get("success") and g not in not_sequenced
+        g
+        for g, r in results.items()
+        if r.get("success")
+        and r.get("diplotype")
+        and g not in not_sequenced
+        and g not in no_genotype
+    ]
+    unread = [
+        (results[g].get("details") or {}).get("positions_without_genotype") or 0
+        for g in genotyped
     ]
     return {
         "total_genes": len(panel),
         "successful_genes": len(genotyped),
         "not_sequenced_genes": len(not_sequenced),
+        "no_genotype_genes": len(no_genotype),
+        "partially_genotyped_genes": sum(1 for n in unread if n),
+        "positions_without_genotype": sum(unread),
         "failed_genes": sum(1 for r in results.values() if not r.get("success")),
     }
+
+
+# ---------------------------------------------------------------------------
+# Genes a VCF has no genotype in
+# ---------------------------------------------------------------------------
+#
+# A VCF without the uncovered-genes line carries no coverage evidence, and PyPGx reads
+# a gene with no record as the reference sequence -- the alignment's failure above,
+# from a different file. Measured 2026-10-20 with PyPGx 0.27 on the app's demo VCF
+# (PharmCAT's example, records at PharmCAT's positions only): CYP2E1 *7/*7, ABCB1
+# *2/*2, GSTM1 *A/*A, NAT1 *4/*4, APOE and SLCO1B3 Reference/Reference, none of them
+# with a record in the file. Only a gene on a chromosome with no record at all escaped,
+# through run_pypgx's "invalid contig". PharmCAT, with "Assume absent sites =
+# reference" off (the default), reads the same absences as no-calls, so the two tools
+# disagreed about one file.
+#
+# So a call rests on the positions PyPGx defines the gene's alleles at -- not its whole
+# region, which for UGT1A4 and UGT1A6 spans UGT1A1's exon 1 and for IFNL4 IFNL3's:
+# on the same file, UGT1A1's records alone made UGT1A4 *1/*1 and UGT1A6 Reference/
+# Reference, with no record at either gene's own positions. A gene with no genotype at
+# any of its positions gets no call, unless something vouches for the positions with
+# no record: the uploader, with the job's absent_to_ref on, or reads, when the VCF's
+# header says which genes they covered (an alignment's, a gVCF's). A gene with a
+# genotype at some of its positions is called, and the call says how many of the
+# others PyPGx read as the reference without anything vouching for it -- the array
+# problem (pypgx#142), counted instead of silent.
+#
+# A `./.` is not a genotype, and the option does not cover it: PyPGx hands it to
+# Beagle, which fills it in from its reference panel. Measured on the same file with
+# its 37 NAT2 records, all 0/0, set to ./.: NAT2 *5/*5, against *12/*12 with them 0/0
+# or removed. So no-calls are dropped from the file PyPGx reads (drop_no_calls), in
+# every lane, and counted with the positions read as reference.
+
+
+def load_gene_regions(table: Path, assembly: str) -> Dict[str, str]:
+    """Gene -> PyPGx's region for it ("7:87500862-87716323"), for each gene PyPGx
+    calls from small variants.
+
+    From PyPGx's gene-table.csv, the GRCh37Region/GRCh38Region column its
+    run-ngs-pipeline slices the VCF to (import_variants, through core.get_region).
+    Genes whose Variants column is not TRUE are left out: PyPGx makes no call for
+    them from a VCF whatever it holds, and says so itself (GSTT1 and UGT2B17, whose
+    alleles are all copy-number ones, and the paralogs and control genes).
+    """
+    column = f"{assembly}Region"
+    with open(table, newline="", encoding="utf-8") as fh:
+        return {
+            row["Gene"].strip().upper(): row[column].strip()
+            for row in csv.DictReader(fh)
+            if (row.get(column) or "").strip()
+            and (row.get("Variants") or "").strip().upper() == "TRUE"
+        }
+
+
+def load_gene_positions(
+    gene_table: Path, allele_table: Path, assembly: str
+) -> Dict[str, List[Tuple[str, int, int]]]:
+    """Gene -> the positions PyPGx defines its star alleles at, as (contig, start, end)
+    spans, 0-based and half-open: each defining variant's REF, one span per position.
+
+    The variants are allele-table.csv's GRCh37Core/GRCh38Core ("22-42126611-C-G"), the
+    ones build_definition_table reads; tag variants define nothing. Only the genes
+    load_gene_regions lists, and of those only genes with a defining variant: PyPGx
+    0.27 has none without one, and such a gene would be left to PyPGx, which says
+    itself when a gene has no small-variant alleles.
+    """
+    genes = load_gene_regions(gene_table, assembly)
+    column = f"{assembly}Core"
+    ends: Dict[str, Dict[Tuple[str, int], int]] = {}
+    with open(allele_table, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            gene = row["Gene"].strip().upper()
+            if gene not in genes:
+                continue
+            for variant in (row.get(column) or "").split(","):
+                parts = variant.strip().split("-")
+                if len(parts) != 4:  # "N/A": an allele without a variant
+                    continue
+                key = (parts[0], int(parts[1]))
+                end = key[1] - 1 + max(len(parts[2]), 1)
+                spans = ends.setdefault(gene, {})
+                spans[key] = max(spans.get(key, 0), end)
+    return {
+        gene: sorted((contig, pos - 1, end) for (contig, pos), end in spans.items())
+        for gene, spans in ends.items()
+    }
+
+
+_GENE_POSITIONS: Dict[str, Dict[str, List[Tuple[str, int, int]]]] = {}
+
+
+def pypgx_gene_positions(assembly: str) -> Dict[str, List[Tuple[str, int, int]]]:
+    """load_gene_positions over PyPGx's own tables, read once per assembly."""
+    if assembly not in _GENE_POSITIONS:
+        import pypgx
+
+        data = Path(pypgx.__file__).parent / "api" / "data"
+        _GENE_POSITIONS[assembly] = load_gene_positions(
+            data / "gene-table.csv", data / "allele-table.csv", assembly
+        )
+    return _GENE_POSITIONS[assembly]
+
+
+def _canonical_contig(name: str) -> str:
+    """A contig's name without UCSC's prefix, and the mitochondrion as PyPGx names it."""
+    base = name[len("chr") :] if name.startswith("chr") else name
+    return "M" if base in ("M", "MT") else base
+
+
+def position_evidence(
+    vcf_path: str, positions: Dict[str, List[Tuple[str, int, int]]]
+) -> Dict[str, Dict[str, int]]:
+    """For each gene, of its ``positions``: how many the VCF has a genotype at
+    ("genotyped"), how many only no-calls at ("no_calls"), out of how many ("positions").
+    The rest it has no record at.
+
+    A record is at a position when it overlaps the position's span, as pysam's fetch
+    decides overlap (PyPGx slices the VCF with it). It is a genotype when its first
+    sample -- the one the result is read from (_first_pypgx_row) -- has at least one
+    called allele: a half call (`./1`) is one. A `./.`, a record without GT and a VCF
+    without samples are no genotype. Contigs match with or without "chr". Through the
+    tabix index when there is one, as /genotype calls it; otherwise the whole file is
+    read.
+    """
+    import bisect
+
+    import pysam
+
+    def genotyped(record) -> bool:
+        if len(record.samples) == 0:
+            return False
+        return any(a is not None for a in record.samples[0].get("GT") or ())
+
+    # (gene, contig, start, end) -> "genotype" | "no-call"; absent when no record.
+    seen: Dict[Tuple[str, str, int, int], str] = {}
+
+    def see(key, record):
+        if genotyped(record):
+            seen[key] = "genotype"
+        else:
+            seen.setdefault(key, "no-call")
+
+    with pysam.VariantFile(vcf_path) as vcf:
+        if vcf.index is not None:
+            names = {_canonical_contig(c): c for c in vcf.index}
+            for gene, spans in positions.items():
+                for contig, start, end in spans:
+                    name = names.get(_canonical_contig(contig))
+                    if name is None:
+                        continue
+                    for record in vcf.fetch(name, start, end):
+                        see((gene, contig, start, end), record)
+                        if seen[(gene, contig, start, end)] == "genotype":
+                            break
+        else:
+            by_contig: Dict[str, List[Tuple[int, int, str, str]]] = {}
+            for gene, spans in positions.items():
+                for contig, start, end in spans:
+                    by_contig.setdefault(_canonical_contig(contig), []).append(
+                        (start, end, gene, contig)
+                    )
+            starts = {}
+            longest = {}
+            for contig, spans in by_contig.items():
+                spans.sort()
+                starts[contig] = [span[0] for span in spans]
+                longest[contig] = max(end - start for start, end, _, _ in spans)
+            for record in vcf:
+                contig = _canonical_contig(record.contig)
+                spans = by_contig.get(contig)
+                if not spans:
+                    continue
+                i = bisect.bisect_left(starts[contig], record.stop)
+                while i > 0:
+                    i -= 1
+                    start, end, gene, name = spans[i]
+                    if start < record.start - longest[contig]:
+                        break
+                    if record.start < end and record.stop > start:
+                        see((gene, name, start, end), record)
+    counts = {}
+    for gene, spans in positions.items():
+        found = [seen.get((gene, c, s, e)) for c, s, e in spans]
+        counts[gene] = {
+            "positions": len(spans),
+            "genotyped": found.count("genotype"),
+            "no_calls": found.count("no-call"),
+        }
+    return counts
+
+
+def genes_without_genotypes(
+    vcf_path: str, positions: Dict[str, List[Tuple[str, int, int]]]
+) -> List[str]:
+    """The genes with no genotype at any of their positions (position_evidence)."""
+    counts = position_evidence(vcf_path, positions)
+    return sorted(g for g, n in counts.items() if not n["genotyped"])
+
+
+def drop_no_calls(vcf_gz: str) -> str:
+    """The VCF without the records whose first sample is a no-call; its path.
+
+    Dropped, the position has no record, which PyPGx reads as the reference: what
+    position_evidence counted, and what the call's note says. Kept, Beagle would fill it
+    in from its panel. A half call (`./1`) stays, since one allele was called. A VCF
+    without genotypes is returned as it is. bcftools 1.24 matches a diploid, phased or
+    haploid no-call with these three tests (and a half call with none of them).
+    """
+    import pysam
+
+    with pysam.VariantFile(vcf_gz) as vcf:
+        if "GT" not in vcf.header.formats or len(vcf.header.samples) == 0:
+            return vcf_gz
+    called = re.sub(r"(\.vcf)?\.gz$", "", vcf_gz) + ".called.vcf.gz"
+    subprocess.run(
+        [
+            "bcftools",
+            "view",
+            "-e",
+            'GT[0]="./." || GT[0]=".|." || GT[0]="."',
+            "-Oz",
+            "-o",
+            called,
+            vcf_gz,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    tabix_index(called, force=True)
+    return called
+
+
+def no_genotype_note(gene: str, positions: int, no_calls: int = 0) -> str:
+    """What to say about a gene the VCF has no genotype in, and how to get a call.
+
+    The option is offered only where it would be right: not where every position is a
+    no-call, which it does not cover, and not for a gene whose both copies are commonly
+    deleted, where no record may be a homozygous deletion, which a variant list does
+    not record, and the option would call the gene present. No count of positions: on
+    the demo VCF it would split one reason into twenty footnotes.
+    """
+    where = "PyPGx's positions for this gene"
+    deletion = f"either not covered, or both copies deleted (common for {gene})"
+    if no_calls == positions:
+        note = f"Only no-calls (./.) in the VCF at {where}"
+        return f"{note}: {deletion}" if gene in WHOLE_GENE_DELETION_GENES else note
+    note = f"No genotype in the VCF at any of {where}"
+    if gene in WHOLE_GENE_DELETION_GENES:
+        return (
+            f"{note}: {deletion}, which a variant list cannot tell apart, and PyPGx "
+            "would read either as the reference sequence. A whole-genome BAM or CRAM "
+            "lets PyPGx count the gene's copies"
+        )
+    return (
+        f"{note}, which PyPGx would read as the reference sequence. If the file is a "
+        'whole-genome variant list, run it again with "Assume absent sites = '
+        'reference" on'
+    )
+
+
+def positions_read_as_reference_note(unread: int, positions: int) -> str:
+    """The note on a call some of whose positions PyPGx read as the reference with
+    nothing in the file, or vouching for it, to say so. Short: it sits under the
+    diplotype, in the gene table's narrow column."""
+    return (
+        f"{unread} of {positions} positions had no genotype in the file and were read "
+        "as reference"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2299,6 +2670,19 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             f"Coverage: {len(uncovered)} PyPGx gene(s) with no reads in the alignment"
             + (f": {', '.join(uncovered)}" if uncovered else "")
         )
+        # And those that could have none: their contig is not in the alignment's
+        # reference. See OFF_REFERENCE_HEADER_KEY. A failure here costs that note
+        # (the gene keeps the no-reads one), not the step.
+        try:
+            with pysam.AlignmentFile(str(alignment_path)) as bam:
+                off_reference = genes_off_reference(bam.references, str(assembly))
+            if off_reference:
+                annotate_header_line(
+                    output_vcf_gz, genes_off_reference_header_line(off_reference)
+                )
+                logger.info(f"Genes off the alignment's reference: {off_reference}")
+        except Exception as exc:
+            logger.warning(f"Could not check the alignment's contigs: {exc}")
         # Reads over the genes GRCh38 also carries on ALT contigs, for the report.
         # See ALT_LOCUS_GENES_GRCH38. A failure here costs that check, not the step.
         try:
@@ -2365,6 +2749,7 @@ async def genotype(
     job_id: Optional[str] = Form(None),
     step_name: Optional[str] = Form("pypgx_analysis"),
     input_type: Optional[str] = Form(None),
+    absent_to_ref: Optional[str] = Form(None),
 ):
     """
     Run PyPGx on a VCF file to determine alleles
@@ -2375,6 +2760,10 @@ async def genotype(
         genes: Comma-separated gene list or "ALL" or gene set name
         gene_set: Predefined gene set (core, cyp450, etc.)
         reference_genome: Reference genome (hg19 or hg38)
+        absent_to_ref: the job's effective "Assume absent sites = reference". Off
+            (or missing), a gene a VCF without coverage evidence has no genotype in,
+            at its own positions, gets no call. On, positions with no record count
+            as reference; no-calls still do not. See position_evidence.
 
     Returns:
         Genotyping results
@@ -2511,19 +2900,27 @@ async def genotype(
                 "total_genes": len(requested_genes)
             })
         
-        # Genes the source alignment never covered get no call -- see
-        # UNCOVERED_GENES_HEADER_KEY. None (an uploaded VCF) changes nothing here.
-        uncovered = uncovered_genes_from_vcf(str(input_filepath)) or set()
+        # Genes the source alignment (or gVCF) never covered get no call -- see
+        # UNCOVERED_GENES_HEADER_KEY. None is a VCF that carries no coverage evidence.
+        measured = uncovered_genes_from_vcf(str(input_filepath))
+        uncovered = set(measured or ())
+        measured_on = coverage_measured_on(str(input_filepath))
+        off_reference = genes_off_reference_from_vcf(str(input_filepath))
         sv_inputs = sv_inputs_from_vcf(str(input_filepath), TEMP_DIR)
         if sv_inputs:
             # With whole-genome depth and a control gene, no reads over a gene whose
             # common null allele deletes it is a homozygous deletion PyPGx can call,
             # not an unsequenced gene: let it through. See WGS_PROBE_WINDOWS_GRCH38.
+            # Not where the reference has no contig for it: see OFF_REFERENCE_HEADER_KEY.
             uncovered -= WHOLE_GENE_DELETION_GENES
             logger.info("SV inputs present: calling SV-defined alleles")
+        uncovered |= set(off_reference)
         not_sequenced = {}
         for gene in [g for g in requested_genes if g in uncovered]:
-            note = no_reads_note(gene)
+            if gene in off_reference:
+                note = off_reference_note(off_reference[gene], measured_on)
+            else:
+                note = no_reads_note(gene, measured_on)
             not_sequenced[gene] = {
                 'success': True,
                 'gene': gene,
@@ -2534,10 +2931,57 @@ async def genotype(
         if not_sequenced:
             logger.info(
                 f"Not calling {len(not_sequenced)} gene(s) with no reads in the "
-                f"alignment: {', '.join(sorted(not_sequenced))}"
+                f"{measured_on}: {', '.join(sorted(not_sequenced))}"
             )
+        # What the file holds at each gene's own positions. A gene with no genotype at
+        # any gets no call, unless what has no record there is vouched for -- by reads
+        # (measured) or by the job's absent_to_ref. A called gene with positions read
+        # as reference unvouched says how many. See position_evidence. The file is
+        # prepared for PyPGx here, once, without its no-calls, and the batches below
+        # read the same one.
+        flag = str(absent_to_ref or "").strip().lower()
+        assume_absent_is_reference = flag in ("1", "true", "yes", "on")
+        absence_vouched_for = measured is not None or assume_absent_is_reference
+        vcf_for_pypgx = prepare_vcf_for_pypgx(str(input_filepath))
+        positions = pypgx_gene_positions(pypgx_assembly)
+        evidence = position_evidence(
+            vcf_for_pypgx,
+            {
+                g: positions[g]
+                for g in requested_genes
+                if g in positions and g not in not_sequenced
+            },
+        )
+        no_genotype = {}
+        read_as_reference = {}
+        for gene, n in evidence.items():
+            absent = n["positions"] - n["genotyped"] - n["no_calls"]
+            known = n["genotyped"] + (absent if absence_vouched_for else 0)
+            if known == n["positions"]:
+                continue
+            if known:
+                read_as_reference[gene] = (n["positions"] - known, n["positions"])
+                continue
+            note = no_genotype_note(gene, n["positions"], n["no_calls"])
+            no_genotype[gene] = {
+                "success": True,
+                "gene": gene,
+                "diplotype": None,
+                "details": {"note": note},
+                "error": note,
+            }
+        if no_genotype:
+            logger.info(
+                f"Not calling {len(no_genotype)} gene(s) with no genotype at their "
+                f"positions in the VCF: {', '.join(no_genotype)}"
+            )
+        vcf_for_pypgx = drop_no_calls(vcf_for_pypgx)
         # requested_genes stays the whole panel: the step's counts are out of it.
-        genes_to_call = [g for g in requested_genes if g not in not_sequenced]
+        genes_to_call = [
+            g
+            for g in requested_genes
+            if g not in not_sequenced and g not in no_genotype
+        ]
 
         # Calculate optimal batch size based on file size and available memory
         optimal_batch_size = calculate_optimal_batch_size(file_size_gb, memory_info['available_gb'])
@@ -2546,7 +2990,11 @@ async def genotype(
         # Split genes into batches for parallel processing
         gene_batches = chunk_list(genes_to_call, optimal_batch_size)
         
-        aggregated: Dict[str, Any] = {"success": True, "results": dict(not_sequenced), "job_id": local_job_id}
+        aggregated: Dict[str, Any] = {
+            "success": True,
+            "results": {**not_sequenced, **no_genotype},
+            "job_id": local_job_id,
+        }
         if patient_id:
             aggregated["patient_id"] = patient_id
         if report_id:
@@ -2573,7 +3021,7 @@ async def genotype(
                 # Process the batch in parallel
                 batch_results = await process_gene_batch_parallel(
                     gene_batch, 
-                    str(input_filepath), 
+                    vcf_for_pypgx,
                     str(job_dir), 
                     pypgx_assembly,
                     max_workers=min(len(gene_batch), PYPGX_MAX_PARALLEL_GENES),
@@ -2638,6 +3086,18 @@ async def genotype(
                         "genes_in_batch": gene_batch,
                         "error": str(e)
                     })
+        # A call some of whose positions PyPGx read as the reference with nothing to
+        # say so: the note, and the counts the step records.
+        for gene, (unread, total) in read_as_reference.items():
+            result = aggregated["results"].get(gene) or {}
+            if result.get("success") and result.get("diplotype"):
+                details = result.setdefault("details", {}) or {}
+                details["positions"] = total
+                details["positions_without_genotype"] = unread
+                details["positions_note"] = positions_read_as_reference_note(
+                    unread, total
+                )
+                result["details"] = details
         # The per-gene pipeline folders and a summary JSON used to be written into
         # /data/reports/<patient>/ -- the patient's root, outside every job
         # directory, where nothing reads them (the report reads pypgx_result.json in
@@ -2669,7 +3129,9 @@ async def genotype(
         # Complete workflow step
         if job_client:
             if aggregated["success"]:
-                counts = step_gene_counts(requested_genes, aggregated["results"], not_sequenced)
+                counts = step_gene_counts(
+                    requested_genes, aggregated["results"], not_sequenced, no_genotype
+                )
                 await job_client.complete_step(
                     f"PyPGx analysis completed: {counts['successful_genes']} of "
                     f"{counts['total_genes']} genes genotyped", {

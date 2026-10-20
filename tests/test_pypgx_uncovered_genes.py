@@ -24,14 +24,15 @@ The fix measures per-gene coverage where it can actually be observed -- on the
 alignment, in /create-input-vcf -- and carries the answer INSIDE the VCF header, so it
 travels with the file through Nextflow without new plumbing. The genotyper reads the
 header and records those genes as no-data instead of calling them. An uploaded VCF has
-no such header line and keeps the old chromosome-level behaviour: it carries no coverage
-evidence to act on.
+no such header line: it carries no coverage evidence, and its genes are checked for
+genotypes instead (tests/test_pypgx_vcf_without_genotypes.py).
 """
 
 from __future__ import annotations
 
 import ast
 import gzip
+import re
 from pathlib import Path
 
 WRAPPER = Path(__file__).resolve().parents[1] / "docker" / "pypgx" / "pypgx_wrapper.py"
@@ -107,8 +108,8 @@ def test_a_measured_full_coverage_reads_as_an_empty_set(tmp_path):
 
 def test_an_uploaded_vcf_without_the_line_reads_as_unknown(tmp_path):
     """None, not an empty set: an uploaded VCF carries no coverage evidence, and
-    reading its silence as "everything covered" would change nothing today but would
-    be the wrong claim for the next caller."""
+    reading its silence as "everything covered" would skip the check for genes it has
+    no genotype in (genes_without_genotypes)."""
     assert NS["uncovered_genes_from_vcf"](str(_vcf(tmp_path))) is None
     assert NS["uncovered_genes_from_vcf"](str(_vcf(tmp_path, gz=False))) is None
 
@@ -250,6 +251,9 @@ def test_the_step_counts_genes_with_no_reads_apart():
         "total_genes": 4,
         "successful_genes": 1,
         "not_sequenced_genes": 2,
+        "no_genotype_genes": 0,
+        "partially_genotyped_genes": 0,
+        "positions_without_genotype": 0,
         "failed_genes": 1,
     }
 
@@ -259,7 +263,8 @@ def test_the_genotyper_keeps_the_whole_panel_for_its_counts():
     body = src[src.index("async def genotype(") :]
     assert "requested_genes = [g for g in requested_genes" not in body
     assert "chunk_list(genes_to_call," in body
-    assert (
-        'step_gene_counts(requested_genes, aggregated["results"], not_sequenced)'
-        in body
+    assert re.search(
+        r'step_gene_counts\(\s*requested_genes, aggregated\["results"\], '
+        r"not_sequenced, no_genotype\s*\)",
+        body,
     )

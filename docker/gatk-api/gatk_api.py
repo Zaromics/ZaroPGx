@@ -4807,6 +4807,217 @@ def gvcf_contested_spans(job_label, staged_gvcf, positions_path, work_dir):
         return contested_spans(handle)
 
 
+# Which of PyPGx's genes the gVCF has reads over. The genotyped VCF keeps no reference
+# blocks: outside PharmCAT's positions it holds variants only, so a gene the sample
+# matches the reference over has no record in it, exactly like a gene the gVCF never
+# covered. PyPGx reads both as reference; the pypgx wrapper, given no coverage
+# evidence, calls neither (its genes_without_genotypes). The blocks are that evidence,
+# so it is read here and written into the output's header as the alignment lanes write
+# it (pypgx_wrapper's UNCOVERED_GENES_HEADER_KEY); the wrapper then calls every gene
+# with reads, as it does for an alignment. The two keys are spelled again in
+# docker/pypgx/pypgx_wrapper.py; tests/test_pypgx_vcf_without_genotypes.py keeps the
+# copies equal.
+UNCOVERED_GENES_HEADER_KEY = "ZaroPGx_uncovered_genes"
+COVERAGE_MEASURED_ON_HEADER_KEY = "ZaroPGx_coverage_measured_on"
+# "GENE:contig" for each gene whose contig the gVCF's reference does not have (GSTT1,
+# on 22_KI270879v1_alt, for a gVCF made against a GRCh38 without ALT contigs): no
+# reads there is not "not sequenced, or deleted".
+OFF_REFERENCE_HEADER_KEY = "ZaroPGx_genes_off_reference"
+
+
+def pypgx_gene_table_path():
+    """PyPGx's gene table: copied beside this module in the image, the repo's otherwise.
+
+    lexicon/gene-table.csv is PyPGx 0.27.0's own table without MT-RNR1, which no gene
+    set asks PyPGx for (the mtDNA sidecar calls it); this image has no PyPGx to read
+    it from. Dockerfile.gatk-api copies it in.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (
+        os.path.join(here, "pypgx-gene-table.csv"),
+        os.path.join(here, "..", "..", "lexicon", "gene-table.csv"),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(here, "pypgx-gene-table.csv")
+
+
+def pypgx_gene_spans_grch38(table_path):
+    """[(contig, start, end, gene)] for each gene's GRCh38Region, as a BED reads them.
+
+    PyPGx slices the VCF to "contig:start-end" through pysam's fetch(contig, start,
+    end), which takes start 0-based: the same numbers are a BED interval. The contig is
+    PyPGx's, unprefixed.
+    """
+    import csv
+
+    spans = []
+    with open(table_path, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            region = (row.get("GRCh38Region") or "").strip()
+            if not region:
+                continue
+            contig, _, span = region.rpartition(":")
+            start, _, end = span.partition("-")
+            spans.append((contig, int(start), int(end), row["Gene"].strip().upper()))
+    return spans
+
+
+def _pypgx_contig(name):
+    """A contig's name as PyPGx's table spells it: no "chr", the mitochondrion "M"."""
+    base = name[len("chr") :] if name.startswith("chr") else name
+    return "M" if base in ("M", "MT") else base
+
+
+def _gvcf_record_has_reads(fields):
+    """True when a gVCF record says reads were seen: a called genotype over depth > 0.
+
+    A GATK block over a stretch with no reads is `0/0` with DP 0 (and GQ 0), so the
+    genotype alone is not enough. DP, or a block's MIN_DP where it has no DP; a record
+    with neither is taken at its genotype.
+    """
+    if len(fields) < 10:
+        return False
+    fmt = dict(zip(fields[8].split(":"), fields[9].split(":")))
+    if not any(char.isdigit() for char in fmt.get("GT", ".")):
+        return False
+    depth = _as_int(fmt.get("DP"))
+    if depth is None:
+        depth = _as_int(fmt.get("MIN_DP"))
+    return depth is None or depth > 0
+
+
+def genes_without_gvcf_reads(gvcf_record_lines, spans):
+    """The genes in `spans` that no gVCF record with reads overlaps. Pure over text.
+
+    A record's extent is its INFO END for a block, its REF otherwise; a block that
+    starts upstream of a gene and runs into it covers the gene. One record with reads
+    is enough, as one read is for an alignment (uncovered_genes_in_alignment): the
+    question is whether anything was sequenced there, not how well.
+    """
+    by_contig = {}
+    for contig, start, end, gene in spans:
+        by_contig.setdefault(_pypgx_contig(contig), []).append((start, end, gene))
+    covered = set()
+    for line in gvcf_record_lines:
+        if not line.strip() or line.startswith("#"):
+            continue
+        f = line.rstrip("\n").split("\t")
+        genes = by_contig.get(_pypgx_contig(f[0]))
+        pos = _as_int(f[1]) if len(f) >= 10 else None
+        if not genes or pos is None or not _gvcf_record_has_reads(f):
+            continue
+        info_end = next(
+            (
+                _as_int(item[len("END=") :])
+                for item in f[7].split(";")
+                if item.startswith("END=")
+            ),
+            None,
+        )
+        start, end = pos - 1, info_end or (pos - 1 + len(f[3]))
+        for gene_start, gene_end, gene in genes:
+            if start < gene_end and end > gene_start:
+                covered.add(gene)
+    return sorted({gene for _, _, _, gene in spans} - covered)
+
+
+def gvcf_uncovered_genes(job_label, staged_gvcf, table_path, work_dir):
+    """genes_without_gvcf_reads over the staged gVCF's records in PyPGx's GRCh38 regions.
+
+    `bcftools view -R` with --regions-overlap record, so a block starting upstream is
+    returned, through the tabix index. Each region is listed under both namings, `1`
+    and `chr1`: bcftools 1.24 skips a region on a contig the file does not have.
+    """
+    if not os.path.isfile(table_path):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"PyPGx's gene table is not at {table_path}. The gVCF conversion "
+                "records which PyPGx genes the gVCF has reads over, and cannot without "
+                "it. It is copied into the gatk-api image from lexicon/gene-table.csv; "
+                "rebuild the image."
+            ),
+        )
+    spans = pypgx_gene_spans_grch38(table_path)
+    bed = os.path.join(work_dir, "pypgx_genes.bed")
+    with open(bed, "w", encoding="utf-8") as out:
+        for contig, start, end, _ in spans:
+            for name in (contig, f"chr{contig}"):
+                out.write(f"{name}\t{start}\t{end}\n")
+    overlapping = os.path.join(work_dir, "pypgx_gene_records.txt")
+    _run_tool(
+        job_label,
+        [
+            "bcftools",
+            "view",
+            "-H",
+            "-R",
+            bed,
+            "--regions-overlap",
+            "record",
+            "-o",
+            overlapping,
+            staged_gvcf,
+        ],
+        "Reading the gVCF's records over PyPGx's genes (bcftools view)",
+    )
+    if not os.path.exists(overlapping):
+        return sorted({gene for _, _, _, gene in spans})
+    with _open_vcf_text(overlapping) as handle:
+        return genes_without_gvcf_reads(handle, spans)
+
+
+def vcf_header_contigs(path):
+    """The contig IDs a (bgzipped) VCF's header declares."""
+    contigs = []
+    with _open_vcf_text(path) as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith("##contig=<"):
+                for field in line.strip()[len("##contig=<") :].rstrip(">").split(","):
+                    key, _, value = field.partition("=")
+                    if key.strip() == "ID" and value.strip():
+                        contigs.append(value.strip())
+    return contigs
+
+
+def genes_off_reference(header_contigs, spans):
+    """{gene: contig} for the genes in `spans` on an ALT contig the header does not
+    declare, with or without "chr". Empty for a header that declares none: it cannot
+    tell. Only ALT contigs (a "_" in the name) are judged, as only a reference without
+    them is common; a header declaring some chromosomes only would otherwise put every
+    gene on the rest off it."""
+    if not header_contigs:
+        return {}
+    names = {_pypgx_contig(c) for c in header_contigs}
+    return {
+        gene: contig
+        for contig, _, _, gene in spans
+        if "_" in contig and _pypgx_contig(contig) not in names
+    }
+
+
+def with_header_lines(vcf_lines, extra):
+    """`vcf_lines` with `extra` header lines inserted just before the #CHROM line."""
+    for i, line in enumerate(vcf_lines):
+        if line.startswith("#CHROM"):
+            return vcf_lines[:i] + [f"{x}\n" for x in extra] + vcf_lines[i:]
+    return vcf_lines
+
+
+def vcf_header_has(path, line):
+    """True when the (bgzipped) VCF's header holds this exact line."""
+    with _open_vcf_text(path) as handle:
+        for text in handle:
+            if not text.startswith("##"):
+                return False
+            if text.rstrip("\n") == line:
+                return True
+    return False
+
+
 def judge_pgx_pass(pgx_vcf_text_lines, positions_path, contested=()):
     """PharmCAT's positions in the PGx pass, as PharmCAT can read them, honestly.
 
@@ -4949,6 +5160,10 @@ def judge_pgx_pass(pgx_vcf_text_lines, positions_path, contested=()):
                 for rid, ref, alt in pharmcat
             ]
 
+        # The general file keeps its no-calls, so the published VCF says what the gVCF
+        # said. PyPGx never reads them as such: Beagle would fill them in, so /genotype
+        # drops no-calls first and counts them in the call's note (pypgx_wrapper's
+        # drop_no_calls).
         def emit(pharmcat_rows, general_rows=None):
             out.extend(pharmcat_rows)
             general.extend(pharmcat_rows if general_rows is None else general_rows)
@@ -5071,7 +5286,9 @@ def convert_gvcf_to_vcf(
     2. The PGx pass: every position in PharmCAT's list, variant or confidently
        reference. This is what makes the conversion worth doing. Judged by
        judge_pgx_pass into PharmCAT's own file (`<output>.pharmcat.vcf.gz`, returned as
-       pharmcat_vcf_path) and the rows the merged output carries.
+       pharmcat_vcf_path) and the rows the merged output carries. The merged output's
+       header also says which PyPGx genes the gVCF has no reads over
+       (gvcf_uncovered_genes), the one thing its reference blocks tell PyPGx.
     3. The variant pass: everything OUTSIDE that list, variants only -- for PyPGx
        (which reads the whole call set, not just PharmCAT's positions) and for the
        mtDNA sidecar (pharmcat_positions.vcf carries no chrM at all; see
@@ -5156,6 +5373,30 @@ def convert_gvcf_to_vcf(
         job_label,
         ['bcftools', 'index', '-t', '-f', pharmcat_vcf],
         'Indexing the PharmCAT-position calls (bcftools index)',
+    )
+    # 2c. The PyPGx genes the gVCF has no reads over, from its own records (see
+    # UNCOVERED_GENES_HEADER_KEY), in the header of the file the merge starts from.
+    # `bcftools concat` carries a header line of either input into its output
+    # (measured, bcftools 1.24); the output is checked for it below.
+    uncovered = gvcf_uncovered_genes(
+        job_label, staged, pypgx_gene_table_path(), work_dir
+    )
+    uncovered_line = f"##{UNCOVERED_GENES_HEADER_KEY}={','.join(uncovered) or '.'}"
+    off_reference = genes_off_reference(
+        vcf_header_contigs(staged), pypgx_gene_spans_grch38(pypgx_gene_table_path())
+    )
+    listed = ",".join(f"{g}:{c}" for g, c in sorted(off_reference.items()))
+    general_lines = with_header_lines(
+        general_lines,
+        [
+            uncovered_line,
+            f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
+            f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
+        ],
+    )
+    logger.info(
+        f"Job {job_label}: {len(uncovered)} PyPGx gene(s) with no reads in the gVCF"
+        + (f": {', '.join(uncovered)}" if uncovered else "")
     )
     general_text = os.path.join(work_dir, 'pgx_positions.general.vcf')
     with open(general_text, 'w', encoding='utf-8') as fh:
@@ -5253,6 +5494,17 @@ def convert_gvcf_to_vcf(
         )
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=422, detail=message)
+
+    # Without the line, PyPGx would take this file for a VCF with no coverage evidence
+    # and leave uncalled every gene the sample matches the reference over.
+    if not vcf_header_has(output_vcf, uncovered_line):
+        _discard_output(output_vcf)
+        message = (
+            f"The merged VCF lost the {UNCOVERED_GENES_HEADER_KEY} header line "
+            "(bcftools concat), so PyPGx could not tell which genes the gVCF covered."
+        )
+        logger.error(f"Job {job_label}: {message}")
+        raise HTTPException(status_code=500, detail=message)
 
     # Tabix index. Best effort for the same reason as the liftover's and the BCF
     # route's: the pipeline re-indexes when no .tbi travels with the VCF.

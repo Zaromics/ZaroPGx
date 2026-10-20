@@ -365,7 +365,7 @@ def test_no_sv_inputs_keeps_the_snv_only_call(pypgx, monkeypatch, tmp_path, sv_g
 # ---------------------------------------------------------------------------
 
 
-def _genotype(pypgx, monkeypatch, header_extra):
+def _genotype(pypgx, monkeypatch, header_extra, genes="CYP2D6,GSTM1"):
     seen = {}
 
     async def fake_batch(genes, vcf_path, job_dir, reference_genome, **kwargs):
@@ -375,6 +375,12 @@ def _genotype(pypgx, monkeypatch, header_extra):
         return {g: {"success": True, "diplotype": "*1/*1"} for g in genes}
 
     monkeypatch.setattr(pypgx, "process_gene_batch_parallel", fake_batch)
+    # bgzip, tabix and bcftools are not on the test host, nor PyPGx's tables: the
+    # file is read as it is, with no positions to check (see
+    # tests/test_pypgx_vcf_without_genotypes.py for those).
+    monkeypatch.setattr(pypgx, "prepare_vcf_for_pypgx", lambda path: path)
+    monkeypatch.setattr(pypgx, "drop_no_calls", lambda path: path)
+    monkeypatch.setattr(pypgx, "pypgx_gene_positions", lambda assembly: {})
     body = (
         "##fileformat=VCFv4.2\n"
         "##ZaroPGx_uncovered_genes=GSTM1\n"
@@ -385,7 +391,7 @@ def _genotype(pypgx, monkeypatch, header_extra):
     resp = TestClient(pypgx.app).post(
         "/genotype",
         files={"file": ("in.vcf", body, "text/plain")},
-        data={"genes": "CYP2D6,GSTM1", "reference_genome": "hg38"},
+        data={"genes": genes, "reference_genome": "hg38"},
     )
     assert resp.status_code == 200, resp.text
     return seen, resp.json()
@@ -407,3 +413,20 @@ def test_with_sv_inputs_an_uncovered_deletion_gene_goes_to_pypgx(pypgx, monkeypa
 
     assert sorted(seen["genes"]) == ["CYP2D6", "GSTM1"]
     assert seen["sv_inputs"] == (depth, control)
+
+
+def test_a_deletion_gene_off_the_reference_stays_out_with_sv_inputs(pypgx, monkeypatch):
+    """GSTT1 on a GRCh38 without ALT contigs has zero depth because nothing could map
+    there: not a deletion for PyPGx's copy-number model to call."""
+    depth, control = _sv_files(pypgx.TEMP_DIR, job="sv-off-reference")
+    seen, body = _genotype(
+        pypgx,
+        monkeypatch,
+        pypgx.sv_inputs_header_line(depth, control)
+        + "\n##ZaroPGx_genes_off_reference=GSTT1:22_KI270879v1_alt\n",
+        genes="CYP2D6,GSTM1,GSTT1",
+    )
+
+    assert sorted(seen["genes"]) == ["CYP2D6", "GSTM1"]
+    note = body["results"]["GSTT1"]["details"]["note"]
+    assert note.startswith("The alignment's reference has no 22_KI270879v1_alt")
