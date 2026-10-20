@@ -4,7 +4,7 @@
 services:
   app:
     environment:
-      # Skip Kroki Mermaid in e2e (Graphviz/Pillow still produce diagrams).
+      # Skip Kroki Mermaid in e2e (the reports list the workflow's steps as text).
       # Prevents sync Chromium renders from starving /health and GET /jobs.
       - KROKI_ENABLED=false
       - KROKI_TIMEOUT=5

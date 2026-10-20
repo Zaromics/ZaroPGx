@@ -46,7 +46,8 @@ run it with `--update` (Bash) or `-Update` (PowerShell). The scripts are short; 
 if you prefer: [bootstrap.sh](bootstrap.sh), [bootstrap.ps1](bootstrap.ps1).
 
 The first start takes 8-15 minutes while PharmCAT downloads its reference data. Then open
-`http://localhost:8765`.
+`http://localhost:8765`. **Run Demo** works once the genome downloader has also fetched the
+reference genomes and the 3.2 GB reference its CRAM decodes against; until then it says so.
 
 <img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
 
@@ -102,7 +103,7 @@ What each format needs, and why some are refused: [input formats](docs/user/file
 *Features*
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
 - [X] Priority 1 (*Supported*): **mtDNA-Server 2**: mitochondrial variants, haplogroup and the MT-RNR1 outside call; mtDNA-Server 2's own report for alignments.
-- [o] Priority 2 (*Development*): **FHIR R4 offline export** as JSON and XML, written with every report; custom PharmCAT definitions for outside calls.
+- [o] Priority 2 (*Development*): **FHIR R4 offline export** as JSON and XML, written with every report, following HL7's Genomics Reporting IG; a finished job's bundle can be pushed to the bundled HAPI FHIR server; custom PharmCAT definitions for outside calls.
 - [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
 - [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load

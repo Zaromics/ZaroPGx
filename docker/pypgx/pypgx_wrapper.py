@@ -1030,7 +1030,8 @@ def step_gene_counts(
     counted apart as ``no_genotype_genes``: it is not a gene with no reads.
     Genotyped means a diplotype came back. PyPGx's own no-calls (a chromosome the VCF
     has no record on, a gene without small-variant alleles) are successful results
-    too, and on the demo VCF they made "66 of 66 genes genotyped" of 40 calls.
+    too, and on the old demo VCF (PharmCAT's example) they made "66 of 66 genes
+    genotyped" of 40 calls.
     ``partially_genotyped_genes`` are the genotyped genes some of whose positions were
     read as reference unvouched, ``positions_without_genotype`` how many in all.
     """
@@ -1064,13 +1065,13 @@ def step_gene_counts(
 #
 # A VCF without the uncovered-genes line carries no coverage evidence, and PyPGx reads
 # a gene with no record as the reference sequence -- the alignment's failure above,
-# from a different file. Measured 2026-10-20 with PyPGx 0.27 on the app's demo VCF
-# (PharmCAT's example, records at PharmCAT's positions only): CYP2E1 *7/*7, ABCB1
-# *2/*2, GSTM1 *A/*A, NAT1 *4/*4, APOE and SLCO1B3 Reference/Reference, none of them
-# with a record in the file. Only a gene on a chromosome with no record at all escaped,
-# through run_pypgx's "invalid contig". PharmCAT, with "Assume absent sites =
-# reference" off (the default), reads the same absences as no-calls, so the two tools
-# disagreed about one file.
+# from a different file. Measured 2026-10-20 with PyPGx 0.27 on the old demo VCF
+# (PharmCAT's example, records at PharmCAT's positions only; Run Demo has run NA12878's
+# reads since 0.4.0): CYP2E1 *7/*7, ABCB1 *2/*2, GSTM1 *A/*A, NAT1 *4/*4, APOE and
+# SLCO1B3 Reference/Reference, none of them with a record in the file. Only a gene on a
+# chromosome with no record at all escaped, through run_pypgx's "invalid contig".
+# PharmCAT, with "Assume absent sites = reference" off (the default), reads the same
+# absences as no-calls, so the two tools disagreed about one file.
 #
 # So a call rests on the positions PyPGx defines the gene's alleles at -- not its whole
 # region, which for UGT1A4 and UGT1A6 spans UGT1A1's exon 1 and for IFNL4 IFNL3's:
@@ -1295,7 +1296,8 @@ def no_genotype_note(gene: str, positions: int, no_calls: int = 0) -> str:
     no-call, which it does not cover, and not for a gene whose both copies are commonly
     deleted, where no record may be a homozygous deletion, which a variant list does
     not record, and the option would call the gene present. No count of positions: on
-    the demo VCF it would split one reason into twenty footnotes.
+    the old demo VCF (PharmCAT's example) it would split one reason into twenty
+    footnotes.
     """
     where = "PyPGx's positions for this gene"
     deletion = f"either not covered, or both copies deleted (common for {gene})"

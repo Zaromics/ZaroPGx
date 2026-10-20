@@ -155,7 +155,7 @@ PharmCAT alone would degrade honestly — it reports a position it cannot see as
 
 PharmCAT's own FAQ reaches the same conclusion: consumer-array data has "limited overlap with most of the gene definitions used by PharmCAT, which will result in very few callable alleles and therefore not very useful reports."
 
-Upload sequencing data instead: a GRCh38/hg38 VCF, or a BAM, CRAM or SAM.
+Upload sequencing data instead, in a format from the table at the top: a VCF (GRCh38, or GRCh37 to be lifted over), BCF or gVCF, a BAM, CRAM or SAM, or FASTQ.
 
 ## Reference Genome Support
 - **GRCh38/hg38** — analysed directly; the build every result is reported on.

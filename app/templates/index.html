@@ -2704,8 +2704,8 @@
                 
                 // Map backend service names to UI stage names. Nothing maps onto
                 // the Report stage: no service switches the custom report off.
-                // Kroki did until 2026-10, and it only renders Mermaid diagrams,
-                // which the report draws with Graphviz without it -- so with
+                // Kroki did until 2026-10, and it only renders Mermaid diagrams;
+                // without it the report lists the workflow's steps as text -- so with
                 // KROKI_ENABLED=false every upload went out with report_enabled
                 // false and finished with no reports.
                 const serviceMapping = {
