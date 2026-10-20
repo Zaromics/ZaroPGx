@@ -112,7 +112,11 @@ phenotype, each drug's implication and recommendations, on the profiles of the H
 Reporting IG 3.0.0. A phenotype is a therapeutic implication of its genotype, coded from the
 IG's LOINC answers where one says the same thing (Poor metabolizer, Decreased function, High
 risk for an HLA risk allele found, ...) and sent as text where none does (Likely Wild Type,
-G6PD's terms, hedged and uncertain calls); {doc}`../samples/README` has the table. The bundle validates against those profiles with no errors (HAPI FHIR's
+G6PD's terms, hedged and uncertain calls); {doc}`../samples/README` has the table. High
+and Low risk (HLA risk alleles, MT-RNR1, malignant hyperthermia) follow CPIC's EHR priority
+for the result, since the IG has no term for the result itself; such a phenotype carries a
+note saying so, and the mapping is provisional. The bundle validates against those
+profiles with no errors (HAPI FHIR's
 `$validate`, October 2026); {doc}`../samples/README` lists the warnings that remain and why.
 Bundles written before then do not validate, and their XML is not readable as FHIR. The
 `/fhir` endpoints ({doc}`../developer/api-reference`) also generate, preview and save a

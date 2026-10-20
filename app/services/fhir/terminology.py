@@ -174,6 +174,15 @@ HLA_ALLELE_RESULT_ANSWERS = {
     "negative": "LA19542-2",
 }
 
+# CPIC's EHR priority term behind each risk code above. The value set has no
+# answer for an allele found or not, a risk of hearing loss or a susceptibility,
+# so High or Low risk states CPIC's priority for the call, not the call itself;
+# the observation says so in a note. Provisional (docs/samples/README.md).
+CPIC_PRIORITY_TERMS = {
+    "LA19541-4": "Abnormal/Priority/High Risk",
+    "LA19542-2": "Normal/Routine/Low Risk",
+}
+
 # SNOMED CT 405824009, as the International Edition names it: the genomic study's
 # Procedure.code. It was the Procedure's category, which the IG's genomic-study
 # profile fixes to observation-category "laboratory".

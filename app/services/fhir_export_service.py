@@ -878,11 +878,12 @@ class FHIRExportService:
         (LOINC answers such as LA9657-3 "Poor metabolizer"). This one names no
         medication: the phenotype is the genotype's, whatever the drug, and every
         gene with one gets it, drugs or not. A phenotype the value set has no code
-        for travels as text (_phenotype_concept).
+        for travels as text (_phenotype_concept); a risk coded after CPIC's EHR
+        priority carries a note that says so.
         """
         gene_symbol = gene_data.get("gene", "Unknown")
-        phenotype = gene_data.get("phenotype")
-        return {
+        concept = self._phenotype_concept(gene_data.get("phenotype"))
+        observation = {
             "resourceType": "Observation",
             "id": resource_id,
             "meta": {
@@ -905,10 +906,37 @@ class FHIRExportService:
                     "code": {
                         "coding": [self._tbd_coding("therapeutic-implication")],
                     },
-                    "valueCodeableConcept": self._phenotype_concept(phenotype),
+                    "valueCodeableConcept": concept,
                 }
             ],
         }
+        # High or Low risk is CPIC's EHR priority for the call, not the call
+        # itself (terminology.CPIC_PRIORITY_TERMS). A reader of the code alone
+        # would take it for the result, so the observation says what it stands for.
+        coding = concept.get("coding", [{}])[0]
+        priority = terminology.CPIC_PRIORITY_TERMS.get(coding.get("code"))
+        if priority:
+            # One result, one term. HLA-B states a result per risk allele, joined
+            # with ", " (_hla_results_code; no other risk phenotype has a comma):
+            # High risk is CPIC's term for a positive one among them, Low risk its
+            # term for negative results, every one of them.
+            if "," not in concept["text"]:
+                basis = "that result"
+            elif coding["code"] == terminology.HLA_ALLELE_RESULT_ANSWERS["positive"]:
+                basis = "a positive result"
+            else:
+                basis = "negative results"
+            observation["note"] = [
+                {
+                    "text": (
+                        f'ZaroPGx called this phenotype "{concept["text"]}". It is '
+                        f'coded LOINC {coding["code"]} "{coding["display"]}" after '
+                        f'CPIC\'s EHR priority term for {basis}, "{priority}", as '
+                        "the IG's value set has no code for the call itself."
+                    )
+                }
+            ]
+        return observation
 
     @staticmethod
     def _phenotype_concept(phenotype: str) -> Dict[str, Any]:

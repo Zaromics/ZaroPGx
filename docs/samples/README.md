@@ -49,6 +49,8 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
   that says the same thing, with ZaroPGx's words as its text; text alone where it has none
   (table below)
 - None for a gene whose phenotype is "N/A" (the calling tool defines none) or not reported
+- A `note` where the code is CPIC's priority for the result rather than the result (High or
+  Low risk, below)
 
 This is where the IG states a pharmacogenomic phenotype: "a predicted ramification based
 on the presence of associated molecular finding(s)", such as "alterations in drug
@@ -84,6 +86,20 @@ risk, and it is Low risk only when every result is negative. An HLA-B phenotype 
 names only some of its three alleles is not coded: before ZaroPGx kept all three, it
 stored the first alone (`*15:02 negative`), and coding that would call a `*57:01` or
 `*58:01` carrier Low risk.
+
+The value set has no answer for an HLA allele found or not, a risk of hearing loss or a
+susceptibility, so for these rows the code states CPIC's priority for the result, not the
+result itself; ZaroPGx's words stay the concept's text. Each such observation says so in a
+`note`, which the IG's profile allows. For a `*57:01` carrier's HLA-B:
+
+```json
+"note": [{"text": "ZaroPGx called this phenotype \"*15:02 negative, *57:01 positive, *58:01 negative\". It is coded LOINC LA19541-4 \"High risk\" after CPIC's EHR priority term for a positive result, \"Abnormal/Priority/High Risk\", as the IG's value set has no code for the call itself."}]
+```
+
+A phenotype of one result (HLA-A, MT-RNR1, malignant hyperthermia) says "for that result"
+instead, and HLA-B with every result negative "for negative results". No other phenotype
+has a note. These codes are provisional: they stand until the IG, LOINC or CPIC gives
+these results terms of their own, or the risk rows go back to text.
 
 ### 5. Observation — Therapeutic Implication (one per drug)
 - **Profile:** `therapeutic-implication`

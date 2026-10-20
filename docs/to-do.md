@@ -222,6 +222,9 @@ curated: true
   downloads: the IG changes every year or two, so it is updated with the code (decided
   2026-10-19). Offline, `$validate` does not check LOINC, SNOMED CT or HGNC codes. How to
   call it and how to update the packages: docs/developer/architecture.md.
+- High/Low risk for the HLA, MT-RNR1 and malignant hyperthermia phenotypes is provisional:
+  CPIC's EHR priority for the result, said in a note on each (Oct 2026, kept coded for
+  now). Revisit if the IG, LOINC or CPIC gives these results terms of their own.
 - HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
 - Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR
