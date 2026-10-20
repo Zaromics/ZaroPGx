@@ -1162,6 +1162,8 @@
     {% set summary_names_uncalled = summary_uncalled_rows|rejectattr('diplotype', 'a_call')|list|length > 0 %}
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {# A call with positions read as reference (positions_note): the same marker. #}
+    {% set positions_genes = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
         {{ pypgx.na_legend(called) }}
         {% if called|selectattr('phenotype', 'equalto', 'Possibly Wild Type')|list %}
@@ -1175,6 +1177,9 @@
         {% endfor %}
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
+        {% endfor %}
+        {% for d in diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.positions_note }}, so a variant there would not have been seen and this call may be wrong. Genetic Results notes it beside the call.</p>
         {% endfor %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(summary_uncalled_rows, missing_positions_not_assumed) }}
@@ -1195,7 +1200,7 @@
                     {% for r in rows %}
                     <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
-                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="Mostly mapping quality 0: see the notes">⚠</span>{% endif %}</td>
+                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="Mostly mapping quality 0: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">

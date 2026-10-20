@@ -1102,6 +1102,43 @@ def test_an_outside_call_pypgx_made_carries_its_note(monkeypatch, tmp_path):
     assert rows["CYP2D6"]["positions_note"] == note
 
 
+@pytest.mark.parametrize("partial", [True, False])
+def test_the_summary_marks_a_call_with_positions_read_as_reference(
+    monkeypatch, tmp_path, partial
+):
+    """The panel cut from the demo CRAM: CYP2D6 *3/*39 with 52 of its 121 positions
+    unread, *4's among them (NA12878 is *3/*68+*4). The Executive Summary showed it
+    plain. It gets the summary's ALT-locus marker, and a note behind the table that
+    points to the call's note under Genetic Results; a full call gets neither."""
+    note = (
+        "52 of 121 positions had no reads in the alignment and were read as reference"
+    )
+    details = {"positions_note": note} if partial else {}
+    pypgx = {
+        "results": {
+            "CYP2D6": {"success": True, "diplotype": "*3/*39", "details": details}
+        }
+    }
+    genes = [
+        {
+            "gene": "CYP2D6",
+            "diplotype": "*3/*39",
+            "phenotype": "Intermediate Metabolizer",
+            "call_source": "OUTSIDE",
+        }
+    ]
+    _, page = _report(monkeypatch, tmp_path, "write_html", genes, pypgx)
+    table = page[page.index('<tr id="summary-CYP2D6"') :]
+    table = table[: table.index("</tr>")]
+    notes = page[page.index('id="exec-summary-notes"') :]
+    notes = notes[: notes.index("<h2>Genetic Results</h2>")]
+    marker = '<span class="alt-locus-note" title="Positions read as reference: see'
+    assert (marker in table) is partial
+    assert (f"<strong>⚠ CYP2D6</strong>: {note}, so a variant" in notes) is partial
+    if partial:
+        assert "Genetic Results notes it beside the call" in notes
+
+
 def test_the_workflow_diagram_counts_them_apart():
     from app.reports.generator import pypgx_gene_counts
 
