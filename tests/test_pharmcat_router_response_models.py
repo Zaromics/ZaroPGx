@@ -29,10 +29,13 @@ from app.pharmcat.pharmcat_parser import (
     get_pharmcat_summary,
 )
 
+# PharmCAT 3.4's unphased example: its CYP2B6 and SLCO1B1 guidance changes
+# prescribing, so the actionable findings checked below are not an empty list.
+# (The 3.4.0 example's two annotations change nothing: no actionable finding.)
 REPORT_JSON = (
     Path(__file__).resolve().parent.parent
     / "test_data"
-    / "pharmcat.example.v340.report.json"
+    / "pharmcat.unphased.example.report.json"
 )
 
 
@@ -97,11 +100,29 @@ SCORE_CASES = {
 }
 
 
+# An actionable finding is a gene a guideline's prescribing change comes from
+# (app.reports.actionable), so the two scores read back through the actionable
+# path each get guidance that changes prescribing.
+SCORE_GUIDANCE = {
+    "codeine": {"lookupKey": [{"CYP2D6": "0.0"}], "alternateDrugAvailable": True},
+    "clopidogrel": {
+        "lookupKey": [{"CYP2C19": "Intermediate Metabolizer"}],
+        "alternateDrugAvailable": True,
+    },
+}
+
+
 @pytest.fixture
 def activity_score_run(pgx_session) -> str:
     payload = {
         "title": "activity-score-run",
         "pharmcatVersion": "3.4.0",
+        "drugs": {
+            "CPIC Guideline Annotation": {
+                drug: {"name": drug, "guidelines": [{"annotations": [annotation]}]}
+                for drug, annotation in SCORE_GUIDANCE.items()
+            }
+        },
         "genes": {
             gene: {
                 "geneSymbol": gene,

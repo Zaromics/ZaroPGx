@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy.orm import Session
 
+from app.reports.actionable import actionable_genes
 from app.services.fhir import terminology, xml_format
 from app.services.pharmcat_data_service import PharmCATDataService
 
@@ -1269,8 +1270,24 @@ class FHIRExportService:
         Following the Genomic Report profile from HL7 Genomics Reporting IG.
         """
         report_id = self._stable_id("DiagnosticReport", run_id)
-        total_genes = pharmcat_data.get("total_genes", 0)
-        actionable_count = len(pharmcat_data.get("actionable_findings", []))
+        # The genes this bundle states a genotype for (one genotype observation
+        # each), counted the same whichever lane built the data. total_genes was
+        # PharmCAT's row count: 23 for a 30x NA12878 report whose bundle carries 91
+        # genotypes (PharmCAT's and PyPGx's), CPIC and DPWG rows both for PharmCAT
+        # 2.x (37 for 22 genes), and absent, so "0 genes", in the JSON lane's data.
+        total_genes = len(
+            {
+                str(gene.get("gene")).strip()
+                for gene in pharmcat_data.get("genes") or []
+                if isinstance(gene, dict) and str(gene.get("gene") or "").strip()
+            }
+        )
+        # Genes a guideline's prescribing change comes from (app.reports.actionable),
+        # counted off the recommendations this bundle is built from, whichever lane
+        # built them: the JSON lane's data has no actionable_findings and read 0.
+        actionable_count = len(
+            actionable_genes(pharmcat_data.get("drugRecommendations"))
+        )
 
         report = {
             "resourceType": "DiagnosticReport",
@@ -1316,7 +1333,11 @@ class FHIRExportService:
             "result": result_refs,
             # No conclusionCode: "PGX-COMPLETE" in urn:zaropgx:conclusion-codes, a
             # code system defined nowhere, said what status "final" says.
-            "conclusion": f"Pharmacogenomic analysis completed. {total_genes} genes analyzed, {actionable_count} actionable findings identified.",
+            "conclusion": (
+                f"Pharmacogenomic analysis completed. {total_genes} "
+                f"gene{'' if total_genes == 1 else 's'} analyzed, {actionable_count} "
+                f"actionable finding{'' if actionable_count == 1 else 's'} identified."
+            ),
         }
 
         # Add reference to genomic study
