@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', function() {
             gene: element.dataset.gene,
             diplotype: element.dataset.diplotype,
             phenotype: element.dataset.phenotype,
+            implication: element.dataset.implication,
             activityScore: element.dataset.activityScore
         });
     });
@@ -526,7 +527,7 @@ function createGeneInfoSection() {
         geneInfo.className = 'section';
         
         const description = geneDescription(d.gene);
-        const clinicalImplications = clinicalImplication(d.gene, d.phenotype);
+        const clinicalImplications = clinicalImplication(d.gene, d.phenotype, d.implication);
         
         let relatedMedications = '';
         if (d.gene === 'CYP2D6') {
@@ -551,14 +552,16 @@ function createGeneInfoSection() {
             `;
         }
         
+        // Text from the report data goes in escaped: gene names, diplotypes and
+        // phenotypes come from the uploaded file and the tools' output.
         geneInfo.innerHTML = `
-            <h3>${d.gene} Information</h3>
-            ${description ? `<p><strong>Description:</strong> ${description}</p>` : ''}
-            <p><strong>Diplotype:</strong> ${diplotypeShown(d.diplotype)}</p>
-            <p><strong>Phenotype:</strong> ${d.phenotype}</p>
-            ${d.activityScore ? `<p><strong>Activity Score:</strong> ${d.activityScore}</p>` : ''}
+            <h3>${escapeHtml(d.gene)} Information</h3>
+            ${description ? `<p><strong>Description:</strong> ${escapeHtml(description)}</p>` : ''}
+            <p><strong>Diplotype:</strong> ${escapeHtml(diplotypeShown(d.diplotype))}</p>
+            <p><strong>Phenotype:</strong> ${escapeHtml(d.phenotype)}</p>
+            ${d.activityScore ? `<p><strong>Activity Score:</strong> ${escapeHtml(d.activityScore)}</p>` : ''}
             <h4>Clinical Implications</h4>
-            <p>${clinicalImplications}</p>
+            <p>${escapeHtml(clinicalImplications)}</p>
             ${relatedMedications ? `<h4>Related Medications</h4><ul>${relatedMedications}</ul>` : ''}
         `;
         
@@ -586,26 +589,37 @@ function geneDescription(gene) {
     return GENE_DESCRIPTIONS[gene] || '';
 }
 
-function clinicalImplication(gene, phenotype) {
+/**
+ * The phenotype's line from the report tables (data-implication, written by
+ * app/reports/implications.py): what the phenotype means, as CPIC defines the
+ * term, pointing to the drug recommendations. The panel had its own prose for
+ * metabolizer phenotypes only, some of it wrong (a rapid metabolizer's "loss of
+ * efficacy at standard doses" is the reverse for a prodrug such as clopidogrel or
+ * codeine), and for every other phenotype "should be evaluated by a healthcare
+ * professional", SLCO1B1's Decreased Function among them. A call whose candidates
+ * differ in phenotype ("A or B") gets the panel's own sentence; one whose
+ * candidates share a phenotype gets the table's line, which says so. Returns plain
+ * text; the caller escapes it.
+ */
+function clinicalImplication(gene, phenotype, implication) {
     const text = String(phenotype || '');
     if (/ or /.test(text)) {
         return `PharmCAT could not narrow this ${gene} call to one diplotype; the phenotype may be ${text}. Guidance that differs between them is marked "Applies if" under Recs.`;
     }
-    if (text.includes('Metabolizer')) {
-        if (text.includes('Normal')) {
-            return `This patient has normal ${gene} activity: medications metabolized by ${gene} are expected to be metabolized as usual.`;
-        }
-        if (text.includes('Poor')) {
-            return `This patient has reduced ${gene} activity, which may result in reduced metabolism of drugs processed by ${gene}. This could lead to increased drug concentrations and potential adverse effects at standard doses.`;
-        }
-        if (text.includes('Intermediate')) {
-            return `This patient has moderately reduced ${gene} activity, which may result in somewhat reduced metabolism of drugs processed by ${gene}. Careful monitoring may be required when using medications metabolized by ${gene}.`;
-        }
-        if (text.includes('Rapid') || text.includes('Ultrarapid')) {
-            return `This patient has increased ${gene} activity, which may result in faster metabolism of drugs processed by ${gene}. This could lead to reduced drug concentrations and potential loss of efficacy at standard doses.`;
-        }
+    if (implication) {
+        return `${implication}.`;
     }
-    return `The clinical implications of this ${gene} phenotype should be evaluated by a healthcare professional.`;
+    return 'See the drug recommendations under Recs.';
+}
+
+/** Text for innerHTML: &, <, >, " and ' as entities. */
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /** An unresolved call names its first candidate and counts the rest, as the tables do. */
@@ -637,6 +651,7 @@ function getPgxData() {
             gene: element.dataset.gene,
             diplotype: element.dataset.diplotype,
             phenotype: element.dataset.phenotype,
+            implication: element.dataset.implication,
             activityScore: element.dataset.activityScore
         });
     });
