@@ -1349,16 +1349,21 @@ env = Environment(
 
 # Which colour a phenotype's badge gets. No standards body assigns colours to
 # phenotypes (CPIC standardised the terms, Caudle et al. 2017, not their colours;
-# PharmCAT's report colours none). CPIC's own data does rank them: each phenotype
-# carries an EHR priority, "Abnormal/Priority/High Risk" or "Normal/Routine/Low
-# Risk". The badges follow it, in four colours:
+# PharmCAT's report colours none). The badges colour what the phenotype says
+# about the gene's function or the risk screened, against what is typical: they
+# do not follow CPIC's EHR priority, which ranks the need to act and so differs
+# by gene (a CYP3A5 normal metabolizer is CPIC "Abnormal/Priority", needing more
+# tacrolimus than the standard dose set on the more common poor metabolizers; a
+# UGT1A1 intermediate is "Normal/Routine"). Whether to act is the drug
+# recommendations' to say. Four colours:
 #
 # - green, normal: Normal Metabolizer or Function, G6PD Normal, an HLA risk allele
 #   negative, normal risk of aminoglycoside-induced hearing loss;
-# - amber, Priority: intermediate metabolism, decreased function, G6PD Variable;
-# - red, Priority at its strongest: poor metabolism or function, G6PD Deficient, an
-#   HLA risk allele positive, Malignant Hyperthermia Susceptible, increased risk of
-#   aminoglycoside-induced hearing loss;
+# - amber, reduced: intermediate metabolism, decreased function, G6PD Variable;
+# - red, absent or at risk: poor metabolism or function, G6PD Deficient, an
+#   HLA risk allele positive, Malignant Hyperthermia Susceptibility (PharmCAT's word;
+#   "Susceptible" matched only the spelling CPIC's tables do not use), increased risk
+#   of aminoglycoside-induced hearing loss;
 # - blue: rapid metabolism and increased function, which is not "better" (a CYP2D6
 #   ultrarapid metabolizer is at risk on codeine).
 #
@@ -1374,7 +1379,7 @@ _PHENOTYPE_BADGE_CLASSES = tuple(
         (r"\buncertain\b|\bindeterminate\b", ""),
         (r"\bpositive\b", "poor-metabolizer"),
         (r"\bnegative\b", "normal-metabolizer"),
-        (r"\bsusceptible\b", "poor-metabolizer"),
+        (r"\bsusceptib(?:le|ility)\b", "poor-metabolizer"),
         (r"\bincreased risk\b", "poor-metabolizer"),
         (r"\bnormal risk\b", "normal-metabolizer"),
         (r"\bdeficient\b", "poor-metabolizer"),

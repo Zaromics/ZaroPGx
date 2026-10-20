@@ -243,7 +243,9 @@ const PHENOTYPE_COLOURS = [
     [/\buncertain\b|\bindeterminate\b/i, '#95a5a6'],
     [/\bpositive\b/i, '#e74c3c'],
     [/\bnegative\b/i, '#2ecc71'],
-    [/\bsusceptible\b/i, '#e74c3c'],
+    // PharmCAT writes "Malignant Hyperthermia Susceptibility"; "Uncertain
+    // Susceptibility" is grey by the rule above.
+    [/\bsusceptib(?:le|ility)\b/i, '#e74c3c'],
     [/\bincreased risk\b/i, '#e74c3c'],
     [/\bnormal risk\b/i, '#2ecc71'],
     [/\bdeficient\b/i, '#e74c3c'],
