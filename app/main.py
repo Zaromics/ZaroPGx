@@ -54,6 +54,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.api import db as app_db
 from app.api.db import get_db
 from app.api.middleware.auth_gate import (
     AuthGateMiddleware,
@@ -1015,6 +1016,22 @@ async def services_config():
     }
 
 
+# How long GET /services-status waits for the database's SELECT 1, in seconds.
+DATABASE_STATUS_TIMEOUT = 5
+
+
+def _ping_database() -> bool:
+    """SELECT 1 on the app's shared engine (app.api.db), looked up now: the tests
+    swap it. Blocking: services_status runs it in a worker thread.
+
+    A create_engine() here made a new pool on every poll and never disposed of it.
+    """
+    from sqlalchemy import text
+
+    with app_db.engine.connect() as connection:
+        return connection.execute(text("SELECT 1")).fetchone() is not None
+
+
 @app.get("/services-status", response_class=JSONResponse)
 async def services_status(
     request: Request, current_user: str = Depends(get_optional_user)
@@ -1033,9 +1050,9 @@ async def services_status(
             "timeout": 5,
             "enabled": True,  # App is always enabled
         },
+        # Checked on the app's own engine (app.api.db), not a URL: no URL here.
         "database": {
-            "url": os.getenv("DATABASE_URL", ""),
-            "timeout": 5,
+            "timeout": DATABASE_STATUS_TIMEOUT,
             "enabled": True,  # Database is always enabled
         },
     }
@@ -1107,24 +1124,31 @@ async def services_status(
             # Never log DATABASE_URL: it carries the password.
             logger.info("Checking database")
             try:
-                # Try to connect to the database
-                from sqlalchemy import create_engine, text
-
-                engine = create_engine(db_service["url"])
-                with engine.connect() as connection:
-                    result = connection.execute(text("SELECT 1"))
-                    if not result.fetchone():
-                        logger.error("Database connection test failed")
-                        unhealthy_services["database"] = (
-                            "Database connection test failed"
-                        )
-                        service_check_results["database"] = {
-                            "status": "error",
-                            "message": "Connection test failed",
-                        }
-                    else:
-                        logger.info("Database connection test succeeded")
-                        service_check_results["database"] = {"status": "healthy"}
+                # In a worker thread, and for at most the timeout: on the event loop
+                # an exhausted pool (pool_timeout, 30 s) or a pre-ping on a half-open
+                # connection would stall every request. A thread that overruns
+                # finishes on its own and returns its connection to the pool.
+                answered = await asyncio.wait_for(
+                    asyncio.to_thread(_ping_database), timeout=db_service["timeout"]
+                )
+                if not answered:
+                    logger.error("Database connection test failed")
+                    unhealthy_services["database"] = "Database connection test failed"
+                    service_check_results["database"] = {
+                        "status": "error",
+                        "message": "Connection test failed",
+                    }
+                else:
+                    logger.info("Database connection test succeeded")
+                    service_check_results["database"] = {"status": "healthy"}
+            except TimeoutError:
+                message = f"No answer within {db_service['timeout']} s"
+                logger.error(f"Database error: {message}")
+                unhealthy_services["database"] = f"Database error: {message}"
+                service_check_results["database"] = {
+                    "status": "error",
+                    "message": message,
+                }
             except Exception as e:
                 # The answer goes to the page and the log: no password in either.
                 message = redact_secrets(e)
