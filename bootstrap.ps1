@@ -778,8 +778,10 @@ if (-not (Test-Path $TargetDir)) {
             # and the line-ending reset below would carry or discard them.
             # Untracked files are not checked. A running install makes some that
             # an older .gitignore does not cover (0.3.2's missed the services'
-            # rotated logs, data/*.log.1 to .5), and neither step deletes one; if
-            # the release adds a file at the same path, git refuses the checkout.
+            # rotated logs, data/*.log.1 to .5), and neither step deletes one. If
+            # the release adds a file at the path of an untracked one, git refuses
+            # the checkout and names the file (an ignored file there is
+            # overwritten, as before).
             $status = (& git -C $TargetDir status --porcelain --untracked-files=no)
             if ($status) {
                 Write-Host "Tracked files have local changes; refusing to update. Commit or stash them first (git status lists them)." -ForegroundColor Yellow

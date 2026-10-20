@@ -458,8 +458,9 @@ else
     # into the release unseen, or refuse to switch. Untracked files are not
     # checked. A running install makes some that an older .gitignore does not
     # cover (0.3.2's missed the services' rotated logs, data/*.log.1 to .5), and
-    # a checkout never deletes one; if the release adds a file at the same path,
-    # git refuses the checkout itself and names the file.
+    # a checkout never deletes one. If the release adds a file at the path of an
+    # untracked one, git refuses the checkout and names the file (an ignored file
+    # there is overwritten, as before).
     if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
       echo "Error: Tracked files have local changes; refusing to update." >&2
       echo "       Commit or stash them first (git status lists them)." >&2
