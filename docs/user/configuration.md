@@ -41,6 +41,7 @@ Where a template ships a different value from the code's default, both are given
 | `PHARMCAT_VERSION` | `3.4.0` | The PharmCAT release built into the PharmCAT image |
 | `NETWORK_SUBNET` | `172.28.0.0/16` (`.env.local`: `172.20.0.0/16`) | The Compose network's subnet; change it if it collides with yours |
 | `JAVA_OPTS` | `-Xmx4g` | PharmCAT's JVM options |
+| `DB_USER`, `DB_NAME`, `DB_HOST`, `DB_PORT` | `zaropgx_user`, `zaropgx_db`, `db`, `5432` | The database's user, name, host and port, which the templates set. The app's database address is built from all four with no defaults, so keep them in `.env`. The user and name are fixed when the database volume is first created |
 
 ## Analysis
 
@@ -48,12 +49,13 @@ Where a template ships a different value from the code's default, both are given
 |---|---|---|
 | `GATK_ENABLED`, `PYPGX_ENABLED`, `OPTITYPE_ENABLED`, `MTDNA_ENABLED` | `true` | The default state of the step switches on the upload page. The services run either way. With GATK off, inputs that need conversion (CRAM, SAM, BCF, gVCF, FASTQ) fail |
 | `PHARMCAT_ABSENT_TO_REF`, `PHARMCAT_UNSPECIFIED_TO_REF` | `false` | The default state of PharmCAT's assume-reference options on the upload page; see {doc}`usage` |
-| `REF_CACHE_ENABLED` | `true` | Build the CRAM reference cache (3.2 GB download, 5.3 GB kept). Without it, only CRAMs written against UCSC hg38 decode |
+| `REF_CACHE_ENABLED` | `true` | Build the CRAM reference cache (3.2 GB download, 5.3 GB kept). Without it, only CRAMs written against UCSC hg38 decode, and **Run Demo**, whose CRAM needs the cache, answers 503 |
 | `DOWNLOAD_ON_STARTUP` | `true` | Let the genome downloader stage references when it starts |
 | `NEXTFLOW_MAX_WAIT_SECONDS` | `86400` | How long the app waits for a pipeline run before failing the job |
 | `FASTQ_MAX_UPLOAD_BYTES` | `21474836480` (20 GB) | The largest FASTQ aligned, both mates together, in bytes; the app and the GATK service both read it. What limits it is disk and time: aligning needs about 9 times the FASTQ's size in free disk, which the GATK service checks before it starts, and a whole genome takes hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested |
 | `PYPGX_MEMORY_LIMIT`, `PYPGX_MAX_PARALLEL_GENES`, `PYPGX_BATCH_SIZE` | `7G`, `8`, `4` | PyPGx's memory and parallelism |
-| `PYPGX_PHARMCAT_PREFERENCE` | `auto` (templates: `pharmcat`) | Which genes PyPGx genotypes. `pharmcat`: not those PharmCAT calls itself (it still calls CYP2D6, which PharmCAT takes from it). `pypgx`: all 87. `auto`: the first for VCFs, the second for alignments |
+| `MAX_MEMORY` | `20g` | The GATK service's Java heap for variant calling. For an input over 2 GB, 70% of the host's memory (as the container reads it) if that is less |
+| `PYPGX_PHARMCAT_PREFERENCE` | `pharmcat` (`auto` outside Compose) | Which genes PyPGx genotypes. `pharmcat`: not those PharmCAT calls itself (it still calls CYP2D6, which PharmCAT takes from it). `pypgx`: all 87. `auto`: the first for VCFs, the second for alignments |
 | `OUTSIDECALLSOVERRIDE` | off | Use a hand-written outside-calls file instead of the generated one |
 | `MAX_HEADER_READ_BYTES`, `MAX_HEADER_PARSE_TIMEOUT_SEC` | `1000000000`, `300` | Limits on reading an upload's header |
 
@@ -65,6 +67,7 @@ Where a template ships a different value from the code's default, both are given
 | `EXECSUM_USE_TSV` | `false` (templates: `true`) | Build the Executive Summary from PharmCAT's TSV rather than its JSON |
 | `PDF_ENGINE` | `weasyprint` | `weasyprint` or `reportlab` |
 | `PDF_FALLBACK` | `true` | Try the other engine if the first fails |
+| `KROKI_ENABLED` | `true` | Draw the reports' workflow diagram with Kroki. Off, the reports list the run's steps as text instead; the Kroki containers run either way |
 | `AUTHOR_NAME`, `SOURCE_URL`, `ZAROPGX_VERSION` | from `pyproject.toml`, the GitHub URL | Shown in the reports' footer and Platform table |
 | `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report. A job's bundle is sent to `FHIR_SERVER_URL` only when asked (`POST /fhir/push/workflow/{job_id}`) |
 | `HAPI_FHIR_ENABLED` | `true` | Whether this installation has a FHIR server to send bundles to. With `FHIR_EXPORT_ENABLED` on too, a finished job's results on the web page have a **Push to FHIR server** button ({doc}`reports`). The bundled HAPI server runs either way |
@@ -84,5 +87,10 @@ Where a template ships a different value from the code's default, both are given
 `compose.yml` sets the services' URLs (`PHARMCAT_API_URL`, `GATK_API_URL`, `PYPGX_API_URL`,
 `FHIR_SERVER_URL`, `KROKI_URL`, `NEXTFLOW_RUNNER_URL`, `JOB_API_BASE`), `DATABASE_URL`, and
 the services' paths. Values for these in `.env` are ignored; they matter only to code run
-outside Compose. `GENOME_DOWNLOADER_API_URL` and `DATA_DIR` in the templates have no
-effect, and PharmCAT always logs at `DEBUG` whatever `PHARMCAT_LOG_LEVEL` says.
+outside Compose. `ZAROHLA_API_URL` (`http://zarohla:5000`) comes from `.env`: it is where
+the app checks ZaroHLA's health; the pipeline calls ZaroHLA at `http://zarohla:5000`
+whatever it says. `GENOME_DOWNLOADER_API_URL` and `DATA_DIR` in the templates have no effect. Nor has
+`GENOME_DOWNLOADER_ENABLED`, which only `/services-config` reports: the genome downloader
+runs either way (`DOWNLOAD_ON_STARTUP` decides whether it downloads). `HAPI_FHIR_VERSION`
+replaces the version the app reads from the FHIR server, but no report or page shows it.
+PharmCAT always logs at `DEBUG` whatever `PHARMCAT_LOG_LEVEL` says.

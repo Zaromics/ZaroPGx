@@ -39,7 +39,7 @@ the same way. The other fields are optional:
 |---|---|---|
 | `sample_identifier` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` | Printed as the report's Sample ID; a UUID if omitted |
 | `optitype_enabled`, `gatk_enabled`, `pypgx_enabled`, `mtdna_enabled`, `report_enabled` | `true`, `false` | `false` skips that step. A step the input does not need never runs |
-| `pharmcat_absent_to_ref`, `pharmcat_unspecified_to_ref` | `true`, `false` | PharmCAT's assume-reference flags, VCF and BCF only (see {doc}`../user/usage`) |
+| `pharmcat_absent_to_ref`, `pharmcat_unspecified_to_ref` | `true`, `false` | PharmCAT's assume-reference flags, VCF and BCF only. `pharmcat_absent_to_ref` also decides whether PyPGx calls a gene the file has no genotype for, and whether MT-RNR1 (a gVCF's too) can be called reference (see {doc}`../user/usage`) |
 
 The response carries `job_id` and `data_id`, the detected `file_type`, and the workflow
 the job will run. An input that cannot be analysed is refused with 400 and a reason, before
@@ -71,7 +71,7 @@ interactive report.
 
 | Prefix | What it is |
 |---|---|
-| `/upload` | Uploads, header preview (`POST /upload/inspect-header`), status, report links |
+| `/upload` | Uploads, header preview (`POST /upload/inspect-header`), status, report links. `POST /upload/demo` runs the bundled demo (the page's **Run Demo**), taking the step switches as form fields; it answers 503, saying why, until the genome downloader has cached the reference the demo's CRAM decodes against |
 | `/api/v1/jobs` | Jobs, their steps and logs, progress, cancel. The pipeline's containers report their steps here (`PUT /api/v1/jobs/{job_id}/steps/{step_name}`) |
 | `/api/v1/workflows` | The workflow recipes and their steps |
 | `/api/pharmcat` | PharmCAT results loaded into the database, by run (`run_id` is the job id) |

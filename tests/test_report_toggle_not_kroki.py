@@ -2,8 +2,8 @@
 
 initializeServiceToggles (app/templates/index.html) sets each stage's toggle from
 /services-config, and mapped the Kroki service onto the Report stage. Kroki renders
-Mermaid diagrams, nothing more; without it the report draws them with Graphviz
-(compose.e2e.yml turns it off for that reason). So a deployment with
+Mermaid diagrams, nothing more; without it the report lists the workflow's steps as
+text (compose.e2e.yml turns it off for that reason). So a deployment with
 KROKI_ENABLED=false sent report_enabled=false with every upload made through the
 page: no PDF, no interactive report, and a results card announcing "Analysis
 Complete!" over no links. The API e2e test sends report_enabled itself, so only the

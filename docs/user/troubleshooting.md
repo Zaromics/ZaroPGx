@@ -35,6 +35,13 @@ services' ports are fixed in `compose.yml`; change one in `compose.override.yml`
 **On Apple Silicon or another ARM machine, the images will not run.** They are
 `linux/amd64` only. Turn on Rosetta emulation in Docker Desktop.
 
+**The FHIR server does not start, and its log says `HAPI-2031: Error loading
+"file:///fhir-packages/..."`.** HAPI installs the HL7 Genomics Reporting IG and the two
+packages it depends on from `docker/fhir-server/packages`, and one of the files it names is
+missing there. Restore them (`git checkout -- docker/fhir-server/packages`; `sha256sum -c
+SHA256SUMS` in that folder checks them), then `docker compose up -d`. The rest of the stack
+runs without the FHIR server; only pushing a bundle to it fails.
+
 ## A job fails
 
 **"Permission denied" from HLA typing or mtDNA, on Linux.** Those services run as uid 999
@@ -45,6 +52,17 @@ started the stack another way, run it once, or:
 mkdir -p data/temp/mtdna data/versions
 chmod 1777 data/temp data/temp/mtdna data/versions
 ```
+
+**Run Demo says "this install has not cached that reference yet".** The demo is a CRAM
+written against the 1000 Genomes GRCh38 analysis set, which the genome downloader caches
+after it has staged the reference genomes: a 3.2 GB download on the first start. Wait for
+it (`docker compose logs genome-downloader`, or `curl http://127.0.0.1:5050/status` until
+`genomes.ref_cache_1kg_analysis_set.status` is `ready`) and try again. With
+`REF_CACHE_ENABLED=false` the cache is never built and the demo cannot run. It is not built
+either on an install updated from 0.3.2 with `DOWNLOAD_ON_STARTUP=false`: the downloader adds
+the cache to staged genomes only on a start-up run, and its `/start-download` answers
+`already_completed`. Remove that line from `.env` or set it to `true`, then
+`docker compose up -d genome-downloader`; it fetches only the cache.
 
 **FASTQ: "The bwa-mem index image is not present".** Build the alignment index once:
 `./scripts/build-align-index.sh`.
@@ -75,10 +93,10 @@ while jobs run.
 ## The results look wrong
 
 **Many genes are "Not called" from a VCF.** A variant-only VCF has no records where the
-sample matches the reference, so PharmCAT cannot tell reference from not-sequenced. The
-report's notes say so. Either run it again with **Assume absent sites = reference**
-({doc}`usage`), accepting that uncovered positions will read as reference, or upload the
-gVCF or the alignment instead.
+sample matches the reference, so neither PharmCAT nor PyPGx can tell reference from
+not-sequenced. The report's notes say so. Either run it again with **Assume absent sites =
+reference** ({doc}`usage`), accepting that uncovered positions will read as reference, or
+upload the gVCF or the alignment instead.
 
 **A gene shows several diplotypes joined by "or".** The input is unphased and more than one
 diplotype fits. Phased data, or reads, can resolve it.

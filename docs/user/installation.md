@@ -13,9 +13,10 @@ title: Installation
   only. On Apple Silicon, turn on Rosetta emulation in Docker Desktop.
 - Memory: no minimum is enforced. A VCF needs little; alignments need much more, and the
   stack allows the GATK service up to 28 GB and PyPGx up to 20 GB.
-- Disk: about 2.5 GB of reference genomes, 5.3 GB for the CRAM reference cache, the images,
-  and room for your inputs and reports. The FASTQ lane needs another 8-9 GB for its index,
-  and about 9 times the FASTQ's size free while it aligns.
+- Disk: about 10 GB of reference genomes (UCSC hg19 and hg38 and GRCh37, uncompressed, and
+  PharmCAT's GRCh38), 5.3 GB for the CRAM reference cache plus 3.2 GB more while it is
+  built, the images, and room for your inputs and reports. The FASTQ lane needs another
+  8-9 GB for its index, and about 9 times the FASTQ's size free while it aligns.
 - A network connection for the first start, which pulls the images and downloads the
   reference data.
 
@@ -88,8 +89,13 @@ To build the images from source, `docker compose up -d --build`. They are still 
 ## First start
 
 PharmCAT downloads its GRCh38 reference data (about 8-15 minutes), and the genome
-downloader stages the reference genomes and builds the CRAM reference cache (a 3.2 GB
-download). The app waits for PharmCAT to be healthy before it starts.
+downloader stages the reference genomes (3.7 GB of downloads) and then builds the CRAM
+reference cache (another 3.2 GB). The app waits for PharmCAT to be healthy before it starts,
+not for the genome downloader. **Run Demo** works once the downloader has finished: its
+input is a CRAM that decodes only against the cache, and until then the page says so. To
+see where the downloader is, `docker compose logs genome-downloader`, or
+`curl http://127.0.0.1:5050/status`: Run Demo needs
+`genomes.ref_cache_1kg_analysis_set.status` to be `ready`.
 
 Then:
 
