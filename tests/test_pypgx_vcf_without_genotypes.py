@@ -600,6 +600,11 @@ def genotype(pypgx, monkeypatch):
             body = body.replace(
                 "##fileformat=VCFv4.2\n", "##fileformat=VCFv4.2\n" + header
             )
+        if "##ZaroPGx_" in header and not {"upload_type", "input_type"} & set(data):
+            # A header with coverage lines is a lane's VCF, as Nextflow sends it, unless
+            # the test says what was uploaded (test_an_uploads_own_coverage_lines_...).
+            gvcf = "##ZaroPGx_coverage_measured_on=gVCF" in header
+            data["upload_type"] = "gvcf" if gvcf else "bam"
         fields = {"genes": genes, "reference_genome": "hg38", **data}
         resp = TestClient(pypgx.app).post(
             "/genotype", files={"file": ("in.vcf", body, "text/plain")}, data=fields
@@ -942,6 +947,103 @@ def test_pypgx_is_sent_the_effective_flag_always():
     inputs = re.findall(r"^\s*(?:path|val) (\w+)", body[: body.index("output:")], re.M)
     assert len(args) == len(inputs)
     assert args[inputs.index("absent_to_ref")] == "pharmcat_absent_ch"
+
+
+def test_pypgx_is_told_what_was_uploaded():
+    """params.input_type, not the corrected input_type: a gVCF reaches PyPGx as a VCF,
+    and only the upload's type says its coverage lines are the lane's own."""
+    body = _process("PyPGxGenotypeAll")
+    assert re.search(r"^\s*val upload_type$", body, re.M)
+    assert "-F upload_type=!{upload_type}" in body
+    src = MAIN_NF.read_text(encoding="utf-8")
+    wf = src[src.index("\nworkflow {") :]
+    call = re.search(r"PyPGxGenotypeAll\(\s*(.*?)\s*\)\n", wf, re.S)
+    args = [a.strip() for a in call.group(1).split(",")]
+    inputs = re.findall(r"^\s*(?:path|val) (\w+)", body[: body.index("output:")], re.M)
+    assert args[inputs.index("upload_type")] == "Channel.value(params.input_type)"
+
+
+# --------------------------------------------------------------------------
+# An uploaded VCF's own coverage lines are not evidence
+# --------------------------------------------------------------------------
+# A file filtered after export (to PASS records, say, dropping the reference calls)
+# keeps a header claiming reads its records no longer show; a planted line would have
+# every gene called as the reference from no data. Only the lane that wrote the lines
+# in this job is believed.
+
+CLAIMS_EVERYTHING_READ = (
+    "##ZaroPGx_uncovered_genes=.\n"
+    "##ZaroPGx_positions_without_reads=.\n"
+    "##ZaroPGx_positions_measured_for=CYP2D6,CYP2E1,GSTM1\n"
+)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        {"upload_type": "vcf"},
+        {"upload_type": "bcf"},
+        {"input_type": "vcf"},  # a Nextflow from before upload_type
+        {"upload_type": ""},  # nothing said: a direct call
+    ],
+)
+def test_an_uploads_own_coverage_lines_are_not_believed(genotype, said):
+    """CYP2D6 has a record; CYP2E1 and GSTM1 none. The header says every position was
+    read: believed, they were called as the reference from nothing."""
+    seen, post = genotype
+    body = post(
+        [(*CYP2D6_38, "0/1")],
+        header=CLAIMS_EVERYTHING_READ,
+        absent_to_ref="false",
+        **said,
+    )
+    assert seen["genes"] == ["CYP2D6"]
+    for gene in ("CYP2E1", "GSTM1"):
+        result = body["results"][gene]
+        assert result["diplotype"] is None
+        assert result["details"]["note"].startswith("No genotype in the VCF")
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        {"upload_type": "bam"},
+        {"upload_type": "cram"},
+        {"upload_type": "fastq"},
+        {"upload_type": "gvcf", "input_type": "vcf"},  # as Nextflow sends a gVCF
+        {"input_type": "bam"},  # a Nextflow from before upload_type
+    ],
+)
+def test_a_lanes_own_coverage_lines_are_believed(genotype, said):
+    seen, post = genotype
+    post(
+        [(*CYP2D6_38, "0/1")],
+        header="##ZaroPGx_uncovered_genes=.\n##ZaroPGx_positions_without_reads=.\n",
+        absent_to_ref="false",
+        **said,
+    )
+    assert sorted(seen["genes"]) == ["CYP2D6", "CYP2E1", "GSTM1"]
+
+
+@pytest.mark.parametrize("form", ["plain", "bgzip"])
+def test_the_lines_are_dropped_and_the_records_kept(pypgx, tmp_path, form):
+    vcf = _vcf(
+        tmp_path / "in.vcf", [(*CYP2D6_38, "0/1"), (*GSTM1_38, "1/1")], form=form
+    )
+    opener = gzip.open if form == "bgzip" else open
+    with opener(vcf, "rt", encoding="utf-8") as fh:
+        original = fh.read()
+    planted = original.replace(
+        "##fileformat=VCFv4.2\n", "##fileformat=VCFv4.2\n" + CLAIMS_EVERYTHING_READ
+    )
+    with (gzip.open if form == "bgzip" else open)(vcf, "wt", encoding="utf-8") as fh:
+        fh.write(planted)
+    stripped, dropped = pypgx.without_zaropgx_header_lines(Path(vcf))
+    assert dropped == 3 and not Path(vcf).exists()
+    assert stripped.read_text(encoding="utf-8") == original
+    # None to drop: the file as it is, untouched.
+    same, dropped = pypgx.without_zaropgx_header_lines(stripped)
+    assert same == stripped and dropped == 0
 
 
 # --------------------------------------------------------------------------

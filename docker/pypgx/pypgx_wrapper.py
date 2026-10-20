@@ -961,6 +961,70 @@ def _header_value(vcf_path: str, key: str) -> Optional[str]:
     return None
 
 
+# Every coverage header line above (UNCOVERED_GENES_HEADER_KEY and the rest), and the
+# SV inputs line, starts with this. They are believed only from a lane that wrote them
+# in this job: the alignment lane's /create-input-vcf, gatk-api's /gvcf-to-vcf. An
+# uploaded VCF's own are not evidence: a file filtered after export (to PASS records
+# only, say, which drops the reference calls) keeps a header claiming reads its
+# records no longer show, and a planted "##ZaroPGx_uncovered_genes=." would have every
+# gene called as the reference from no data at all. An upload is judged by its own
+# records (position_evidence), and its lines are dropped before anything reads them
+# (without_zaropgx_header_lines). So a VCF ZaroPGx wrote, uploaded again, is read like
+# any other uploaded VCF.
+ZAROPGX_HEADER_PREFIX = "##ZaroPGx_"
+# The uploads whose lane writes those lines: what Nextflow sends as upload_type (the
+# run's own input type, params.input_type). Without upload_type (a Nextflow from before
+# it), input_type, which names the alignment lanes as they are but sends a gVCF as
+# "vcf": its lines are then not believed, and its genes are read as an upload's.
+ALIGNMENT_INPUT_TYPES = frozenset({"bam", "cram", "sam", "fastq"})
+COVERAGE_LANE_INPUT_TYPES = ALIGNMENT_INPUT_TYPES | {"gvcf"}
+
+
+def lane_wrote_coverage_lines(
+    upload_type: Optional[str], input_type: Optional[str]
+) -> bool:
+    """True when the VCF /genotype was handed comes from a lane that wrote its
+    ##ZaroPGx_ lines in this job (ZAROPGX_HEADER_PREFIX)."""
+    if upload_type and upload_type.strip():
+        return upload_type.strip().lower() in COVERAGE_LANE_INPUT_TYPES
+    return (input_type or "").strip().lower() in ALIGNMENT_INPUT_TYPES
+
+
+def without_zaropgx_header_lines(vcf_path: Path) -> Tuple[Path, int]:
+    """(the VCF without its ##ZaroPGx_ header lines, how many there were).
+
+    The same path when it has none, which is every upload but a planted or re-uploaded
+    one; otherwise a plain-text copy beside it, the original removed. Plain text,
+    streamed in Python: prepare_vcf_for_pypgx bgzips it as it does a plain upload, and
+    nothing here needs bcftools.
+    """
+    with open(vcf_path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    found = 0
+    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith(ZAROPGX_HEADER_PREFIX):
+                found += 1
+    if not found:
+        return vcf_path, 0
+    stripped = vcf_path.with_name(f"{vcf_path.name}.own-records-only.vcf")
+    in_header = True
+    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as src, open(
+        stripped, "w", encoding="utf-8"
+    ) as out:
+        for line in src:
+            if in_header and not line.startswith("##"):
+                in_header = False
+            if in_header and line.startswith(ZAROPGX_HEADER_PREFIX):
+                continue
+            out.write(line)
+    os.remove(vcf_path)
+    return stripped, found
+
+
 def coverage_measured_on(vcf_path: str) -> str:
     """What the uncovered-genes line was measured on: "gVCF", or "alignment"."""
     measured_on = _header_value(vcf_path, COVERAGE_MEASURED_ON_HEADER_KEY)
@@ -2898,6 +2962,7 @@ async def genotype(
     step_name: Optional[str] = Form("pypgx_analysis"),
     input_type: Optional[str] = Form(None),
     absent_to_ref: Optional[str] = Form(None),
+    upload_type: Optional[str] = Form(None),
 ):
     """
     Run PyPGx on a VCF file to determine alleles
@@ -2912,6 +2977,10 @@ async def genotype(
             (or missing), a gene a VCF without coverage evidence has no genotype in,
             at its own positions, gets no call. On, positions with no record count
             as reference; no-calls still do not. See position_evidence.
+        upload_type: what the user uploaded (Nextflow's params.input_type). The
+            VCF's ##ZaroPGx_ coverage lines are read only when its lane wrote them in
+            this job (an alignment, a gVCF); an uploaded VCF's or BCF's are dropped.
+            See ZAROPGX_HEADER_PREFIX.
 
     Returns:
         Genotyping results
@@ -3032,6 +3101,15 @@ async def genotype(
         with open(input_filepath, "wb") as f:
             while chunk := await file.read(UPLOAD_CHUNK_BYTES):
                 f.write(chunk)
+        # An upload's own coverage lines are not evidence; see ZAROPGX_HEADER_PREFIX.
+        if not lane_wrote_coverage_lines(upload_type, input_type):
+            input_filepath, dropped = without_zaropgx_header_lines(input_filepath)
+            if dropped:
+                logger.warning(
+                    f"Ignoring {dropped} ZaroPGx header line(s) in an uploaded VCF "
+                    f"(upload_type={upload_type!r}, input_type={input_type!r}): it is "
+                    "judged by its own records"
+                )
         
         # Get file size for memory optimization
         file_size_gb = os.path.getsize(input_filepath) / (1024**3)

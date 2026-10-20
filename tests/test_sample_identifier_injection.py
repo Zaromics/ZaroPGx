@@ -116,6 +116,11 @@ runner = _load_runner()
 #                                           directly: each is a Channel.value of a
 #                                           Groovy ternary whose arms are the literal
 #                                           'false' or the params boolean above.
+#   upload_type (PyPGxGenotypeAll's local - audited 2026-10-20: Channel.value(
+#   var)                                    params.input_type), the fixed FileType enum
+#                                           value audited under input_type above, passed
+#                                           unchanged so the wrapper can tell a gVCF's
+#                                           converted VCF from an uploaded one.
 # sample_identifier is DELIBERATELY absent: it now travels via the environment.
 EXPECTED_INTERPOLATIONS = {
     "bam",
@@ -137,6 +142,7 @@ EXPECTED_INTERPOLATIONS = {
     "reference",
     "source_build",
     "input_type",
+    "upload_type",
     "absent_to_ref",
     "unspecified_to_ref",
 }
