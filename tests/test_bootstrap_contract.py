@@ -151,6 +151,119 @@ def test_update_force_fetches_the_selected_release_tag(tmp_path: Path):
     assert new_tag != old_tag
 
 
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _installed_previous_release(tmp_path: Path) -> tuple[Path, str]:
+    """An install cloned at an older tag, with this release tagged on its origin.
+
+    The published tree carries a stub start-docker.sh, so running bootstrap.sh
+    --update against the install goes through the real fetch and checkout and
+    ends in the stub instead of Docker. Returns the install and the new tag's commit.
+    """
+    origin = tmp_path / "origin.git"
+    publisher = tmp_path / "publisher"
+    install = tmp_path / "ZaroPGx"
+    _git("init", "--bare", str(origin))
+    _git("init", str(publisher))
+    _git("-C", str(publisher), "config", "user.email", "bootstrap@test.invalid")
+    _git("-C", str(publisher), "config", "user.name", "Bootstrap Test")
+    # 0.3.2's .gitignore: *.log, which does not match a rotated *.log.1.
+    (publisher / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (publisher / "data").mkdir()
+    (publisher / "data" / "about.md").write_text("old\n", encoding="utf-8")
+    (publisher / "start-docker.sh").write_text(
+        'echo "start-docker ran $*"\n', encoding="utf-8"
+    )
+    _git("-C", str(publisher), "add", ".")
+    _git("-C", str(publisher), "commit", "-m", "previous release")
+    _git("-C", str(publisher), "tag", "v0.3.2")
+    (publisher / "data" / "about.md").write_text("new\n", encoding="utf-8")
+    _git("-C", str(publisher), "commit", "-am", "this release")
+    _git("-C", str(publisher), "tag", f"v{RELEASE}")
+    release = _git("-C", str(publisher), "rev-parse", "HEAD")
+    _git("-C", str(publisher), "remote", "add", "origin", str(origin))
+    _git("-C", str(publisher), "push", "origin", "HEAD", "--tags")
+    _git("clone", "--branch", "v0.3.2", str(origin), str(install))
+    return install, release
+
+
+def _bootstrap_update(install: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            str(ROOT / "bootstrap.sh"),
+            "--skip-deps",
+            "--update",
+            "--dir",
+            str(install),
+        ],
+        cwd=install.parent,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def test_update_runs_past_untracked_rotated_logs(tmp_path: Path):
+    """The services rotate data/*_progress.log at 10 MB into .log.1 to .log.5.
+
+    0.3.2's .gitignore does not match those, so they show as untracked. The
+    update counted them as uncommitted changes and refused, on every install
+    whose logs had rotated: the very command UPGRADING.md gives 0.3.2 users.
+    """
+    install, release = _installed_previous_release(tmp_path)
+    rotated = install / "data" / "pharmcat_progress.log.1"
+    rotated.write_text("rotated progress log\n", encoding="utf-8")
+    assert _git("-C", str(install), "status", "--porcelain") == (
+        "?? data/pharmcat_progress.log.1"
+    )
+
+    result = _bootstrap_update(install)
+
+    assert result.returncode == 0, result.stderr
+    assert "Repository updated successfully." in result.stdout
+    assert "start-docker ran --auto-local" in result.stdout
+    assert _git("-C", str(install), "rev-parse", "HEAD") == release
+    assert rotated.read_text(encoding="utf-8") == "rotated progress log\n"
+
+
+def test_update_still_refuses_local_changes_to_tracked_files(tmp_path: Path):
+    install, _ = _installed_previous_release(tmp_path)
+    previous = _git("-C", str(install), "rev-parse", "HEAD")
+    (install / "data" / "about.md").write_text("edited here\n", encoding="utf-8")
+
+    result = _bootstrap_update(install)
+
+    assert result.returncode == 1
+    assert "refusing to update" in result.stderr
+    assert "start-docker ran" not in result.stdout
+    assert _git("-C", str(install), "rev-parse", "HEAD") == previous
+    assert (install / "data" / "about.md").read_text(encoding="utf-8") == (
+        "edited here\n"
+    )
+
+
+def test_both_bootstraps_check_tracked_files_only_before_updating():
+    bash = _text("bootstrap.sh")
+    powershell = _text("bootstrap.ps1")
+    assert '"$(git status --porcelain --untracked-files=no)"' in bash
+    assert "git -C $TargetDir status --porcelain --untracked-files=no)" in powershell
+    for script in (bash, powershell):
+        assert "status --porcelain)" not in script
+
+
+def test_gitignore_covers_the_services_rotated_logs():
+    for path in ("data/pharmcat_progress.log.1", "data/gatk_progress.log.5"):
+        ignored = subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "-q", "--no-index", path]
+        )
+        assert ignored.returncode == 0, f"{path} is not ignored"
+
+
 def test_all_zaropgx_services_explicitly_request_the_published_platform():
     yaml = pytest.importorskip("yaml")
     compose = yaml.safe_load(_text("compose.yml"))

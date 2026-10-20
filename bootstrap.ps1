@@ -774,9 +774,15 @@ if (-not (Test-Path $TargetDir)) {
             exit 1
         } else {
             Write-Host "Updating repository (fast-forward only)..." -ForegroundColor Yellow
-            $status = (& git -C $TargetDir status --porcelain)
+            # Only local changes to tracked files block an update: the checkout
+            # and the line-ending reset below would carry or discard them.
+            # Untracked files are not checked. A running install makes some that
+            # an older .gitignore does not cover (0.3.2's missed the services'
+            # rotated logs, data/*.log.1 to .5), and neither step deletes one; if
+            # the release adds a file at the same path, git refuses the checkout.
+            $status = (& git -C $TargetDir status --porcelain --untracked-files=no)
             if ($status) {
-                Write-Host "Working tree has uncommitted changes; refusing to update. Commit or stash first." -ForegroundColor Yellow
+                Write-Host "Tracked files have local changes; refusing to update. Commit or stash them first (git status lists them)." -ForegroundColor Yellow
                 exit 1
             } else {
                 # Release hotfix tags may be replaced deliberately. Force-fetch
@@ -784,7 +790,7 @@ if (-not (Test-Path $TargetDir)) {
                 git -C $TargetDir fetch --all --prune --force --tags
                 if ($LASTEXITCODE -ne 0) { Write-Host "git fetch failed." -ForegroundColor Red; exit 1 }
                 git -C $TargetDir checkout $Branch
-                if ($LASTEXITCODE -ne 0) { Write-Host "git checkout failed." -ForegroundColor Red; exit 1 }
+                if ($LASTEXITCODE -ne 0) { Write-Host "git checkout failed. If git named untracked files the release would overwrite, move them aside and re-run." -ForegroundColor Red; exit 1 }
                 git -C $TargetDir rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>$null | Out-Null
                 if ($LASTEXITCODE -eq 0) {
                     git -C $TargetDir pull --ff-only

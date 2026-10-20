@@ -126,7 +126,8 @@ that contains `ZaroPGx/`:
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash -s -- --update
 ```
 
-It refuses to update a checkout with local changes. On the next start, `start-docker.sh`
+It refuses to update a checkout whose tracked files have local changes; untracked files,
+such as the services' rotated logs, do not count. On the next start, `start-docker.sh`
 moves an older release's `ZAROPGX_TAG` in `.env` to the new release; `latest` and custom
 tags are left alone. Read `UPGRADING.md` in the repository for what each release changes.
 
