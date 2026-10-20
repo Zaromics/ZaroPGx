@@ -29,6 +29,13 @@ flagging. When it could not be done, a locus with reads on its ALT contigs is fl
 whatever its MAPQ 0 share: NA12878's reads aligned without ALT-awareness left CYP2D6
 with 48% at MAPQ 0, under the threshold, and 272 usable reads of 1,479.
 
+A read on an ALT contig is one whose primary alignment is there (``alt_reads``). An
+ALT-aware alignment keeps each read on the main chromosome and writes its ALT hit as a
+supplementary record: PyPGx reads that read, so it is not counted, and such an upload
+is not re-aligned, nor flagged for its ALT hits. NA12878's published BAM (bwa mem,
+ALT-aware) has 16,405 records on these ALT contigs and 1 primary read. Every count
+here is of primary alignments; those over a gene also leave duplicates out.
+
 Found 2026-10-13 on a genome aligned with plain ``bwa mem`` to NCBI's full GRCh38
 (GCF_000001405.26), which has the ALT contigs and no ``.alt`` file beside the index.
 """
@@ -100,8 +107,8 @@ def _as_int(value: Any) -> int:
 def _left_on_alt_contigs(
     bam2vcf_output: Optional[Mapping[str, Any]],
 ) -> Dict[str, int]:
-    """{gene: reads on its locus's ALT contigs} for FLAGGED_GENES in loci found and
-    not re-aligned."""
+    """{gene: reads with their primary alignment on its locus's ALT contigs} for
+    FLAGGED_GENES in loci found and not re-aligned."""
     info = alt_realignment(bam2vcf_output)
     if not info or _realigned(info):
         return {}
@@ -227,7 +234,8 @@ def _realignment_entry(
         "alignment had reads from these loci on GRCh38's alternate copies of them "
         "(ALT contigs"
         + (f": {on_alts}" if on_alts else "")
-        + "), where PyPGx does not read. ZaroPGx aligned the reads of these loci"
+        + ", counting reads whose primary alignment was there), where PyPGx does not "
+        "read. ZaroPGx aligned the reads of these loci"
         + (f", {' and '.join(counted)}," if counted else "")
         + " again to GRCh38's main chromosomes with BWA-MEM (GATK BwaSpark), as PyPGx "
         "requires, "
@@ -240,7 +248,11 @@ def _realignment_entry(
         "reads as uploaded."
     )
     if changes:
-        text += " Reads over the gene: " + "; ".join(changes) + "."
+        text += (
+            " Reads over the gene (primary alignments, duplicates left out): "
+            + "; ".join(changes)
+            + "."
+        )
     orphans = _as_int(reads.get("orphans"))
     if orphans:
         text += (
@@ -268,13 +280,21 @@ def alt_locus_alert(bam2vcf_output: Optional[Mapping[str, Any]]) -> Optional[str
             f"<p>⚠️ {heading}: {measured}. "
             "GRCh38 "
             "includes alternate copies of these genes (ALT contigs). An alignment made "
-            "against a reference that has them puts some of their reads on the "
-            "alternate copy, where PyPGx does not read, and without ALT-aware mapping "
-            "gives the reads that match both copies mapping quality 0. PyPGx calls "
-            "these genes' variants from reads with mapping quality 1 or more, and "
-            "their copy number from the depth on the primary copy, so these calls "
-            "rest on a fraction of the gene's reads and may be wrong: a copy number "
-            "can read as a deletion."
+            "against a reference that has them, without ALT-aware mapping, puts about "
+            "half of their reads on the alternate copy, where PyPGx does not read, and "
+            "gives most of the rest mapping quality 0. PyPGx calls these genes' "
+            "variants from reads with mapping quality 1 or more, and their copy number "
+            "from the depth on the primary copy, so these calls rest on a fraction of "
+            "the gene's reads and may be wrong: a copy number can read as a deletion. "
+            "Reads over the gene are counted by their primary alignment, duplicates "
+            "left out"
+            + (
+                "; reads on the ALT contigs by their primary alignment too, so an "
+                "ALT-aware alignment's supplementary copies there, of reads it kept on "
+                "the main chromosome, are not counted."
+                if any(f.get("alt_reads") for f in flags.values())
+                else "."
+            )
         )
         if info and not _realigned(info):
             reason = html.escape(str(info.get("reason") or "no reason was recorded"))
@@ -285,7 +305,8 @@ def alt_locus_alert(bam2vcf_output: Optional[Mapping[str, Any]]) -> Optional[str
         alert += (
             " For reliable calls, realign the reads to the GRCh38 no-alt analysis set, "
             "or with BWA in ALT-aware mode (the reference's <code>.alt</code> file "
-            "beside its index).</p>"
+            "beside its index), which keeps each read on the main chromosomes, where "
+            "PyPGx reads it.</p>"
         )
     hla = [gene for gene in mostly_mapq0(bam2vcf_output) if gene in _HLA]
     if hla:
@@ -307,9 +328,9 @@ def alt_locus_note(flag: Mapping[str, Any]) -> str:
             "and Warnings."
         )
     return (
-        f"{flag['alt_reads']:,} reads from this gene's locus were on GRCh38's ALT "
-        "contigs, where PyPGx does not read them, so its call may be wrong. See Alerts "
-        "and Warnings."
+        f"{flag['alt_reads']:,} reads from this gene's locus had their primary "
+        "alignment on GRCh38's ALT contigs, where PyPGx does not read them, so its "
+        "call may be wrong. See Alerts and Warnings."
     )
 
 

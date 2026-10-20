@@ -77,8 +77,9 @@ curated: true
   calls reach it as diplotype-only outside calls.
 
 - [DONE Oct 2026, feat/realign-alt-loci] Reads on GRCh38's ALT contigs. An alignment
-  made against a GRCh38 that has them (NCBI's full GRCh38, for one) puts some CYP2D6
-  and UGT2B17/UGT2B15 reads there, where PyPGx never reads; not ALT-aware, about half.
+  made against a GRCh38 that has them (NCBI's full GRCh38, for one) without ALT-awareness
+  puts about half the CYP2D6 and UGT2B17/UGT2B15 reads there as their primary
+  alignment, where PyPGx never reads (ALT-aware, only supplementary copies go there).
   On NA12878 aligned so, CYP2D6 came out *1/*1 (truth *3/*68+*4) with no flag, at 48%
   MAPQ 0. Those loci's reads are now aligned again to the main contigs (gatk-api
   /realign-reads, BwaSpark) before PyPGx and PharmCAT's positions read them; the 66

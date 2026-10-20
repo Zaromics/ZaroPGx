@@ -1271,16 +1271,24 @@ def alt_locus_mapq0(alignment_path: str, assembly: str) -> Optional[Dict[str, Di
 #
 # PyPGx reads main contigs only (and chr22_KI270879v1_alt, GSTT1's): that is the whole
 # of reference/pypgx/pypgx_grch38.fasta. An alignment made against a GRCh38 that has
-# the ALT contigs puts some of these loci's reads on them, where PyPGx never looks.
-# An ALT-aware aligner sends there the reads that fit the ALT haplotype better; one
-# that is not ALT-aware sends about half of all of them, and leaves the rest at MAPQ 0.
+# the ALT contigs, by an aligner that is not ALT-aware, puts about half of these loci's
+# reads on them as their primary alignment, where PyPGx never looks, and leaves most of
+# the rest at MAPQ 0. An ALT-aware one (bwa mem with the reference's .alt file) keeps a
+# read's primary alignment on the main chromosome and writes its ALT hit beside it as a
+# supplementary record: PyPGx reads that read where it is, and nothing here is needed.
+# Measured 2026-10-20 on NA12878's published 1000 Genomes BAM (bwa mem 0.7.15,
+# ALT-aware, GRCh38_full_analysis_set_plus_decoy_hla): 16,405 records on the four ALT
+# contigs below, all supplementary but one, a primary at MAPQ 0 on GL000257v2; by
+# their SA tags, 16,241 of those reads have their primary alignment on chr22 or chr4,
+# and 15,222 have it at MAPQ 60.
 # Measured 2026-10-16 on NA12878's reads from these loci realigned with plain bwa mem
 # 0.7.18 to GRCh38 with its ALT contigs: 526 reads over CYP2D6's gene body, 254 at
 # MAPQ 0, so PyPGx would read CYP2D6 from 272 reads where the published, ALT-aware BAM
 # gives it 1,479 -- and at 48% MAPQ 0 the report's flag (over half) did not fire.
 #
-# So where the alignment holds reads on a locus's ALT contigs, the locus's reads --
-# every read on its primary span and on its ALT contigs, with its mate -- are aligned
+# So where reads have their primary alignment on a locus's ALT contigs, the locus's
+# reads -- every read on its primary span and on its ALT contigs, with its mate (primary
+# records only: a supplementary or secondary record is a copy) -- are aligned
 # again to the alignment reference (gatk-api /realign-reads: BwaSpark, then
 # MarkDuplicatesSpark), and this step reads a patched alignment: the uploaded reads
 # over every region it reads (patched_alignment_regions), less the locus's reads, plus
@@ -1305,9 +1313,10 @@ ALT_LOCI_GRCH38 = (
         "genes": ("UGT2B17", "UGT2B15"),
     },
 )
-# Reads on a locus's ALT contigs that make it worth aligning again: what the report's
-# MAPQ 0 check asks of a gene before it judges (app/reports/alt_locus.py MIN_READS).
-# NA12878's published BAM has none on any of them.
+# Reads with their primary alignment on a locus's ALT contigs that make it worth aligning
+# again: what the report's MAPQ 0 check asks of a gene before it judges
+# (app/reports/alt_locus.py MIN_READS). NA12878's published BAM has none on CYP2D6's
+# and 1 on UGT2B17's; its reads aligned without ALT-awareness, 34,282 and 72,925.
 ALT_REALIGN_MIN_READS = 20
 # Around the primary span, so a pair across its edge comes along whole.
 ALT_REALIGN_PAD = 1000
@@ -1321,18 +1330,37 @@ ALT_REALIGN_READ_GROUP = "zaropgx-realign"
 
 def alt_loci_to_realign(alignment_path: str, assembly: str) -> List[Dict[str, Any]]:
     """The ALT_LOCI_GRCH38 loci with reads on their ALT contigs, each with
-    ``alt_reads``: how many, from the index (a 100 GB genome answers at once)."""
+    ``alt_reads``: how many reads have their primary alignment there (mapped, not
+    secondary, not supplementary).
+
+    Counted record by record. The index's counts take every record, and an ALT-aware
+    alignment's records on these contigs are supplementary copies of reads PyPGx
+    reads on the main chromosome: NA12878's published BAM has 16,405 there, 1 of them
+    primary, and by the index both loci went to be re-aligned (BwaSpark's 5.4 GB index
+    load and ~100 s) or, without the index image, were flagged. Only what lies on the
+    ALT contigs (74-586 kb) is read. Measured 2026-10-20 on two 41 GB 30x genomes:
+    0.04 s for that BAM, 0.13 s for its reads aligned without ALT-awareness (107,630
+    records there).
+    """
     if assembly != "GRCh38":
         return []
     import pysam
 
-    with pysam.AlignmentFile(alignment_path) as bam:
-        mapped = {s.contig: s.mapped for s in bam.get_index_statistics()}
     found = []
-    for locus in ALT_LOCI_GRCH38:
-        reads = sum(mapped.get(alt, 0) for alt in locus["alts"])
-        if reads >= ALT_REALIGN_MIN_READS:
-            found.append(dict(locus, alt_reads=reads))
+    with pysam.AlignmentFile(alignment_path) as bam:
+        present = set(bam.references)
+        for locus in ALT_LOCI_GRCH38:
+            reads = 0
+            for alt in locus["alts"]:
+                if alt not in present:
+                    continue
+                for read in bam.fetch(alt):
+                    if not (
+                        read.is_unmapped or read.is_secondary or read.is_supplementary
+                    ):
+                        reads += 1
+            if reads >= ALT_REALIGN_MIN_READS:
+                found.append(dict(locus, alt_reads=reads))
     return found
 
 
@@ -1566,7 +1594,8 @@ def write_patched_alignment(
     qc_failed: frozenset = frozenset(),
 ) -> Dict[str, int]:
     """The uploaded reads over `regions` less those named in `replaced`, plus the
-    re-aligned BAMs' reads, sorted and indexed at `out_path`; counts of each.
+    re-aligned BAMs' reads, sorted and indexed at `out_path`; counts of each, in
+    records (a read's supplementary and secondary records count too).
 
     The uploaded header is kept, so every name and read group means what it meant; a
     re-aligned read on a contig the upload's header lacks is dropped and counted.
@@ -1639,11 +1668,11 @@ def realign_alt_loci(
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """(the alignment to call from, what was done), for /create-input-vcf.
 
-    The uploaded alignment and None when no locus has reads on its ALT contigs. When
-    one does: a patched alignment in `work_dir` and status "realigned", or the
-    uploaded one and status "unavailable" (gatk-api cannot align) or "failed", with
-    the reason. Never raises: without re-alignment the step goes on as it did, and the
-    report says why.
+    The uploaded alignment and None when no locus has reads on its ALT contigs (as
+    their primary alignment: see alt_loci_to_realign). When one does: a patched
+    alignment in `work_dir` and status "realigned", or the uploaded one and status
+    "unavailable" (gatk-api cannot align) or "failed", with the reason. Never raises:
+    without re-alignment the step goes on as it did, and the report says why.
     """
     try:
         loci = alt_loci_to_realign(alignment_path, assembly)
@@ -1673,7 +1702,8 @@ def realign_alt_loci(
         }
         logger.info(
             f"Re-aligning {', '.join(l['locus'] for l in loci)}: {info['reads']} "
-            f"({sum(l['alt_reads'] for l in loci)} reads on their ALT contigs)"
+            f"({sum(l['alt_reads'] for l in loci)} reads with their primary alignment "
+            "on their ALT contigs)"
         )
         if not reads:
             # Every read on the ALT contigs lacked its mate (a sliced or filtered
