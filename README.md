@@ -110,9 +110,11 @@ What each format needs, and why some are refused: [input formats](docs/user/file
 
 ## Sample Data
 
-Example inputs in the repository: `app/static/demo/pharmcat.example.vcf` (the **Run Demo**
-button), and in `test_data/`, PharmCAT's example VCFs, GRCh37 and T2T SNP sets, and a small
-BAM, CRAM and SAM. For real-world data, try the **Personal Genome Project**, whose
+The **Run Demo** button analyses `app/static/demo/NA12878.pgx-demo.cram`: NA12878's reads
+from the 1000 Genomes Project's 30x whole genomes, cut to the reads its calls depend on, so it
+runs every stage on a sample whose results are published (see its
+[README](app/static/demo/README.md)). In `test_data/`: PharmCAT's example VCFs, GRCh37 and
+T2T SNP sets, and a small BAM, CRAM and SAM. For real-world data, try the **Personal Genome Project**, whose
 participants share their genomes publicly: https://www.personalgenomes.org/
 
 ## Contributions are welcome and are gratefully appreciated!

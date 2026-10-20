@@ -205,7 +205,7 @@ def test_resolve_a_real_match_wins_regardless_of_evidence():
 
 
 def test_resolve_blocks_on_missing_evidence_before_looking_at_961():
-    """No positive evidence at all -- e.g. app/static/demo/pharmcat.example.vcf,
+    """No positive evidence at all -- e.g. test_data/pharmcat.example.vcf,
     which has no chrM contig header and no chrM record -- must never reach
     Reference no matter what `records` contains."""
     result = resolve_mt_rnr1_call([], [], evidence_reason=NO_CALL_NO_CHRM_DATA)

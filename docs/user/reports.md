@@ -33,8 +33,8 @@ positions the file did not cover were treated. The disclaimer follows.
 cannot give HLA calls, for instance), genes called from partial coverage, variants PharmCAT
 could not read, positions assumed to be reference, genes whose reads mostly had mapping
 quality 0 (an alignment that was not ALT-aware), the CYP2D6 and UGT2B loci when their reads
-were aligned again (or could not be), a PharmCAT version nobody has verified.
-Read these first.
+were aligned again (or could not be), genes called without copy number (below), a PharmCAT
+version nobody has verified. Read these first.
 
 **Executive Summary.** The 25 genes PharmCAT reports on, on one page, the same genes in the
 same order in every report. Each row has the diplotype, the phenotype and, where the
@@ -60,6 +60,29 @@ GSTM1, GSTT1, SULT1A1, UGT2B17), no reads at its positions may be that deletion,
 reason says so. A PyPGx call made from only some of its positions says beside it how many
 of the rest were read as the reference, and why: no reads there, or no genotype in the
 file.
+
+**Copy number not assessed.** Some alleles are structural variants: a whole-gene deletion, a
+duplication, or a hybrid with a neighbouring gene, such as *CYP2D6* \*5, \*1x2, \*36 and
+\*68, *GSTM1* and *GSTT1* \*0 and *UGT2B17* \*2. PyPGx calls them from read depth, which
+ZaroPGx measures only from a GRCh38 whole-genome alignment ({doc}`file-formats`). For any
+other input, PyPGx calls the 13 genes it defines such alleles for from small variants
+alone, and the call cannot show them: a *CYP2D6* \*1/\*5 (an intermediate metabolizer) or
+\*1/\*1x2 (ultrarapid) reads \*1/\*1, and *GSTM1* \*A/\*A does not say how many copies of
+the gene the sample has, if any. Each such call of PyPGx's (Call P) is marked "Copy number
+not assessed", with what it cannot show and why: the input was a VCF, BCF or gVCF; the
+alignment's median depth was too low for a whole genome; it is not on GRCh38; PyPGx could
+not measure the depth; or, where the run did not record the reason (a report rebuilt
+later), only that no read depth reached PyPGx. One entry under Alerts and Warnings names
+the genes, and such a gene's row in the Executive Summary points to its note. A
+whole-genome alignment's report has none of these.
+
+Not every call of these genes is PyPGx's. PharmCAT calls *CYP2B6*, *CYP4F2* and *G6PD*
+itself, from small variants, on every input, a whole genome included, unless
+`PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an alignment;
+{doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT does not measure
+copy number, so its call cannot show a *CYP2B6* \*29 hybrid or duplication, or a
+*CYP4F2* deletion, and it carries no note. Nor does an outside call PyPGx did not make,
+such as one from `OUTSIDECALLSOVERRIDE`'s file.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
