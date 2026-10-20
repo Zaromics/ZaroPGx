@@ -178,7 +178,7 @@ The FHIR export carries codes from these terminologies:
 
 - **HGNC.** Gene identifiers from the HUGO Gene Nomenclature Committee (HGNC, https://www.genenames.org), released under CC0.
 
-- **HL7 FHIR.** HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of Health Level Seven International and their use does not constitute endorsement by HL7. FHIR R4 and the Genomics Reporting Implementation Guide are published under CC0.
+- **HL7 FHIR.** HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of Health Level Seven International and their use does not constitute endorsement by HL7. FHIR R4 is published under CC0, and so are the three FHIR packages the bundled HAPI FHIR server loads: the Genomics Reporting Implementation Guide 3.0.0, HL7 Terminology (THO) 6.1.0 and the FHIR Extensions Pack 5.1.0.
 
 ## Citing ZaroPGx
 

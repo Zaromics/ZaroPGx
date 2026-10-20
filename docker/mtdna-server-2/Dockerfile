@@ -42,6 +42,9 @@ WORKDIR /app
 COPY docker/mtdna-server-2/app.py .
 COPY docker/mtdna-server-2/report.Rmd .
 COPY docker/mtdna-server-2/files/ /opt/mtdna-files/
+# mtDNA-Server 2's MIT licence, which has to travel with report.Rmd and
+# rcrs_mutserve.fasta, copied from it.
+COPY docker/mtdna-server-2/LICENSE.mtdna-server-2 /opt/mtdna-files/
 COPY app/utils/job_client.py /job-client/
 COPY app/utils/shared_input.py /job-client/
 COPY app/mtdna/ /mtdna-lib/mtdna/
