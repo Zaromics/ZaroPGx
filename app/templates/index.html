@@ -1966,10 +1966,35 @@
         
 
 
+        // Run Demo is off from its click until the job it started ends, so a second
+        // click cannot start a second demo meanwhile; Upload, which it turns off too,
+        // comes back with it. They came back only when the demo could not start, so
+        // a demo that ran to its end left both off until the page was reloaded.
+        // demoJob: that job's id ('starting' until the server names it), or null
+        // when no demo holds the buttons.
+        window.demoJob = null;
+        // Given a job id, only that job's end gives them back (onComplete calls this
+        // for every job it monitors); without one, the demo is over regardless: it
+        // could not start, or its monitoring was cancelled.
+        window.releaseDemoButtons = function(jobId) {
+            if (!window.demoJob || (jobId !== undefined && jobId !== window.demoJob)) {
+                return;
+            }
+            window.demoJob = null;
+            const uploadButton = document.getElementById('uploadButton');
+            const demoButton = document.getElementById('demoButton');
+            if (uploadButton) uploadButton.disabled = false;
+            if (demoButton) demoButton.disabled = false;
+        };
+
         // The demo: NA12878's reads (1000 Genomes, 30x), cut to what the pipeline reads
         // (scripts/make-demo-cram.sh). The server holds the file and starts the job, so
         // the browser no longer downloads the demo only to upload it back.
         async function runDemo() {
+            // One demo at a time (see releaseDemoButtons).
+            if (window.demoJob) {
+                return;
+            }
             try {
                 const logMessages = document.getElementById('logMessages');
                 const progressContainer = document.getElementById('progressContainer');
@@ -2002,7 +2027,8 @@
                     progressStatus.textContent = "Starting the demo...";
                 }
                 
-                // Disable the upload button
+                // Both buttons stay off until this demo's job ends
+                window.demoJob = 'starting';
                 const uploadButton = document.getElementById('uploadButton');
                 const demoButton = document.getElementById('demoButton');
                 if (uploadButton) uploadButton.disabled = true;
@@ -2044,7 +2070,16 @@
                 
                 const result = await uploadResponse.json();
                 console.log("Demo result:", result);
-                
+                // Without a job id nothing is monitored, so no end would give the
+                // buttons back.
+                if (!result || !result.job_id) {
+                    throw new Error('the server did not say which job it started');
+                }
+                // Its monitoring may have been cancelled while it started.
+                if (window.demoJob) {
+                    window.demoJob = result.job_id;
+                }
+
                 // From here the demo is a job like any upload's
                 window.addLogMessage("Demo started", "success");
                 
@@ -2067,12 +2102,8 @@
                 console.error("Error running the demo:", error);
                 window.addLogMessage(`Error running demo: ${error.message}`, "danger");
                 
-                // Re-enable buttons
-                const uploadButton = document.getElementById('uploadButton');
-                const demoButton = document.getElementById('demoButton');
-                if (uploadButton) uploadButton.disabled = false;
-                if (demoButton) demoButton.disabled = false;
-                
+                window.releaseDemoButtons();
+
                 // Hide cancel button on error
                 const cancelButton = document.getElementById('cancelButton');
                 if (cancelButton) {
@@ -3349,6 +3380,11 @@
                             return;
                         }
                         endShown = endedAs;
+                        // Completed, failed or cancelled, the job is over: a demo's
+                        // buttons come back.
+                        if (window.releaseDemoButtons) {
+                            window.releaseDemoButtons(jobId);
+                        }
                         if (endedAs !== 'completed') {
                             window.showJobEnded(endedAs, smoothProgress);
                             return;
@@ -3493,6 +3529,10 @@
             } catch (error) {
                 console.error('Error creating WorkflowMonitor:', error);
                 window.addLogMessage(`Error starting workflow monitoring: ${error.message}`, 'danger');
+                // Nothing will say when this job ends.
+                if (window.releaseDemoButtons) {
+                    window.releaseDemoButtons(jobId);
+                }
                 return;
             }
             } else {
@@ -3624,12 +3664,15 @@
                 window.globalSmoothProgress.reset();
             }
             
-            // Re-enable upload button
+            // Re-enable upload button, and Run Demo if a demo held it
             const uploadButton = document.getElementById('uploadButton');
             if (uploadButton) {
                 uploadButton.disabled = false;
             }
-            
+            if (window.releaseDemoButtons) {
+                window.releaseDemoButtons();
+            }
+
             window.addLogMessage('Job monitoring cancelled', 'warning');
         };
         
