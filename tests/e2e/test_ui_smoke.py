@@ -242,3 +242,68 @@ def test_upload_progress_and_report_in_both_themes(e2e_client, e2e_base_url):
                 ctx.close()
         finally:
             browser.close()
+
+
+# Where the upload card's stage row and an open popup sit, against the card and the
+# viewport (document.documentElement's client width, which leaves out a scrollbar).
+LAYOUT_JS = r"""
+() => {
+  const de = document.documentElement;
+  const card = document.getElementById('uploadForm').closest('.card').getBoundingClientRect();
+  const stages = [...document.querySelectorAll('.stage-indicator')].map((s) => {
+    const r = s.getBoundingClientRect();
+    return {id: s.id, left: r.left, right: r.right};
+  });
+  return {
+    pageWidth: de.scrollWidth, viewport: de.clientWidth,
+    cardLeft: card.left, cardRight: card.right, stages,
+  };
+}
+"""
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("width", [320, 375, 768])
+def test_the_upload_card_fits_a_narrow_screen(e2e_base_url, width):
+    """The stage row's eight stages need about 500px. On a phone they ran off the
+    card and the page scrolled sideways (at 375px the page was 530px wide); at
+    768px PharmCAT and Report hung outside the card. Each stage's popup, 280px or
+    more and centred under its stage, ran off a phone's screen too."""
+    with _sync_playwright()() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": width, "height": 900})
+            try:
+                page.goto(e2e_base_url + "/", wait_until="networkidle")
+                layout = page.evaluate(LAYOUT_JS)
+                assert layout["pageWidth"] <= layout["viewport"], layout
+                outside = [
+                    s["id"]
+                    for s in layout["stages"]
+                    if s["left"] < layout["cardLeft"]
+                    or s["right"] > layout["cardRight"]
+                ]
+                assert not outside, f"stages outside the upload card: {outside}"
+
+                off_screen = {}
+                stages = page.locator(".stage-indicator")
+                for i in range(stages.count()):
+                    stage = stages.nth(i)
+                    stage.click()
+                    popup = stage.locator(".stage-popup")
+                    assert popup.is_visible()
+                    box = popup.bounding_box()
+                    if box["x"] < 0 or box["x"] + box["width"] > layout["viewport"]:
+                        off_screen[stage.get_attribute("id")] = box
+                    # Closed before the next: four to a row, a first-row popup
+                    # lies over the second row.
+                    page.evaluate("document.body.click()")
+                assert not off_screen, f"popups off the screen: {off_screen}"
+            except BaseException:
+                ARTIFACTS.mkdir(parents=True, exist_ok=True)
+                page.screenshot(
+                    path=str(ARTIFACTS / f"narrow-{width}.png"), full_page=True
+                )
+                raise
+        finally:
+            browser.close()
