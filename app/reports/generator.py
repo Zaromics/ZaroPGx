@@ -83,11 +83,7 @@ from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
     unresolved_summary_call,
 )
-from app.reports.provenance import (
-    CALLED_BY_NO_CALL,
-    resolve_called_by,
-    resolve_guideline_source,
-)
+from app.reports.provenance import CALLED_BY_NO_CALL, resolve_called_by
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.utils.env import env_flag
 from app.utils.literature import (
@@ -2740,11 +2736,6 @@ def _build_canonical_diplotypes(
                 provenance = resolve_called_by(row)
                 row["called_by"] = provenance.letter
                 row["called_by_label"] = provenance.label
-                guideline_letter = resolve_guideline_source(row)
-                if guideline_letter:
-                    row["guideline_source"] = guideline_letter
-                else:
-                    row.pop("guideline_source", None)
                 row.pop("report_data_from", None)
 
                 # Assign wild type phenotype labels based on file type
@@ -3570,11 +3561,6 @@ def generate_report(
                 provenance = resolve_called_by(diplotype)
                 diplotype["called_by"] = provenance.letter
                 diplotype["called_by_label"] = provenance.label
-                guideline_letter = resolve_guideline_source(diplotype)
-                if guideline_letter:
-                    diplotype["guideline_source"] = guideline_letter
-                else:
-                    diplotype.pop("guideline_source", None)
                 diplotype.pop("report_data_from", None)
                 enhanced_diplotypes.append(diplotype)
             else:
