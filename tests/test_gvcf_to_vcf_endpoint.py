@@ -186,6 +186,10 @@ class FakeTools:
       header lines included (measured: bcftools 1.24 carries a header line of either
       input into its output).
     * `bcftools index -t X` touches `X.tbi`.
+    * `bcftools reheader -h HDR -o OUT IN` writes IN's rows under HDR's lines.
+    * The staging re-encode keeps the upload's `##contig` and `##ZaroPGx_` lines, and
+      GenotypeGVCFs carries the input's `##ZaroPGx_` lines into each pass's output (both
+      measured: bcftools 1.24, GATK 4.7.0.0, on a gVCF with such lines planted).
 
     EVERY INPUT PATH IS OPENED, and a missing one fails the call the way the real tool
     would (exit 2, stderr naming the file). Without that the fake decided its output
@@ -221,6 +225,8 @@ class FakeTools:
         # None means "write real gzip"; bytes are written verbatim by concat instead.
         self.payload = None
         self.concat_drops_headers = False
+        # Header lines starting with one of these are lost by concat, the others kept.
+        self.concat_drops_prefixes = ()
         self.index_writes_tbi = True
 
     def argvs(self):
@@ -259,6 +265,8 @@ class FakeTools:
             return side + [argv[-1]]
         if tool == "bcftools" and sub == "concat":
             return argv[argv.index("-o") + 2 :]
+        if tool == "bcftools" and sub == "reheader":
+            return [FakeTools._flag_value(argv, "-h"), argv[-1]]
         if tool == "bcftools" and sub == "index":
             return [argv[-1]]
         return []
@@ -288,7 +296,17 @@ class FakeTools:
                 if "--include-non-variant-sites" in argv
                 else self.variant_rows
             )
-            self._write(out, rows)
+            # Read off the file itself, not this fake's books: the staged copy may have
+            # been replaced since it was written (a reheader, then os.replace).
+            source = Path(self._flag_value(argv, "-V")).read_bytes()
+            if source[:2] == b"\x1f\x8b":
+                source = gzip.decompress(source)
+            carried = [
+                line
+                for line in source.decode("utf-8", "replace").splitlines()
+                if line.startswith("##ZaroPGx_")
+            ]
+            self._write(out, rows, carried)
         elif tool == "bcftools" and sub == "view":
             source = argv[-1]
             if "-R" in argv:
@@ -333,7 +351,7 @@ class FakeTools:
                 contigs = [
                     line
                     for line in raw.decode("utf-8", "replace").splitlines()
-                    if line.startswith("##contig=")
+                    if line.startswith(("##contig=", "##ZaroPGx_"))
                 ]
                 self._write(self._flag_value(argv, "-o"), [("chr1", 1)], contigs)
         elif tool == "bcftools" and sub == "concat":
@@ -346,7 +364,23 @@ class FakeTools:
                 for source in argv[argv.index("-o") + 2 :]:
                     merged.extend(self.rows_by_path.get(source, []))
                     extra.extend(self.headers_by_path.get(source, []))
-                self._write(out, merged, [] if self.concat_drops_headers else extra)
+                kept = [
+                    line
+                    for line in extra
+                    if not line.startswith(self.concat_drops_prefixes or ("\0",))
+                ]
+                self._write(out, merged, [] if self.concat_drops_headers else kept)
+        elif tool == "bcftools" and sub == "reheader":
+            header = Path(self._flag_value(argv, "-h")).read_text(encoding="utf-8")
+            self._write(
+                self._flag_value(argv, "-o"),
+                self.rows_by_path.get(argv[-1], []),
+                [
+                    line
+                    for line in header.splitlines()
+                    if line.startswith(("##contig=", "##ZaroPGx_"))
+                ],
+            )
         elif tool == "bcftools" and sub == "index" and self.index_writes_tbi:
             Path(f"{argv[-1]}.tbi").write_bytes(b"TBI\x01")
 
@@ -1682,6 +1716,48 @@ def test_a_merge_that_lost_the_line_is_refused(client, tools):
     resp = _post(client)
     assert resp.status_code == 500
     assert "ZaroPGx_uncovered_genes" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "key", ["ZaroPGx_positions_measured_for", "ZaroPGx_positions_without_reads"]
+)
+def test_a_merge_that_lost_a_positions_line_is_refused(client, tools, key):
+    """Without either, the wrapper would trust every position of every gene it reads,
+    as for a VCF made before the lines existed."""
+    tools.concat_drops_prefixes = (f"##{key}=",)
+    resp = _post(client)
+    assert resp.status_code == 500, resp.text
+    detail = resp.json()["detail"]
+    assert key in detail and "ZaroPGx_uncovered_genes" not in detail
+
+
+def test_an_uploads_own_zaropgx_lines_do_not_reach_the_output(client, tools):
+    """A gVCF carrying its own coverage lines: GenotypeGVCFs copies them into both
+    passes, and bcftools concat keeps the first file's line of a key, the upload's
+    (measured on the demo's UGT1A1 exon 1: a planted measured-genes line replaced this
+    run's). They are dropped from the staged copy, so the output holds this run's."""
+    planted = GVCF_BYTES.replace(
+        b"#CHROM",
+        b"##ZaroPGx_uncovered_genes=.\n"
+        b"##ZaroPGx_positions_without_reads=.\n"
+        b"##ZaroPGx_positions_measured_for=MT-RNR1\n#CHROM",
+    )
+    tools.gene_records = [_block("chr2", 233759700, 233761100)]
+
+    resp = _post(client, body=planted)
+
+    assert resp.status_code == 200, resp.text
+    assert len(tools.ran("bcftools", "reheader")) == 1
+    header = [h for h in _merged_header(tools) if h.startswith("##ZaroPGx_")]
+    keys = [h.split("=", 1)[0] for h in header]
+    assert len(keys) == len(set(keys)) == 5, header
+    assert "##ZaroPGx_positions_measured_for=MT-RNR1" not in header
+    assert "##ZaroPGx_uncovered_genes=." not in header
+
+
+def test_an_upload_without_zaropgx_lines_is_not_reheadered(client, tools):
+    assert _post(client).status_code == 200
+    assert tools.ran("bcftools", "reheader") == []
 
 
 SPANS = [

@@ -5107,6 +5107,49 @@ def with_header_lines(vcf_lines, extra):
     return vcf_lines
 
 
+# The prefix of every header line this module and the pypgx wrapper write for each
+# other. An uploaded gVCF may carry its own (a planted one, or one from another tool
+# run). GATK GenotypeGVCFs copies the input's header lines into both passes' output
+# (GATK 4.7.0.0), and `bcftools concat` keeps one line per key, the first file's: the
+# variant pass's, the upload's (bcftools 1.24). Measured on the demo's UGT1A1 exon 1
+# with such lines planted: a planted uncovered-genes line made the merge lose this
+# run's (a 500), and a planted measured-genes line replaced this run's without a word.
+ZAROPGX_HEADER_PREFIX = "##ZaroPGx_"
+
+
+def drop_zaropgx_header_lines(job_label, vcf_gz, work_dir):
+    """Remove the ##ZaroPGx_ lines from a bgzipped VCF's header, in place; how many.
+
+    `bcftools reheader`, so the records are untouched. Nothing runs when there are none.
+    """
+    header = []
+    with _open_vcf_text(vcf_gz) as handle:
+        for line in handle:
+            if not line.startswith('#'):
+                break
+            header.append(line)
+            if line.startswith('#CHROM'):
+                break
+    kept = [line for line in header if not line.startswith(ZAROPGX_HEADER_PREFIX)]
+    if len(kept) == len(header):
+        return 0
+    header_path = os.path.join(work_dir, 'staged.header.txt')
+    with open(header_path, 'w', encoding='utf-8') as fh:
+        fh.writelines(kept)
+    clean = os.path.join(work_dir, 'staged.reheadered.vcf.gz')
+    _run_tool(
+        job_label,
+        ['bcftools', 'reheader', '-h', header_path, '-o', clean, vcf_gz],
+        "Dropping the upload's own ZaroPGx header lines (bcftools reheader)",
+    )
+    os.replace(clean, vcf_gz)
+    dropped = len(header) - len(kept)
+    logger.warning(
+        f"Job {job_label}: dropped {dropped} ZaroPGx header line(s) the upload carried"
+    )
+    return dropped
+
+
 def vcf_header_has(path, line):
     """True when the (bgzipped) VCF's header holds this exact line."""
     with _open_vcf_text(path) as handle:
@@ -5428,6 +5471,9 @@ def convert_gvcf_to_vcf(
                 "gVCF; refusing to genotype a file that is not there."
             ),
         )
+    # The upload's own ##ZaroPGx_ lines go before either pass reads it (see
+    # ZAROPGX_HEADER_PREFIX): the coverage lines in the output are this run's alone.
+    drop_zaropgx_header_lines(job_label, staged, work_dir)
     _run_tool(
         job_label,
         ['bcftools', 'index', '-t', '-f', staged],
@@ -5491,16 +5537,14 @@ def convert_gvcf_to_vcf(
         vcf_header_contigs(staged), pypgx_gene_spans_grch38(pypgx_gene_table_path())
     )
     listed = ",".join(f"{g}:{c}" for g, c in sorted(off_reference.items()))
-    general_lines = with_header_lines(
-        general_lines,
-        [
-            uncovered_line,
-            f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
-            f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
-            f"##{POSITIONS_WITHOUT_READS_HEADER_KEY}={unread or '.'}",
-            f"##{POSITIONS_MEASURED_HEADER_KEY}={','.join(measured) or '.'}",
-        ],
-    )
+    coverage_lines = [
+        uncovered_line,
+        f"##{COVERAGE_MEASURED_ON_HEADER_KEY}=gVCF",
+        f"##{OFF_REFERENCE_HEADER_KEY}={listed or '.'}",
+        f"##{POSITIONS_WITHOUT_READS_HEADER_KEY}={unread or '.'}",
+        f"##{POSITIONS_MEASURED_HEADER_KEY}={','.join(measured) or '.'}",
+    ]
+    general_lines = with_header_lines(general_lines, coverage_lines)
     logger.info(
         f"Job {job_label}: {len(uncovered)} PyPGx gene(s) with no reads in the gVCF"
         + (f": {', '.join(uncovered)}" if uncovered else "")
@@ -5603,13 +5647,18 @@ def convert_gvcf_to_vcf(
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=422, detail=message)
 
-    # Without the line, PyPGx would take this file for a VCF with no coverage evidence
-    # and leave uncalled every gene the sample matches the reference over.
-    if not vcf_header_has(output_vcf, uncovered_line):
+    # Without the uncovered-genes line, PyPGx would take this file for a VCF with no
+    # coverage evidence and leave uncalled every gene the sample matches the reference
+    # over. Without the positions or measured-genes line it would fall back to trusting
+    # every position of every gene it reads (the wrapper's position_evidence). So every
+    # coverage line must have survived the merge.
+    lost = [line for line in coverage_lines if not vcf_header_has(output_vcf, line)]
+    if lost:
         _discard_output(output_vcf)
+        keys = ", ".join(line[2:].split("=", 1)[0] for line in lost)
         message = (
-            f"The merged VCF lost the {UNCOVERED_GENES_HEADER_KEY} header line "
-            "(bcftools concat), so PyPGx could not tell which genes the gVCF covered."
+            f"The merged VCF lost its {keys} header line(s) (bcftools concat), so "
+            "PyPGx could not tell which genes and positions the gVCF had reads over."
         )
         logger.error(f"Job {job_label}: {message}")
         raise HTTPException(status_code=500, detail=message)

@@ -1110,16 +1110,28 @@ def no_reads_at_positions_note(
     return note
 
 
-def unmeasured_note(measured_on: str = "alignment", no_calls_only: bool = False) -> str:
+def unmeasured_note(
+    gene: str, measured_on: str = "alignment", no_calls_only: bool = False
+) -> str:
     """What to say about a gene with no genotype at any of its positions in a VCF whose
-    producer did not measure the reads at them (POSITIONS_MEASURED_HEADER_KEY): not "no
-    reads", which nobody looked for, and not the uploaded VCF's advice to switch on
-    "Assume absent sites = reference", which these lanes do not take."""
-    what = "Only no-calls (./.)" if no_calls_only else "No genotype"
-    return (
-        f"{what} in the VCF at PyPGx's positions for this gene, and the {measured_on}'s "
-        "reads there were not measured, so nothing says they match the reference"
-    )
+    producer did not check the reads at them (POSITIONS_MEASURED_HEADER_KEY). Not "no
+    reads": the reads may well be there (a gVCF over chrM has them at every one of
+    MT-RNR1's positions), nobody looked. And not the uploaded VCF's advice to switch on
+    "Assume absent sites = reference", which these lanes do not take. For a gene whose
+    both copies are commonly deleted, no_genotype_note's caveat: no record may be that
+    deletion."""
+    where = "PyPGx's positions for this gene"
+    if no_calls_only:
+        note = f"Only no-calls (./.) in the VCF at {where}"
+    else:
+        note = f"No genotype in the VCF at any of {where}"
+    note += f", and the {measured_on} conversion did not check the reads there"
+    if gene in WHOLE_GENE_DELETION_GENES:
+        return (
+            f"{note}: either not covered, or both copies deleted (common for {gene}), "
+            "which the VCF cannot tell apart"
+        )
+    return f"{note}, so nothing says they match the reference"
 
 
 def step_gene_counts(
@@ -3092,8 +3104,8 @@ async def genotype(
         
         # Genes the source alignment (or gVCF) never covered get no call -- see
         # UNCOVERED_GENES_HEADER_KEY. None is a VCF that carries no coverage evidence.
-        measured = uncovered_genes_from_vcf(str(input_filepath))
-        uncovered = set(measured or ())
+        coverage_evidence = uncovered_genes_from_vcf(str(input_filepath))
+        uncovered = set(coverage_evidence or ())
         measured_on = coverage_measured_on(str(input_filepath))
         off_reference = genes_off_reference_from_vcf(str(input_filepath))
         sv_inputs = sv_inputs_from_vcf(str(input_filepath), TEMP_DIR)
@@ -3125,13 +3137,15 @@ async def genotype(
             )
         # What the file holds at each gene's own positions. A gene with no genotype at
         # any gets no call, unless what has no record there is vouched for -- by reads
-        # (measured) or by the job's absent_to_ref. A called gene with positions read
-        # as reference unvouched says how many. See position_evidence. The file is
-        # prepared for PyPGx here, once, without its no-calls, and the batches below
-        # read the same one.
+        # (coverage_evidence) or by the job's absent_to_ref. A called gene with
+        # positions read as reference unvouched says how many. See position_evidence.
+        # The file is prepared for PyPGx here, once, without its no-calls, and the
+        # batches below read the same one.
         flag = str(absent_to_ref or "").strip().lower()
         assume_absent_is_reference = flag in ("1", "true", "yes", "on")
-        absence_vouched_for = measured is not None or assume_absent_is_reference
+        absence_vouched_for = (
+            coverage_evidence is not None or assume_absent_is_reference
+        )
         # Reads vouch only for the positions they were at (POSITIONS_WITHOUT_READS_
         # HEADER_KEY). Except, with whole-genome depth, at a gene PyPGx's copy-number
         # model reads (run_pypgx): no reads there is depth it counts, a deletion (*5/*5).
@@ -3159,7 +3173,7 @@ async def genotype(
         no_genotype = {}
         read_as_reference = {}
         unmeasured = set()
-        if measured is not None and measured_genes is not None:
+        if coverage_evidence is not None and measured_genes is not None:
             unmeasured = set(evidence) - measured_genes
         if unmeasured:
             logger.info(
@@ -3186,7 +3200,9 @@ async def genotype(
                 note = no_reads_at_positions_note(gene, measured_on, n["no_calls"])
                 bucket = not_sequenced
             elif gene in unmeasured:
-                note = unmeasured_note(measured_on, n["no_calls"] == n["positions"])
+                note = unmeasured_note(
+                    gene, measured_on, n["no_calls"] == n["positions"]
+                )
                 bucket = no_genotype
             else:
                 note = no_genotype_note(gene, n["positions"], n["no_calls"])

@@ -1029,8 +1029,24 @@ def test_a_gene_the_gvcf_lane_did_not_measure_is_not_called(
     result = body["results"]["MT-RNR1"]
     assert result["success"] is True and result["diplotype"] is None
     assert result["details"]["note"] == (
-        "No genotype in the VCF at PyPGx's positions for this gene, and the gVCF's "
-        "reads there were not measured, so nothing says they match the reference"
+        "No genotype in the VCF at any of PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there, so nothing says they match "
+        "the reference"
+    )
+
+
+def test_the_unmeasured_note_keeps_the_deletion_caveat(pypgx):
+    """As no_genotype_note: for a gene whose both copies are commonly deleted, no
+    record may be that deletion. Only no-calls, without "any of", as there too."""
+    assert pypgx.unmeasured_note("GSTM1", "gVCF") == (
+        "No genotype in the VCF at any of PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there: either not covered, or both "
+        "copies deleted (common for GSTM1), which the VCF cannot tell apart"
+    )
+    assert pypgx.unmeasured_note("MT-RNR1", "gVCF", no_calls_only=True) == (
+        "Only no-calls (./.) in the VCF at PyPGx's positions for this gene, and the "
+        "gVCF conversion did not check the reads there, so nothing says they match "
+        "the reference"
     )
 
 
