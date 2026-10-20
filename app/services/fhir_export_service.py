@@ -9,6 +9,7 @@ Reference: https://build.fhir.org/ig/HL7/genomics-reporting/pharmacogenomics.htm
 
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -705,7 +706,7 @@ class FHIRExportService:
         /fhir/save/workflow/{job}) named a Patient after the job, and pushing it
         then made a second Patient and moved the report onto it.
         """
-        patient_identifier = patient_info.get("id") or patient_id or run_id
+        patient_identifier = _text(patient_info.get("id")) or patient_id or run_id
         patient_id = self._stable_id("Patient", patient_identifier)
 
         resource = {
@@ -741,13 +742,13 @@ class FHIRExportService:
             if human_name:
                 resource["name"] = [human_name]
 
-        # Add gender if provided
-        if patient_info.get("gender"):
-            resource["gender"] = patient_info["gender"]
-
-        # Add birthDate if provided
-        if patient_info.get("birthDate"):
-            resource["birthDate"] = patient_info["birthDate"]
+        # Add gender and birthDate if provided (a blank one is left out)
+        gender = _text(patient_info.get("gender"))
+        if gender:
+            resource["gender"] = gender
+        birth_date = _text(patient_info.get("birthDate"))
+        if birth_date:
+            resource["birthDate"] = birth_date
 
         patient_ref = f"urn:uuid:{patient_id}"
         return resource, patient_ref
@@ -765,7 +766,7 @@ class FHIRExportService:
         Following the Genotype profile from HL7 Genomics Reporting IG.
         """
         obs_id = resource_id or str(uuid.uuid4())
-        gene_symbol = gene_data.get("gene", "Unknown")
+        gene_symbol = _text(gene_data.get("gene")) or "Unknown"
         diplotype = self._genotype_text(gene_data)
         activity_score = gene_data.get("activity_score")
         activity_value = None
@@ -773,6 +774,9 @@ class FHIRExportService:
             try:
                 activity_value = float(activity_score)
             except (ValueError, TypeError):
+                activity_value = None
+            # float("nan") and "inf" parse, but JSON has no NaN or Infinity.
+            if activity_value is not None and not math.isfinite(activity_value):
                 activity_value = None
 
         observation = {
@@ -932,7 +936,7 @@ class FHIRExportService:
         for travels as text (_phenotype_concept); a risk coded after CPIC's EHR
         priority carries a note that says so.
         """
-        gene_symbol = gene_data.get("gene", "Unknown")
+        gene_symbol = _text(gene_data.get("gene")) or "Unknown"
         concept = self._phenotype_concept(gene_data.get("phenotype"))
         observation = {
             "resourceType": "Observation",
@@ -1062,8 +1066,8 @@ class FHIRExportService:
 
         # Get the first recommendation for the main implication
         primary_rec = recommendations[0] if recommendations else {}
-        recommendation_text = _text(
-            primary_rec.get("recommendation", "See report for details")
+        recommendation_text = (
+            _text(primary_rec.get("recommendation")) or "See report for details"
         )
         guideline_source = _text(primary_rec.get("guideline_source")) or ""
 

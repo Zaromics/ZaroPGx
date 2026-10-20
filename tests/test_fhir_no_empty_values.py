@@ -210,3 +210,45 @@ def test_the_walker_finds_what_hapi_rejected():
         "Observation.component",
         "Observation.note[0]",
     ]
+
+
+def test_blank_patient_details_gene_names_and_recommendations_are_not_sent():
+    """From review: the Patient's gender, birthDate and id, a gene's symbol, a
+    recommendation and a guideline source that are only whitespace, and an activity
+    score that parses as NaN (no JSON number), are left out or defaulted."""
+    data = {
+        "genes": [
+            {"gene": "CYP2D6", "diplotype": "*1/*4", "activity_score": "nan"},
+            {"gene": "  ", "diplotype": "*1/*1"},
+        ],
+        "drugRecommendations": [
+            {
+                "drug": "codeine",
+                "genes": ["CYP2D6"],
+                "recommendations": [
+                    {"recommendation": "   ", "guideline_source": "   "}
+                ],
+            },
+        ],
+    }
+    result = _export(data, patient_info={"id": "  ", "gender": " ", "birthDate": " "})
+    bundle = result["bundle"]
+    assert empty_elements(bundle) == []
+    # Valid JSON: no bare NaN.
+    json.loads(json.dumps(bundle, allow_nan=False))
+
+    resources = [entry["resource"] for entry in bundle["entry"]]
+    patient = next(r for r in resources if r["resourceType"] == "Patient")
+    assert "gender" not in patient and "birthDate" not in patient
+    assert patient["identifier"][0]["value"].strip()
+    implication = next(
+        r
+        for r in resources
+        if r["resourceType"] == "Observation"
+        and any(
+            c.get("valueString") == "See report for details"
+            for c in r.get("component", [])
+        )
+    )
+    assert implication
+    assert "Guideline" not in json.dumps(bundle).replace("Genomics Reporting", "")
