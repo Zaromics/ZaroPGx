@@ -60,6 +60,13 @@ lexicon/allele-table.csv, gene-table.csv and phenotype-table.csv are copied
 from PyPGx (https://github.com/sbslee/pypgx, MIT). lexicon/phenotypes.tsv lists
 PharmCAT's alleles and phenotypes, which are CPIC and ClinPGx content (below).
 
+docker/fhir-server/packages/ holds three FHIR packages, unmodified, from HL7's
+FHIR package registry (https://packages.fhir.org), which the bundled HAPI FHIR
+server loads: the Genomics Reporting Implementation Guide 3.0.0, HL7
+Terminology (THO) 6.1.0 and the FHIR Extensions Pack 5.1.0. HL7 publishes
+them under CC0 1.0. Some of their value sets list LOINC and SNOMED CT codes,
+which come with those terminologies' terms (section 4).
+
 
 2. In the ZaroPGx images
 ------------------------
