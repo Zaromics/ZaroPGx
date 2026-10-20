@@ -87,6 +87,7 @@ from app.services.cleanup_service import cleanup_service
 from app.services.fhir_export_service import fhir_export_enabled
 from app.services.job_service import JobService
 from app.utils.env import env_flag
+from app.utils.redact import redact_secrets
 
 # This module logs liberally with emoji. The container's stdout is UTF-8, but a Windows host
 # console is cp1252, where a single emoji raises UnicodeEncodeError and takes down the whole
@@ -1024,7 +1025,6 @@ async def services_status(
     logger.info(
         f"Client IP: {request.client.host}, Method: {request.method}, Path: {request.url.path}"
     )
-    logger.info(f"Headers: {request.headers}")
 
     # Only check services that are enabled
     services_to_check = {
@@ -1104,7 +1104,8 @@ async def services_status(
         # Check database separately
         db_service = services_to_check.get("database")
         if db_service:
-            logger.info(f"Checking database at {db_service['url']}")
+            # Never log DATABASE_URL: it carries the password.
+            logger.info("Checking database")
             try:
                 # Try to connect to the database
                 from sqlalchemy import create_engine, text
@@ -1125,11 +1126,13 @@ async def services_status(
                         logger.info("Database connection test succeeded")
                         service_check_results["database"] = {"status": "healthy"}
             except Exception as e:
-                logger.error(f"Database error: {str(e)}")
-                unhealthy_services["database"] = f"Database error: {str(e)}"
+                # The answer goes to the page and the log: no password in either.
+                message = redact_secrets(e)
+                logger.error(f"Database error: {message}")
+                unhealthy_services["database"] = f"Database error: {message}"
                 service_check_results["database"] = {
                     "status": "error",
-                    "message": str(e),
+                    "message": message,
                 }
 
         # Check pypgx with retries

@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from app.utils.env import env_flag
+from app.utils.redact import redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -222,10 +223,19 @@ class VersionManager:
         # Try to connect and query version
         try:
             import psycopg
+            from sqlalchemy.engine import make_url
 
             db_url = os.environ.get("DATABASE_URL")
             if db_url:
-                with psycopg.connect(db_url) as conn:
+                # DATABASE_URL is SQLAlchemy's (postgresql+psycopg://...), which
+                # psycopg refuses as a connection string, quoting it whole in the
+                # error, password included. Give psycopg its parts instead.
+                url = make_url(db_url)
+                connect_args = url.translate_connect_args(
+                    username="user", database="dbname"
+                )
+                connect_args.update(url.query)
+                with psycopg.connect(connect_timeout=5, **connect_args) as conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT version();")
                         version_str = cur.fetchone()[0]
@@ -236,7 +246,7 @@ class VersionManager:
                             )[0]
                             return version_match
         except Exception as e:
-            logger.debug(f"Failed to query PostgreSQL version: {e}")
+            logger.debug(f"Failed to query PostgreSQL version: {redact_secrets(e)}")
 
         return "N/A"
 
