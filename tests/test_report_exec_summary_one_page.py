@@ -374,7 +374,12 @@ def test_without_the_tsv_it_keeps_to_pharmcats_panel(monkeypatch, tmp_path):
     # pointed to.
     assert "HLA-A" in summary[summary.index("Not called from this sample") :]
     assert "ABCB1" not in summary
-    assert "The 1 other gene this run called" in summary
+    # Both counts from this run's rows (the demo's "66 other genes" read as a
+    # miscount beside PyPGx's 87).
+    assert (
+        "Genetic Results lists the 2 genes this run called, 1 of them outside the "
+        "genes PharmCAT's guidelines use." in summary
+    )
 
 
 def test_not_called_never_names_a_gene_the_table_shows(monkeypatch, tmp_path):

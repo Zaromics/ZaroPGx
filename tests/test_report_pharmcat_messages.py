@@ -18,8 +18,11 @@ import pytest
 
 import app.reports.generator as generator_module
 from app.pharmcat.pharmcat_messages import (
+    GENERIC,
     LEFT_OUT,
     POSITIONS_RULES,
+    STRAND_FOOTNOTE,
+    WHEN_NOT_CALLED,
     api_messages,
     drug_messages,
     gene_messages,
@@ -82,18 +85,21 @@ def test_positions_notes_are_shown_when_the_report_has_no_positions_alert():
     assert not shown(plain, positions_stated=False)
 
 
-def test_footnotes_and_notes_are_shown():
+def test_footnotes_are_read_and_notes_on_every_call_left_out():
+    """The strand footnotes are read (the report says them once, for all their
+    genes); the notes PharmCAT gives every CYP3A4 or G6PD call whatever the sample
+    are not: "The CYP3A4 alleles are determined based on PharmVar CYP3A4 allele
+    definitions. See PharmCAT disclaimer ...", and the VCF-format note on G6PD
+    ("some VCF files do not specify hemizygous ..."), on G6PD and on its drugs."""
     genes = gene_messages(_load(EXAMPLE))
     assert any(
         "negative chromosomal strand" in m["paragraphs"][0] for m in genes["DPYD"]
     )
+    assert "CYP3A4" not in genes and "G6PD" not in genes
     drugs = drug_messages(_load(EXAMPLE))
-    hemizygous = [m for m in drugs["dapsone"] if m["rule"] == "G6PD hemizygous samples"]
-    assert hemizygous and hemizygous[0]["kind"] == "note"
-    assert hemizygous[0]["paragraphs"][0].startswith(
-        "PharmCAT reports based on VCF file input and some VCF files do not specify "
-        "hemizygous (one X chromosome)"
-    )
+    for drug, entries in drugs.items():
+        assert not [m for m in entries if m["rule"] in GENERIC], drug
+    assert set(GENERIC) == {"CYP3A4", "G6PD hemizygous samples"}
 
 
 def test_a_drug_message_is_shown_once_across_sources():
@@ -186,7 +192,7 @@ def test_the_api_returns_the_kinds_pharmcat_emits():
         {"exception_type": "warning", "rule_name": "z", "message": "f"},
     ]
     # What the report shows, so the API and the report agree.
-    assert [m["message"] for m in api_messages(messages)] == ["a", "b", "c", "f"]
+    assert [m["message"] for m in api_messages(messages)] == ["a", "c", "f"]
     assert api_messages([{"exception_type": "new-kind", "message": "g"}]) == [
         {"exception_type": "new-kind", "message": "g"}
     ]
@@ -256,11 +262,35 @@ def test_the_interactive_report_shows_them(monkeypatch, tmp_path):
 @pytest.mark.parametrize("path", [EXAMPLE, V340])
 def test_every_report_renders_its_messages(monkeypatch, tmp_path, path):
     page = unescape(_page(monkeypatch, tmp_path, path, "html"))
+    results = page[page.index("<h2>Genetic Results</h2>") :]
+    results = _clean(results[: results.index("<h2>", 10)])
+    strand = []
     for gene, entries in gene_messages(_load(path)).items():
         for m in entries:
-            # A called gene's messages are under Genetic Results.
-            if f"<td>{gene}</td>" in page:
+            if f"<td>{gene}</td>" not in page:
+                continue
+            if STRAND_FOOTNOTE.match(m["rule"]):
+                # Said once for all of them, not once a gene.
+                strand.append(gene)
+                assert m["paragraphs"][0] not in page, (gene, m)
+            elif m["rule"] in WHEN_NOT_CALLED:
+                # SLCO1B1's text on what is shown if no star allele is called:
+                # it has one.
+                assert m["paragraphs"][0] not in page, (gene, m)
+            else:
+                # A called gene's messages are under Genetic Results.
                 assert m["paragraphs"][0] in page, (gene, m)
+    if strand:
+        names = sorted(strand)
+        listed = (
+            names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        )
+        assert (
+            f"{listed} {'is' if len(names) == 1 else 'are'} on the negative strand: "
+            "as PharmCAT notes," in results
+        ), results
+        assert results.count("negative strand") == 1
+        assert "negative chromosomal strand" not in results
 
 
 # PharmCAT 3.4.0's only non-match rule (reporter/messages.json), which it adds to
@@ -331,15 +361,83 @@ def test_an_uncalled_ryr1s_warning_reaches_both_reports(monkeypatch, tmp_path):
     assert "Desflurane — PharmCAT (RYR1): If the RYR1 genotype" in recs
 
 
-def test_a_g6pd_note_on_a_drug_without_an_annotation(monkeypatch, tmp_path):
-    """The example's FDA chloroquine, glyburide, ...: no annotation for this sample,
-    PharmCAT's G6PD note on each. One entry names them all."""
+def test_notes_on_drugs_without_an_annotation_are_one_entry_each(monkeypatch, tmp_path):
+    """The example's FDA chloroquine, glyburide, ...: no annotation for this sample.
+    PharmCAT's VCF-format G6PD note on each (GENERIC) is left out; an uncalled
+    RYR1's warning (test_an_uncalled_ryr1s_warning_reaches_both_reports) is not."""
     page = unescape(_page(monkeypatch, tmp_path, EXAMPLE, "html"))
-    recs = _clean(page[page.index("<h2>Drug Recommendations</h2>") :])
-    entry = recs[recs.index("Chloroquine") :]
-    entry = entry[: entry.index("FAQs")]
+    assert "PharmCAT reports based on VCF" not in page
+    assert "drugs without a recommendation for this sample" not in page
+
+
+def _notes_page(rows, general=(), strand=()):
+    from app.reports.generator import env
+
+    macros = env.get_template("_pharmcat_messages.html").module
+    return _clean(str(macros.gene_notes(rows, list(general), list(strand))))
+
+
+def _note(rule, text, kind="note"):
+    return {"kind": kind, "rule": rule, "gene": "", "paragraphs": [text]}
+
+
+def test_a_genes_notes_are_one_line():
+    """UGT1A1's ambiguity and its repeat footnote were two bullets, as were
+    SLCO1B1's two notes."""
+    rows = [
+        {
+            "gene": "UGT1A1",
+            "diplotype": "*1/*80+*28",
+            "pharmcat_messages": [
+                _note(
+                    "UGT1A1 *1/*80+*28 warning",
+                    "The assigned genotype is A.",
+                    "ambiguity",
+                ),
+                _note(
+                    "UGT1A1 repeat warning", "Some alleles ... the repeat.", "footnote"
+                ),
+            ],
+        }
+    ]
+    body = _notes_page(rows)
+    assert body.count("UGT1A1 :") == 1
+    assert "UGT1A1 : The assigned genotype is A. Some alleles ... the repeat." in body
+
+
+def test_the_strand_footnotes_are_one_line(monkeypatch, tmp_path):
+    """Five genes' "The X gene is on the negative chromosomal strand, ..." said
+    once; the demo listed CYP3A5, DPYD, IFNL3, TPMT and VKORC1 a bullet each."""
+    from app.reports.generator import attach_pharmcat_messages
+
+    report = _load(EXAMPLE)
+    rows = [
+        {"gene": g, "diplotype": "*1/*1"}
+        for g in ("CYP3A5", "DPYD", "IFNL3", "TPMT", "VKORC1", "SLCO1B1", "UGT1A1")
+    ]
+    notes = attach_pharmcat_messages(report, rows, [])
+    assert notes["strand"] == ["CYP3A5", "DPYD", "IFNL3", "TPMT", "VKORC1"]
+    by_gene = {r["gene"]: r.get("pharmcat_messages") or [] for r in rows}
+    for gene in notes["strand"]:
+        assert not [m for m in by_gene[gene] if STRAND_FOOTNOTE.match(m["rule"])]
+    # DPYD keeps its activity-score note, which bears on its score.
+    assert [m["rule"] for m in by_gene["DPYD"]] == ["DPYD lowest activity score note"]
+    # SLCO1B1 has a call: its "will be displayed if determinable" text goes.
+    assert not by_gene["SLCO1B1"]
+    body = _notes_page(rows, (), notes["strand"])
+    assert body.count("negative strand") == 1
     assert (
-        "Glyburide" in entry
-        and "PharmCAT (G6PD): PharmCAT reports based on VCF" in entry
+        "CYP3A5, DPYD, IFNL3, TPMT and VKORC1 are on the negative strand: as "
+        "PharmCAT notes, their genotypes are given here on the positive strand, "
+        "complemented from the gene's bases." in body
     )
-    assert recs.count("Chloroquine, ") == 1
+
+
+def test_slco1b1s_text_stays_when_it_has_no_call():
+    """It says recommendations then rest on rs4149056 alone: then it matters."""
+    from app.reports.generator import attach_pharmcat_messages
+
+    rows = [{"gene": "SLCO1B1", "diplotype": "Unknown/Unknown"}]
+    attach_pharmcat_messages(_load(V340), rows, [])
+    rules = [m["rule"] for m in rows[0]["pharmcat_messages"]]
+    assert "SLCO1B1-drug text" in rules

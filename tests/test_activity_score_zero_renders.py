@@ -374,6 +374,6 @@ def test_weasyprint_lane_does_not_fall_back_to_the_stub_template(monkeypatch, tm
     )
     # Markers that exist only in the real template.
     assert "Recommendation Strength Legend" in html
-    assert "Source Legend:" in html
+    assert '<div class="tool-key">' in html
     # A marker that exists only in the stub fallback.
     assert "No analysis results available" not in html

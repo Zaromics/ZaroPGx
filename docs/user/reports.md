@@ -51,14 +51,21 @@ from PyPGx and OptiType. Columns: diplotype, phenotype, activity score, implicat
 without a call, the one that tried. C PharmCAT, P PyPGx, O OptiType, M mtDNA-Server 2, X an
 outside call whose tool was not recorded, – no call and no tool on record for the gene
 (PharmCAT made none and was given none, or no tool returned a result for it), ? not
-recorded. The guideline behind each recommendation (CPIC, DPWG or FDA) heads it under Drug
+recorded. The key above the table lists only the letters the report uses. The guideline behind each recommendation (CPIC, DPWG or FDA) heads it under Drug
 Recommendations. The table has no guideline column: PharmCAT 3.1 and later record no
 guideline source per gene.
 
 **Implications** says what the phenotype means, as CPIC defines the term (for example
 "Decreased transporter function, between normal and poor" for *SLCO1B1* Decreased
 Function), and points to the drug recommendations for what follows from it; it names no
-dose or drug of its own. The interactive report's gene cards and panels say the same.
+dose or drug of its own. An N/A call's is a dash: the note on N/A says what it means, once,
+behind the Executive Summary when a gene there is N/A, else under the table. The
+interactive report's gene cards and panels say the same in words.
+
+Beside a diplotype the table says, in a few words, what PyPGx's copy number found ("one
+copy deleted", "tandem \*68+\*4"; its code is in the interactive report's evidence panel),
+and which alleles a different phasing would give ("\*6 if these variants lie on one
+chromosome").
 
 Genes examined without a call are listed after the table, each with its Call letter (as
 they are in the interactive report's Genes tab, which lists every gene), and with the reason
@@ -92,40 +99,45 @@ names the structural alleles it cannot detect from a VCF: the *CYP2B7*-*CYP2B6* 
 *CYP2B6* \*29 and \*30, and the deletions *CYP2C19* \*36 and \*37, *CYP4F2* \*16 and
 *SLCO1B1* \*48 and \*49. It says so in its own HTML report's disclaimers, not in the
 report.json this report is built from. Each such call of PharmCAT's (Call C) is marked
-"Copy number not assessed (PharmCAT's call)", with the alleles it would miss. Under the
-default, `auto`, PyPGx also runs these genes on an alignment, for their copy number, and
-the calls stay PharmCAT's: where PyPGx measured it (*CYP2B6* and *CYP4F2*, from a whole
-genome), the note gives PyPGx's copy number instead, and the Executive Summary row reads
-"Structural alleles". When PyPGx makes these calls instead (`pypgx`), it cannot show them
-all either: it has no copy-number model for
-*CYP2C19* or *SLCO1B1* ("Copy number not assessed (PyPGx has no copy-number model for this
-gene)"), and none of its *CYP2B6* copy-number states is \*30, so even its whole-genome
-*CYP2B6* call is marked. Its *CYP4F2* call from a whole genome measures the gene's copy
+⚠ "Copy number not assessed", with the alleles it would miss. Under the default, `auto`,
+PyPGx also runs these genes on an alignment, for their copy number, and the calls stay
+PharmCAT's. Where PyPGx measured it and found it normal (*CYP2B6* and *CYP4F2*, from a
+whole genome) there is no ⚠: the alert says so once, and only *CYP2B6* \*30, which no tool
+here calls, gets a plain note ("\*30 not assessed"). When PyPGx makes these calls instead
+(`pypgx`), it cannot show them all either: it has no copy-number model for *CYP2C19* or
+*SLCO1B1* ("Copy number not assessed (no copy-number model)"), and none of its *CYP2B6*
+copy-number states is \*30. Its *CYP4F2* call from a whole genome measures the gene's copy
 number, so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If
 PyPGx measured a copy number other than normal for a gene whose call shown is PharmCAT's,
-the call may be wrong, and its row in the Executive Summary says "PyPGx found a structural
-allele". One entry under Alerts and Warnings, "Structural alleles not assessed", names the
-genes, and one note behind the Executive Summary covers them all. These notes appear on a
-whole genome's report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
+the call may be wrong: its row in the Executive Summary says ⚠ "PyPGx found a structural
+allele", and the alert says so first. One entry under Alerts and Warnings names the genes
+not assessed ("Structural alleles not assessed") and says once what PyPGx measured; each
+gene has a short note behind the Executive Summary. These notes appear on a whole genome's
+report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
 An outside call neither tool made, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets no
 note either.
 
 **PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
 shows them where PharmCAT's own report does, in PharmCAT's words (a link as its words and
-its address): a gene's under Genetic Results ("PharmCAT's notes on these calls"), called or
-not, and in the interactive report's gene panel; a drug's at the head of the drug under
-Drug Recommendations, each marked with the gene it is about. A drug with no recommendation
-for this sample still gets its notes, in a list after the recommendations: PharmCAT's own
-report gives such a drug its section too. Among them: an unphased call's "The assigned
-genotype is \*1/\*15; however, \*5/\*37 cannot be ruled out without phased data.", the
-G6PD hemizygous-sample note, the reverse-strand footnotes, the warfarin notes with the
-rs12777823 genotype PharmCAT highlights for warfarin, and, where RYR1 has data but no call,
-its malignant hyperthermia warning on RYR1 and the anaesthetics. Left out: PharmCAT's
-outside-call note (the Call column names the tool), its note that a reference allele means
-no variant at the positions its definition uses (the call's name says so), and, when Alerts
-and Warnings lists the positions PharmCAT did not read, its own notes on those positions.
-A report rebuilt from a report.json alone has no such alert, and shows them. None appears
-on the Executive Summary.
+its address): a gene's under Genetic Results ("PharmCAT's notes on these calls"), one line
+a gene, called or not, and in the interactive report's gene panel; a drug's at the head of
+the drug under Drug Recommendations, each marked with the gene it is about. A drug with no
+recommendation for this sample still gets its notes, in a list after the recommendations:
+PharmCAT's own report gives such a drug its section too. Among them: an unphased call's
+"The assigned genotype is \*1/\*15; however, \*5/\*37 cannot be ruled out without phased
+data.", UGT1A1's repeat caveat, NAT2's choice among several calls, DPYD's activity-score
+rule, the warfarin notes with the rs12777823 genotype PharmCAT highlights for warfarin, and,
+where RYR1 has data but no call, its malignant hyperthermia warning on RYR1 and the
+anaesthetics. PharmCAT's footnote that a gene on the negative strand is given on the
+positive one is said once, for all such genes. Left out: PharmCAT's outside-call note (the
+Call column names the tool); its note that a reference allele means no variant at the
+positions its definition uses (the call's name says so); the notes it gives every CYP3A4
+call (where its allele definitions come from) and every G6PD call and drug (how some VCF
+files write chromosome X), which change nothing about this sample; SLCO1B1's note on what
+recommendations rest on if no star allele is called, when one is; and, when Alerts and
+Warnings lists the positions PharmCAT had no genotype for, its own notes on those
+positions. A report rebuilt from a report.json alone has no such alert, and shows them.
+None appears on the Executive Summary.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.
@@ -136,7 +148,8 @@ or FDA guidance without a CPIC strength); No recommendation (a guideline that gi
 genotype-based action); Unclassified.
 
 **Drug Recommendations.** For each drug, each source's recommendation: CPIC and DPWG
-guidelines, FDA labels and FDA's pharmacogenetic associations, with the strength and a link
+guidelines, FDA labels and FDA's pharmacogenetic associations, with the strength of
+recommendation where the source gives one, and a link
 to the guideline's page at ClinPGx, where its full text and literature are. When the input is unphased and a gene has several possible diplotypes, guidance
 that differs between them is marked "Applies if".
 

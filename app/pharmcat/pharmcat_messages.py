@@ -24,8 +24,11 @@ reporter/messages.json and the ones PharmCAT adds as it runs:
   extra-position-notes and combo-partial.
 
 The report leaves out what it already says in its own words (LEFT_OUT, and the
-positions rules when its positions alert was produced). Everything else is shown
-in PharmCAT's text: its markup removed (a link as "words (url)"), the words
+positions rules when its positions alert was produced), and notes PharmCAT gives
+every call of a gene whatever the sample (GENERIC). PharmCAT's strand footnotes,
+the same words for five genes, are said once (STRAND_FOOTNOTE), and SLCO1B1's drug
+text only when SLCO1B1 has no call (WHEN_NOT_CALLED). Everything else is shown in
+PharmCAT's text: its markup removed (a link as "words (url)"), the words
 unchanged. Rows with no call keep theirs: PharmCAT gives an uncalled RYR1 its
 malignant hyperthermia warning.
 """
@@ -39,7 +42,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 # Rules whose content the report states itself, and where. The two positions
 # rules only when the report's positions alert (Alerts and Warnings: "Positions not
-# in the VCF" / "Positions not read") was produced for this run: it lists each
+# in the VCF" / "Positions without a genotype") was produced for this run: it lists each
 # gene's missing positions and the alleles they leave unassessed. Without it they
 # are shown.
 LEFT_OUT = {
@@ -54,10 +57,37 @@ LEFT_OUT = {
     # call, and the PyPGx evidence panel gives its position-level detail.
     "pcat-outside-call": "the Call column, the Source Legend and the PyPGx evidence",
 }
+# Notes PharmCAT attaches to every call of the gene, whatever the sample, that change
+# nothing about this one: the report leaves them out (the API too, so the two agree).
+GENERIC = {
+    # "The CYP3A4 alleles are determined based on PharmVar CYP3A4 allele
+    # definitions. See PharmCAT disclaimer for further information." -- where the
+    # definitions come from, on every CYP3A4 call; the disclaimer it points to is
+    # in PharmCAT's own report, not this one.
+    "CYP3A4": "where CYP3A4's allele definitions come from, on every CYP3A4 call",
+    # "PharmCAT reports based on VCF file input and some VCF files do not specify
+    # hemizygous (one X chromosome) and instead represent samples as homozygous.
+    # See PharmCAT FAQs" -- on every G6PD call and drug. A hemizygous call written
+    # as homozygous has the same phenotype (Normal, Deficient), so it changes no
+    # result here.
+    "G6PD hemizygous samples": "how some VCF files write chromosome X",
+}
 # "Some position data used to define CYP2C19 alleles is missing which may change
 # the matched genotype.", and reference-allele's "... or because the position is
 # missing" form.
 POSITIONS_RULES = frozenset({"missing-variants"})
+# Notes that matter only when the gene has no call. "The SLCO1B1 genotype (star
+# nomenclature) will be displayed if determinable ... In case no genotype can be
+# determined, recommendations are based on the rs4149056 genotype alone": with a
+# star-allele call it says only that the call was made (generator.
+# attach_pharmcat_messages).
+WHEN_NOT_CALLED = {"SLCO1B1-drug text": "SLCO1B1"}
+# PharmCAT's footnote on each gene on the negative strand (CYP3A5, DPYD, IFNL3,
+# TPMT, VKORC1): "The CYP3A5 gene is on the negative chromosomal strand, all
+# genotype calls for CYP3A5 in this report refer to the positive chromosomal
+# strand. Therefore, genotype calls are complemented from gene bases." The same
+# words for each: the report says them once, for all of them.
+STRAND_FOOTNOTE = re.compile(r"^(\S+) reverse complement footnote$")
 
 _BREAK = re.compile(r"<br\s*/?>|</?p\b[^>]*>", re.IGNORECASE)
 # A tag starts with a letter (or /letter): "AS < 1.5 and AS > 0.5" is text.
@@ -76,13 +106,15 @@ def _positions_form(message: Mapping[str, Any]) -> bool:
 
 
 def shown(message: Mapping[str, Any], positions_stated: bool = True) -> bool:
-    """Whether the report shows this message: it has text, and the report does not
-    say the same itself (LEFT_OUT; the positions rules when ``positions_stated``)."""
+    """Whether the report shows this message: it has text, it bears on this
+    sample's call (GENERIC), and the report does not say the same itself
+    (LEFT_OUT; the positions rules when ``positions_stated``)."""
     if not str(message.get("message") or "").strip():
         return False
     if _positions_form(message):
         return not positions_stated
-    return str(message.get("rule_name") or "").strip() not in LEFT_OUT
+    rule = str(message.get("rule_name") or "").strip()
+    return rule not in LEFT_OUT and rule not in GENERIC
 
 
 def _link_text(match: "re.Match[str]") -> str:

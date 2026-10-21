@@ -520,3 +520,26 @@ def test_template_debug_artifacts_are_gone():
         html = _render(template_name, mapped)
         assert "<!-- DEBUG:" not in html
         assert "Classifications:" not in html
+
+
+@pytest.mark.parametrize(
+    "template_name", ["report_template.html", "interactive_report.html"]
+)
+def test_an_unspecified_strength_is_not_spelled_out(template_name):
+    """DPWG's and FDA's "Unspecified" printed "Strength of Recommendation:
+    Unspecified" on every such card (155 in the demo). The card's colour and the
+    legend's "Guideline available" say it; a strength that is one stays."""
+    mapped = map_recommendations_for_template(
+        [
+            _grouped("acenocoumarol", "VKORC1", "NO action is needed.", "Unspecified"),
+            _grouped("abacavir", "HLA-B", "Use abacavir.", "Strong"),
+            _grouped("allopurinol", "ABCG2", "No recommendation.", "No recommendation"),
+        ]
+    )
+    html = _render(template_name, mapped)
+    assert "Strength of Recommendation:</strong> Unspecified" not in html
+    assert "Strength of Recommendation:</strong> Strong" in html
+    assert "Strength of Recommendation:</strong> No recommendation" in html
+    # The guideline's own words are untouched.
+    assert "NO action is needed." in html
+    assert "DPWG/FDA guidance without a CPIC recommendation strength" in html

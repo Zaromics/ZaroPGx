@@ -405,9 +405,16 @@ def test_templates_no_longer_reference_report_data_from(template_name):
 @pytest.mark.parametrize("template_name", TEMPLATES)
 def test_rendered_legend_explains_every_glyph(template_name):
     html = _render(template_name)
-    assert "X</strong> = outside call" in html
-    assert "?</strong> = not recorded by this run" in html
-    assert "&ndash;</strong> = no call and no tool on record" in html
+    key = html[html.index('<div class="tool-key">') :]
+    key = key[: key.index("</div>")]
+    assert "<strong>X</strong> outside call, tool not recorded" in key
+    assert "<strong>?</strong> not recorded by this run" in key
+    assert "<strong>–</strong> no call, and no tool on record" in key
+    # One line, and only the letters the page shows: no row here is OptiType's,
+    # PyPGx's or mtDNA-Server 2's.
+    assert key.count("<p>") == 1
+    for tool in ("OptiType", "PyPGx", "mtDNA"):
+        assert tool not in key, tool
     # The Data column is gone, so the legend must not describe it.
     assert "Data:</strong>" not in html
     assert "Report data tool" not in html
@@ -485,15 +492,16 @@ def test_the_legend_holds_for_a_gene_without_a_call(template_name):
     html = _render(template_name)
     assert "Tool that made this call" not in html
     assert (
-        "the one that made the call or, for a gene without a call, the one that "
-        "tried" in html
+        "<strong>Call:</strong> the tool that made the call, or, for a gene without "
+        "one, the tool that tried." in html
     )
     # True for HLA-C, which PharmCAT never handles, and for a PyPGx-only gene
     # with nothing returned: "PharmCAT made none and was given none" alone is not.
-    assert (
-        "&ndash;</strong> = no call and no tool on record for the gene (PharmCAT "
-        "made none and was given none, or no tool returned a result for it)" in html
-    )
+    assert "<strong>–</strong> no call, and no tool on record" in html
+    # A report whose genes were all called has no such gene to explain.
+    called = [r for r in _ROWS if r["diplotype"] and r["called_by"] != "–"]
+    html = _render(template_name, called)
+    assert "<strong>Call:</strong> the tool that made the call." in html
 
 
 def test_an_uncalled_row_s_tooltip_does_not_say_called_by():

@@ -1040,7 +1040,7 @@
                                precision survives. Mirrors report_template.html. #}
                             <td>{{ d.activity_score if d.activity_score|activity_score_num is not none else '' }}</td>
                             {# app/reports/implications.py, as in report_template.html. #}
-                            <td>{{ d|implication }}</td>
+                            <td>{{ d|table_implication }}</td>
                             {# An uncalled gene keeps the letter of the tool that tried
                                (the legend says so); its tooltip says that too, not
                                "Called by" (provenance.called_by_text). #}
@@ -1051,14 +1051,11 @@
                 </table>
                 {{ pypgx.na_legend(diplotypes) }}
                 {{ unresolved.candidates_note(diplotypes) }}
-        {{ pcmsg.gene_notes(diplotypes|sort(attribute='gene'), (pharmcat_notes or {}).general or []) }}
+        {{ pcmsg.gene_notes(diplotypes|sort(attribute='gene'), (pharmcat_notes or {}).general or [], (pharmcat_notes or {}).strand or []) }}
                 {{ unresolved.summary_uncalled(diplotypes, missing_positions_not_assumed) }}
                 {{ pypgx.evidence_panel(diplotypes) }}
 
-                <div class="tool-key">
-                    <h4>Source Legend:</h4>
-                    <p><strong>Call:</strong> The tool the run records for the gene: the one that made the call or, for a gene without a call, the one that tried - <strong>C</strong> = PharmCAT, <strong>P</strong> = PyPGx, <strong>O</strong> = OptiType, <strong>M</strong> = mtDNA-server-2, <strong>X</strong> = outside call (producing tool not recorded), <strong>&ndash;</strong> = no call and no tool on record for the gene (PharmCAT made none and was given none, or no tool returned a result for it), <strong>?</strong> = not recorded by this run</p>
-                </div>
+                {{ pypgx.call_key(diplotypes) }}
                 
                 <div id="geneInfoSection"></div>
             </div>
@@ -1193,7 +1190,12 @@
                                         the uploaded file. The data-recommendation
                                         attribute below deliberately stays escaped. -#}
                                     <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
+                                    {# As in report_template.html: "Unspecified" (DPWG, FDA) is
+                                       the card's colour and the legend's "Guideline
+                                       available". #}
+                                    {% if group_data['rec'].evidence_class != 'evidence-unspecified' %}
                                     <p style="margin: 4px 0;"><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
+                                    {% endif %}
                                     {% if group_data['rec'].literature_references %}
                                     <p style="margin: 4px 0;"><strong>References:</strong> {{ group_data['rec'].literature_references|literature_references }}</p>
                                     {% endif %}

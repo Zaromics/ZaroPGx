@@ -701,13 +701,13 @@ def test_a_partly_covered_call_is_named_with_what_it_could_not_assess():
         "bam",
     )
     assert (
-        "<li><strong>NUDT15</strong>: 5 of 20 positions not read; alleles not "
-        "assessable: *4, *15, *20, *21</li>"
+        "<li><strong>NUDT15</strong>: 5 of 20 positions without a genotype; alleles "
+        "not assessable: *4, *15, *20, *21</li>"
     ) in text
     assert "CYP2C19" not in text and "RYR1" not in text
     assert "could not be assessed" in text
     # No statuses were kept, so no reasons are claimed.
-    assert "no reads" not in text.lower()
+    assert "not read" not in text.lower() and "not called" not in text
 
 
 def test_each_line_says_why_the_positions_were_missing():
@@ -750,31 +750,60 @@ def test_each_line_says_why_the_positions_were_missing():
             "chr6:999": "uncertain",  # read as missing by no gene PharmCAT called
         },
     )
+    # Plain counts, each reason its own: "1 of 48 not read, 1 more read but not
+    # called", not "not read (no reads 1, uncertain 1)".
     assert (
-        "<li><strong>CYP2B6</strong>: 2 of 48 positions not read (no reads 1, "
-        "uncertain 1); alleles not assessable: *30; assessed on their other "
-        "positions only: *6, *7</li>"
+        "<li><strong>CYP2B6</strong>: 1 of 48 positions not read, 1 more read but "
+        "not called; alleles not assessable: *30; assessed on their other positions "
+        "only: *6, *7</li>"
     ) in text
     # A gene with no call gets its count: that may be why.
+    assert "<li><strong>VKORC1</strong>: 1 of 1 position not read; no call</li>" in text
+    # The reads showed something there: not "not read", and not nothing.
     assert (
-        "<li><strong>VKORC1</strong>: 1 of 1 position not read (no reads 1); "
-        "no call</li>"
+        "<li><strong>TPMT</strong>: 1 of 45 positions with a variant PharmCAT did "
+        "not take; assessed on their other positions only: *3B</li>"
     ) in text
-    # The reads showed something there: not "no reads", and not nothing.
-    assert (
-        "<li><strong>TPMT</strong>: 1 of 45 positions not read (variant 1); "
-        "assessed on their other positions only: *3B</li>"
-    ) in text
+    assert "Positions without a genotype:" in text
+    assert "brackets" not in text and "uncertain" not in text
     # Each reason used is explained once, and only those.
+    assert "<em>Not read</em>: no read of mapping quality 1 or more" in text
     assert (
-        "In brackets, <em>no reads</em>: no read of mapping quality 1 or more" in text
+        "<em>Read but not called</em>: too few reads, or reads for another allele "
+        "without a confident call (see Methodology)." in text
     )
-    assert "<em>uncertain</em>: reads did, but did not settle the genotype" in text
     assert (
-        "<em>variant</em>: the reads showed a non-reference allele that PharmCAT"
-        in text
+        "<em>With a variant PharmCAT did not take</em>: the reads showed a "
+        "non-reference allele that PharmCAT" in text
     )
-    assert "<em>other</em>" not in text and "position list" not in text
+    assert "another status" not in text and "position list" not in text
+
+
+def test_a_line_read_but_not_called_alone_says_so():
+    """The demo's CYP4F2 line read "2 of 20 positions not read (uncertain 2)": both
+    positions had reads."""
+    from app.reports.generator import partial_coverage_alert
+
+    text = partial_coverage_alert(
+        [
+            {
+                "gene": "CYP4F2",
+                "diplotype": "*1/*1",
+                "uncalled_haplotypes": ["*17", "*19"],
+                "n_positions": 20,
+                "missing_positions": _missing(
+                    ("chr19:1", ["*17"]), ("chr19:2", ["*19"])
+                ),
+            }
+        ],
+        "cram",
+        {"chr19:1": "uncertain", "chr19:2": "uncertain"},
+    )
+    assert (
+        "<li><strong>CYP4F2</strong>: 2 of 20 positions read but not called; "
+        "alleles not assessable: *17, *19</li>"
+    ) in text
+    assert "not read" not in text.replace("Read but not called", "")
 
 
 def test_the_reasons_always_add_up_to_the_count():
@@ -799,12 +828,12 @@ def test_the_reasons_always_add_up_to_the_count():
         {"chr13:1": "no_reads", "chr13:2": "no_reads", "chr13:3": "reference"},
     )
     assert (
-        "<strong>NUDT15</strong>: 5 of 20 positions not read (no reads 2, other 1, "
-        "not in this run's position list 2)"
+        "<strong>NUDT15</strong>: 2 of 20 positions not read, 1 more with another "
+        "status, 2 more not in this run's position list;"
     ) in text
-    assert "<em>other</em>: another status" in text
+    assert "<em>With another status</em>: given per position" in text
     assert (
-        "<em>not in this run's position list</em>: the alignment was genotyped" in text
+        "<em>Not in this run's position list</em>: the alignment was genotyped" in text
     )
 
 
@@ -1319,7 +1348,8 @@ def test_a_plain_vcf_is_not_told_its_data_did_not_cover_a_position():
     assert "not read" not in vcf
     bam = partial_coverage_alert(genes, "bam")
     assert "The alignment gave no genotype at" in bam
-    assert "1 of 88 positions not read" in bam
+    # No statuses kept: no reason claimed.
+    assert "1 of 88 positions without a genotype" in bam
     gvcf = partial_coverage_alert(genes, "gvcf")
     assert "1 of 88 positions without a genotype" in gvcf
 
