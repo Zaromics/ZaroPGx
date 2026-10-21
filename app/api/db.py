@@ -8,6 +8,7 @@ from typing import List, Optional
 # Third-party imports
 import psycopg
 from dotenv import load_dotenv
+from fastapi import HTTPException
 
 # SQLAlchemy 2.0 imports
 from sqlalchemy import (
@@ -254,6 +255,11 @@ def get_db():
         # Test the connection immediately
         db.execute(text("SELECT 1"))
         yield db
+    except HTTPException:
+        # An answer the route chose (a 400 for a bad sample identifier, say), raised
+        # through this dependency: no database error, so none is logged.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger = logging.getLogger(__name__)

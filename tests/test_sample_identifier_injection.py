@@ -476,3 +476,51 @@ def test_upload_endpoint_rejects_injection_in_reference_genome(
         },
     )
     assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.parametrize(
+    "typed, stored",
+    [
+        ("Jane Doe", "Jane_Doe"),
+        ("  Jane   Doe  ", "Jane_Doe"),
+        ("Jane\tDoe", "Jane_Doe"),
+        ("NA12878", "NA12878"),
+    ],
+)
+def test_sample_identifier_spaces_become_underscores(typed, stored):
+    assert _upload_router().sample_identifier_from_form(typed) == stored
+
+
+@pytest.mark.parametrize(
+    "bad", [INJECTION_PAYLOAD, "Doe, Jane", "a b;id", "x" * 65, "_ leading"]
+)
+def test_sample_identifier_still_refuses_what_spaces_do_not_explain(bad):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _upload_router().sample_identifier_from_form(bad)
+    assert exc.value.status_code == 400
+
+
+def test_upload_endpoint_stores_a_spaced_sample_identifier_with_underscores(
+    client, monkeypatch, tmp_path
+):
+    """A space cost a whole-genome upload its 13 minutes and then a 400."""
+    import uuid as _uuid
+
+    from app.api.routes import upload_router
+
+    _install_upload_success_mocks(monkeypatch, tmp_path)
+    patients = []
+    monkeypatch.setattr(
+        upload_router,
+        "create_patient",
+        lambda db, identifier: patients.append(identifier) or str(_uuid.uuid4()),
+    )
+    resp = client.post(
+        "/upload/genomic-data",
+        files={"files": ("s.vcf", _VALID_VCF, "text/plain")},
+        data={"sample_identifier": "Jane Doe", "reference_genome": "hg38"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert patients == ["Jane_Doe"]

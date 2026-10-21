@@ -2,6 +2,30 @@
  * Upload Progress Component
  * Displays the progress of the user's file upload
  */
+
+// The server's handling of a sample identifier (sample_identifier_from_form in
+// app/api/routes/upload_router.py): spaces become underscores, then the rest must be
+// letters, digits, dot, underscore and hyphen. Applied here before anything is sent:
+// the server can check only once the whole upload has arrived, which for a genome is
+// many minutes later.
+function normalizeSampleIdentifier(value) {
+    return (value || '').trim().replace(/\s+/g, '_');
+}
+
+// What is wrong with a sample identifier once normalized, or null for an acceptable
+// or empty one.
+function sampleIdentifierProblem(value) {
+    const id = normalizeSampleIdentifier(value);
+    if (id === '' || /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) {
+        return null;
+    }
+    const suggestion = id.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/_{2,}/g, '_')
+        .replace(/^[^A-Za-z0-9]+/, '').slice(0, 64);
+    return `Sample identifier "${value.trim()}" is not accepted: use only letters, digits, dot, ` +
+        'underscore and hyphen, up to 64 characters, starting with a letter or digit' +
+        (suggestion ? ` (for example ${suggestion}).` : '.');
+}
+
 class GenomeDownloadProgress {
     constructor() {
         console.log("Initializing GenomeDownloadProgress component");
@@ -45,6 +69,12 @@ class GenomeDownloadProgress {
             this.form.insertBefore(progressDiv, this.form.firstChild);
         }
         
+        // A refused sample identifier stays marked until it is edited.
+        const sampleInput = document.getElementById('sampleIdentifier');
+        if (sampleInput) {
+            sampleInput.addEventListener('input', () => sampleInput.classList.remove('is-invalid'));
+        }
+
         // Override the form submission to use XHR for progress tracking
         this.overrideFormSubmission();
         console.log("Upload progress component initialized");
@@ -122,7 +152,27 @@ class GenomeDownloadProgress {
                 addLogMessage('Please select files to upload', 'warning');
                 return false;
             }
-            
+
+            // Said under the field: the upload status line is hidden until an upload starts.
+            const sampleInput = document.getElementById('sampleIdentifier');
+            const sampleProblem = sampleIdentifierProblem(sampleInput ? sampleInput.value : '');
+            if (sampleProblem) {
+                (window.addLogMessage || console.log)(sampleProblem, 'danger');
+                const feedback = document.getElementById('sampleIdentifierFeedback');
+                if (feedback) {
+                    feedback.textContent = sampleProblem;
+                }
+                if (sampleInput) {
+                    sampleInput.classList.add('is-invalid');
+                    sampleInput.focus();
+                }
+                return false;
+            }
+            // Shown as it will be stored, and sent that way: "Jane Doe" -> "Jane_Doe".
+            if (sampleInput) {
+                sampleInput.value = normalizeSampleIdentifier(sampleInput.value);
+            }
+
             // Log file selection details
             console.log(`${fileInput.files.length} files selected:`);
             for (let i = 0; i < fileInput.files.length; i++) {
@@ -267,6 +317,9 @@ class GenomeDownloadProgress {
                         errorMessage = xhr.statusText || "Unknown error";
                     }
                     
+                    // The reason beside the red bar too, not only in the log panel.
+                    this.showStatus(`Upload failed: ${errorMessage}`);
+
                     // Add log message
                     const addLogMessage = window.addLogMessage || console.log;
                     addLogMessage(errorMessage, 'danger');
