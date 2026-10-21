@@ -28,7 +28,7 @@ with outside calls → Reports (PDF, interactive HTML, FHIR R4)*
 It runs as a Docker Compose stack on your own machine, and your data stays there. It is
 research software, not a clinical test.
 
-### 🚀 Quickstart -- One-Command Setup
+### Quickstart with One-Command Setup
 
 **PowerShell (Windows):**
 ```powershell
@@ -241,8 +241,6 @@ This project was originally inspired by software such as **NeuroPGx**, available
 
 ## License
 
-[AGPLv3](LICENSE)
+This project is provided under the [AGPLv3](LICENSE) License.
 
 Copyright (C) 2024-2026 Iliya Yaroshevskiy
-
-This project is provided under the AGPLv3 License.
