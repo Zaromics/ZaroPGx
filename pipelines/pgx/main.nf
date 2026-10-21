@@ -658,12 +658,12 @@ process PyPGxGenotypeAll {
     val report_id
     // The type of the file PyPGx is actually handed, which is NOT always
     // params.input_type: a `bcf` or `gvcf` run reaches here holding the converted
-    // VCF, and docker/pypgx's determine_pypgx_gene_set() branches on this value (VCF
-    // input prefers PharmCAT's calls for overlapping genes, everything else prefers
-    // PyPGx's). Telling it "bcf"/"gvcf" would give the same call set a different gene
-    // selection than the identical VCF gets. Passed as a val input rather than read
-    // off params inside the shell block, because the corrected value only exists in
-    // the workflow body.
+    // VCF, and docker/pypgx's determine_pypgx_gene_set() branches on this value (under
+    // the default, auto, PyPGx genotypes PharmCAT's genes too from reads, for their copy
+    // number, and leaves them to PharmCAT from a VCF). Telling it "bcf"/"gvcf" would
+    // give the same call set a different gene selection than the identical VCF gets.
+    // Passed as a val input rather than read off params inside the shell block,
+    // because the corrected value only exists in the workflow body.
     val input_type
     val reference
     // The run's EFFECTIVE "Assume absent sites = reference", PharmCAT's own
@@ -715,17 +715,33 @@ process PyPGxGenotypeAll {
 import json,sys,os
 pypgx_success = os.environ.get('PYPGX_SUCCESS', 'false').lower() == 'true'
 
+# The genes whose calls go to PharmCAT: the wrapper's outside_call_genes. PharmCAT
+# takes an outside call over its own, so under PYPGX_PHARMCAT_PREFERENCE auto, where
+# PyPGx also genotypes PharmCAT's genes from reads for their copy number, PharmCAT
+# keeps its calls of them. An older pypgx sends no list: then the genes PharmCAT calls
+# itself (genes.json's pharmcat_can_call) are held back whatever its preference.
+outside_genes = None
+held_back = set()
 try:
     if os.path.exists('pypgx_result.json'):
         with open('pypgx_result.json', 'r') as f:
             data = json.load(f)
         res = data.get('results') or {}
+        listed = data.get('outside_call_genes')
+        if isinstance(listed, list):
+            outside_genes = {str(g).strip().upper() for g in listed}
     else:
         print("PyPGx result file not found, creating empty results", file=sys.stderr)
         res = {}
 except (json.JSONDecodeError, IOError) as e:
     print(f"Error reading PyPGx results: {e}, creating empty results", file=sys.stderr)
     res = {}
+if outside_genes is None and res:
+    try:
+        with open('!{projectDir}/../../config/genes.json', encoding='utf-8') as f:
+            held_back = {str(g).strip().upper() for g in json.load(f)['sets']['pharmcat_can_call']}
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"genes.json not read ({e}): every PyPGx call goes to PharmCAT", file=sys.stderr)
 
 # Only create outside.tsv if PyPGx service was actually available
 if pypgx_success:
@@ -738,6 +754,9 @@ if pypgx_success:
     lines = []
     for gene, resu in res.items():
         if not isinstance(resu, dict) or not resu.get('success'):
+            continue
+        name = str(gene).strip().upper()
+        if (outside_genes is not None and name not in outside_genes) or name in held_back:
             continue
         dip = resu.get('diplotype') or ''
         if dip:

@@ -513,13 +513,19 @@ def pharmcat_copy_number_alert(rows: Iterable[Mapping[str, Any]]) -> Optional[st
         f"{_gene_list([g for g, _ in entries])}. {_listed_body(entries)} The note "
         "beside each call says what it would miss."
     )
-    if any(e["kind"] == "pharmcat" for _, e in entries):
+    pharmcats = {g: e for g, e in entries if e["kind"] == "pharmcat"}
+    if any(
+        g in pharmcats and not pharmcats[g].get("pypgx_code")
+        for g in ("CYP2B6", "CYP4F2")
+    ):
         text += (
             " PyPGx measures copy number for CYP2B6 (not *30) and CYP4F2 from a "
-            "GRCh38 whole-genome BAM or CRAM where it is set to call those genes "
-            "(PYPGX_PHARMCAT_PREFERENCE); no tool here measures it for CYP2C19 or "
-            "SLCO1B1."
+            "GRCh38 whole-genome BAM or CRAM, unless PYPGX_PHARMCAT_PREFERENCE is "
+            "pharmcat; no tool here measures it for CYP2C19 or SLCO1B1."
         )
+    elif pharmcats:
+        # PyPGx measured both in this run, and the body says so.
+        text += " No tool here measures copy number for CYP2C19 or SLCO1B1."
     return text + "</p>"
 
 

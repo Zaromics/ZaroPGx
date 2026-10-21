@@ -17,6 +17,22 @@ pins its own release and updates to nothing newer.
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
+## v0.4.0 → next
+
+### PyPGx measures CYP2B6 and CYP4F2 copy number from reads
+
+`PYPGX_PHARMCAT_PREFERENCE` now defaults to `auto` (it was `pharmcat`). On a BAM, CRAM, SAM
+or FASTQ, PyPGx then also runs the genes PharmCAT calls itself, so a whole genome's report
+gives CYP2B6's and CYP4F2's copy number beside PharmCAT's calls, instead of "Copy number not
+assessed". The calls shown stay PharmCAT's. VCF, BCF and gVCF runs are unchanged.
+
+Your `.env` keeps its value. If it says `PYPGX_PHARMCAT_PREFERENCE=pharmcat`, change it to
+`auto` and restart PyPGx:
+
+```bash
+docker compose up -d pypgx
+```
+
 ## v0.3.2 → v0.4.0
 
 ### The image tag moves with the release

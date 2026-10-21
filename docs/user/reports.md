@@ -86,14 +86,18 @@ whole-genome alignment's report has none of these.
 
 PharmCAT's own calls get the same kind of note. PharmCAT calls *CYP2B6*, *CYP2C19*,
 *CYP4F2* and *SLCO1B1* itself, from small variants, on every input, a whole genome
-included, unless `PYPGX_PHARMCAT_PREFERENCE` gives them to PyPGx (`pypgx`, or `auto` for an
-alignment; {doc}`configuration`). Compose's default, `pharmcat`, does not. PharmCAT 3.4
+included, unless `PYPGX_PHARMCAT_PREFERENCE` is `pypgx`, which gives them to PyPGx
+({doc}`configuration`). PharmCAT 3.4
 names the structural alleles it cannot detect from a VCF: the *CYP2B7*-*CYP2B6* hybrids
 *CYP2B6* \*29 and \*30, and the deletions *CYP2C19* \*36 and \*37, *CYP4F2* \*16 and
 *SLCO1B1* \*48 and \*49. It says so in its own HTML report's disclaimers, not in the
 report.json this report is built from. Each such call of PharmCAT's (Call C) is marked
-"Copy number not assessed (PharmCAT's call)", with the alleles it would miss. When PyPGx
-makes these calls instead, it cannot show them all either: it has no copy-number model for
+"Copy number not assessed (PharmCAT's call)", with the alleles it would miss. Under the
+default, `auto`, PyPGx also runs these genes on an alignment, for their copy number, and
+the calls stay PharmCAT's: where PyPGx measured it (*CYP2B6* and *CYP4F2*, from a whole
+genome), the note gives PyPGx's copy number instead, and the Executive Summary row reads
+"Structural alleles". When PyPGx makes these calls instead (`pypgx`), it cannot show them
+all either: it has no copy-number model for
 *CYP2C19* or *SLCO1B1* ("Copy number not assessed (PyPGx has no copy-number model for this
 gene)"), and none of its *CYP2B6* copy-number states is \*30, so even its whole-genome
 *CYP2B6* call is marked. Its *CYP4F2* call from a whole genome measures the gene's copy
