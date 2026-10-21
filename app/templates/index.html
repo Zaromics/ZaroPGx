@@ -660,7 +660,9 @@
                                 
                             <div class="mb-3">
                                     <label for="sampleIdentifier" class="form-label">Sample Identifier (Optional)</label>
-                                    <input type="text" class="form-control" id="sampleIdentifier" name="sample_identifier" placeholder="Enter a sample identifier">
+                                    <input type="text" class="form-control" id="sampleIdentifier" name="sample_identifier" placeholder="Enter a sample identifier" maxlength="64" aria-describedby="sampleIdentifierHelp sampleIdentifierFeedback">
+                                    <div class="invalid-feedback" id="sampleIdentifierFeedback"></div>
+                                    <div class="form-text" id="sampleIdentifierHelp">Letters, digits, dot, underscore and hyphen; spaces become underscores.</div>
                                 </div>
 
 

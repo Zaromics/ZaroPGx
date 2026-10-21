@@ -336,6 +336,18 @@ def validate_pipeline_token(value: Optional[str], field_name: str) -> str:
     return stripped
 
 
+def sample_identifier_from_form(value: str) -> str:
+    """The user's sample identifier with its spaces turned into underscores, validated.
+
+    "Jane Doe" names a sample as well as "Jane_Doe" does, and refusing it cost a whole
+    upload: the form arrives in full before this runs. Each run of whitespace becomes
+    one underscore; everything else is held to validate_pipeline_token.
+    """
+    return validate_pipeline_token(
+        re.sub(r"\s+", "_", (value or "").strip()), "sample_identifier"
+    )
+
+
 def sanitize_optional_pipeline_token(value: Optional[str]) -> Optional[str]:
     """Filter a derived, non-user-facing token (e.g. a VCF-header sample name).
 
@@ -1850,9 +1862,7 @@ async def upload_genomic_data(
             reference_genome or "hg38", "reference_genome"
         )
         if sample_identifier and sample_identifier.strip():
-            sample_identifier = validate_pipeline_token(
-                sample_identifier, "sample_identifier"
-            )
+            sample_identifier = sample_identifier_from_form(sample_identifier)
 
         # When the caller doesn't send the mtdna_enabled form field at all, fall
         # back to the operator's own MTDNA_ENABLED setting rather than silently
