@@ -1190,10 +1190,11 @@
                                         the uploaded file. The data-recommendation
                                         attribute below deliberately stays escaped. -#}
                                     <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
-                                    {# As in report_template.html: "Unspecified" (DPWG, FDA) is
-                                       the card's colour and the legend's "Guideline
-                                       available". #}
-                                    {% if group_data['rec'].evidence_class != 'evidence-unspecified' %}
+                                    {# As in report_template.html: "Unspecified" (DPWG, FDA) and
+                                       a missing classification are the card's colour
+                                       and the legend's "Guideline available" and
+                                       "Unclassified". #}
+                                    {% if group_data['rec'].evidence_class not in ('evidence-unspecified', 'evidence-unclassified') %}
                                     <p style="margin: 4px 0;"><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
                                     {% endif %}
                                     {% if group_data['rec'].literature_references %}

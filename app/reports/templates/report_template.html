@@ -1628,10 +1628,11 @@
                             uploaded file. Rendering it escaped printed literal
                             &lt;ul&gt; tags into dosing advice. -#}
                         <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
-                        {# DPWG's and FDA's "Unspecified": no CPIC strength, which the
-                           card's colour and the Drugs legend ("Guideline available")
-                           say; the line said only that, on every such card. #}
-                        {% if group_data['rec'].evidence_class != 'evidence-unspecified' %}
+                        {# DPWG's and FDA's "Unspecified" and a missing classification
+                           (CPIC warfarin's): no strength, which the card's colour and
+                           the Drugs legend ("Guideline available", "Unclassified") say;
+                           the line said only that, on every such card. #}
+                        {% if group_data['rec'].evidence_class not in ('evidence-unspecified', 'evidence-unclassified') %}
                         <p><strong>Strength of Recommendation:</strong> {{ group_data['rec'].classification }}</p>
                         {% endif %}
                         {% if group_data['rec'].literature_references %}

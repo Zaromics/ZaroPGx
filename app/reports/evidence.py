@@ -103,6 +103,14 @@ NO_RECOMMENDATION = EvidenceTier("No recommendation", -1, "evidence-0")
 # Genuinely missing: null, blank, unknown, or unrecognised.
 UNCLASSIFIED = EvidenceTier("Unclassified", -2, "evidence-unclassified")
 
+# What a guideline card says when PharmCAT gives no recommendation text for it.
+# CPIC's warfarin annotation is one: its dosing is the guideline's flow chart, which
+# PharmCAT's note on the drug points to. "See report for details" named no report.
+NO_RECOMMENDATION_TEXT = (
+    "PharmCAT's data has no recommendation text for this guideline; see the notes "
+    "above and the source."
+)
+
 # Ranks are deliberately NOT the numbers in the CSS class names. The classes
 # keep their historical numbering (reports already on disk use them); the ranks
 # are renumbered freely so ordering comes out right.

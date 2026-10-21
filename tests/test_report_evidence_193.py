@@ -543,3 +543,21 @@ def test_an_unspecified_strength_is_not_spelled_out(template_name):
     # The guideline's own words are untouched.
     assert "NO action is needed." in html
     assert "DPWG/FDA guidance without a CPIC recommendation strength" in html
+
+
+@pytest.mark.parametrize(
+    "template_name", ["report_template.html", "interactive_report.html"]
+)
+def test_an_unclassified_strength_is_not_spelled_out(template_name):
+    """CPIC's warfarin annotation has no classification: its card read "Strength of
+    Recommendation: Unknown", which the grey card and the legend's "Unclassified"
+    already say."""
+    mapped = map_recommendations_for_template(
+        [
+            _grouped("warfarin", "CYP2C9", "Dose by the flow chart.", "Unknown"),
+            _grouped("abacavir", "HLA-B", "Use abacavir.", "Strong"),
+        ]
+    )
+    html = _render(template_name, mapped)
+    assert "Strength of Recommendation:</strong> Unknown" not in html
+    assert "Strength of Recommendation:</strong> Strong" in html

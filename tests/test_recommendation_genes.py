@@ -158,3 +158,28 @@ def test_the_reports_head_the_recommendation_with_both_genes(monkeypatch, tmp_pa
         genes = [h.split(" - ")[0] for h in headings if " - " in h]
         assert "CYP2B6, CYP2C19" in genes, (key, headings)
         assert "CYP2C9, CYP4F2, VKORC1" in genes, (key, headings)
+
+
+def test_a_guideline_without_recommendation_text_says_so():
+    """CPIC's warfarin annotation has no text and no classification (its dosing is
+    the guideline's flow chart). Its card read "See report for details", naming no
+    report, and "Strength of Recommendation: Unknown"."""
+    from app.reports.evidence import NO_RECOMMENDATION_TEXT
+    from app.services.pharmcat_data_service import PharmCATDataService
+
+    service = PharmCATDataService.__new__(PharmCATDataService)
+    (drug,) = service._transform_drug_recommendations_for_reports(
+        [
+            {
+                "drug_name": "warfarin",
+                "gene_symbol": "CYP2C9",
+                "drug_recommendation": None,
+                "classification": None,
+                "recommendation_data": None,
+            }
+        ]
+    )
+    (entry,) = drug["recommendations"]
+    assert entry["recommendation"] == NO_RECOMMENDATION_TEXT
+    assert "See report for details" not in entry["recommendation"]
+    assert entry["evidence_class"] == "evidence-unclassified"
