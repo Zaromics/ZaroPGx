@@ -44,6 +44,14 @@ calls wherever its genes have positions without a record. The start scripts move
 image together; this matters only with a custom tag, or after `docker compose build` of a
 single service.
 
+### Logs written before 0.4.0 may contain the database password
+
+Earlier releases wrote the database password into the app's log on every start, and
+`/services-status` logged the database URL on every call (fixed in 0.4.0, #155). Updating
+recreates the app container, which discards its log. If you saved or shared that log, delete
+the copies, and if anyone else could read it, change the database password: the steps are in
+[SECURITY.md](SECURITY.md).
+
 ### The app binds to loopback in new installs
 
 The templates now set `BIND_ADDRESS=127.0.0.1:8765` (they had `8765`, and `.env.production`

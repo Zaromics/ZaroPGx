@@ -1,0 +1,107 @@
+name: Bug report
+description: Something went wrong installing ZaroPGx, running an analysis or in a report.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Issues are public. Never attach genetic data (VCF, BAM, CRAM, FASTQ…), reports or sample identifiers, and redact paths, IDs and secrets from logs.**
+        If you can, reproduce the problem with `test_data/` or **Run Demo**. Security problems: see SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: ZaroPGx version or image tag
+      description: "`ZAROPGX_TAG` in `.env`, the release you installed, or the commit for a source checkout (`git rev-parse --short HEAD`)."
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: input_type
+    attributes:
+      label: Input type
+      options:
+        - VCF
+        - BCF
+        - gVCF
+        - BAM
+        - CRAM
+        - SAM
+        - FASTQ, single-end
+        - FASTQ, paired-end
+        - Run Demo
+        - No file (installation, start-up or the web page)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Genome build of the input
+      options:
+        - GRCh38 / hg38
+        - GRCh37 / hg19
+        - T2T-CHM13
+        - Not sure
+        - Not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage failed
+      description: The stage the page showed as failed, or where the result looks wrong.
+      options:
+        - Installation, bootstrap or start scripts
+        - Upload or file check
+        - GATK (conversion, alignment, gVCF genotyping or liftover)
+        - OptiType (HLA typing)
+        - PyPGx
+        - mtDNA-Server 2
+        - PharmCAT
+        - Report (PDF or interactive HTML)
+        - FHIR export or push
+        - Web page
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened, and what you expected
+      description: Include the error message, if any. For a wrong call, give only the gene and the call.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      placeholder: |
+        1. Upload test_data/... with the default options
+        2. ...
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines, redacted
+      description: "A few lines around the error, from `docker compose logs app` (or `nextflow`, `gatk-api`, `pypgx`, `pharmcat`, `zarohla`, `mtdna`). Redact paths, IDs and secrets first."
+      render: text
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Docker version (`docker version`), memory, and anything you changed in `.env` or `compose.override.yml`.
+
+  - type: checkboxes
+    id: no_personal_data
+    attributes:
+      label: Before you submit
+      options:
+        - label: No genetic data, reports or sample identifiers are included, and logs are redacted.
+          required: true
