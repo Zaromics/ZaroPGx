@@ -103,15 +103,19 @@ report.json this report is built from. Each such call of PharmCAT's (Call C) is 
 PyPGx also runs these genes on an alignment, for their copy number, and the calls stay
 PharmCAT's. Where the copy number was measured and found normal (*CYP2B6* and *CYP4F2* by
 PyPGx, *CYP2C19* and *SLCO1B1* by ZaroPGx's deletion check, below, from a whole genome)
-there is no ⚠: the alert says so once, and only *CYP2B6* \*30, which no tool here calls,
-gets a plain note ("\*30 not assessed"). When PyPGx makes these calls instead (`pypgx`), it
-cannot show them all either: it has no copy-number model for *CYP2C19* or *SLCO1B1*, so
+there is no note: the alert says so once. When PyPGx makes these calls instead (`pypgx`),
+it cannot show them all either: it has no copy-number model for *CYP2C19* or *SLCO1B1*, so
 without the read depth the deletion check needs they are "Copy number not assessed (no
-copy-number model)", and none of its *CYP2B6* copy-number states is \*30. Its *CYP4F2* call from a whole genome measures the gene's copy
-number, so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If
-PyPGx measured a copy number other than normal for a gene whose call shown is PharmCAT's,
-the call may be wrong: its row in the Executive Summary says ⚠ "PyPGx found a structural
-allele", and the alert says so first. One entry under Alerts and Warnings names the genes
+copy-number model)". Its *CYP4F2* call from a whole genome measures the gene's copy number,
+so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If PyPGx
+measured a copy number other than normal for a gene whose call shown is PharmCAT's, the
+call may be wrong: its row in the Executive Summary says ⚠ "PyPGx found a structural
+allele", and the alert says so first. One such state of PyPGx's is *CYP2B6* \*30, which its
+own call leaves Indeterminate (its copy-number state Tandem1): its one example, the 1000
+Genomes genome HG01806, has three copies from inside *CYP2B7* to *CYP2B6* between exons 4
+and 5, the tandem duplication that joins *CYP2B6* exons 1-4 to *CYP2B7* exons 5-9 beside an
+intact *CYP2B6*. The report names it "the \*30 hybrid duplication". PharmCAT keeps its call:
+CPIC has no phenotype for a \*30 hybrid beside an intact *CYP2B6*. One entry under Alerts and Warnings names the genes
 not assessed ("Structural alleles not assessed") and says once what PyPGx measured; each
 gene has a short note behind the Executive Summary. These notes appear on a whole genome's
 report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
