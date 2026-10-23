@@ -14,6 +14,7 @@ Each analysis writes its outputs to `data/reports/<patient_id>/<job_id>/`:
 | `<job_id>_pgx_fhir_report.json`, `.xml` | The results as a FHIR R4 bundle |
 | `mtdna_result.json`, `mtdna_variants.vcf.gz`, `mtdna_report.html` | Mitochondrial haplogroup and MT-RNR1 call, the chrM variants, and (alignments only) mtDNA-Server 2's own report |
 | `pypgx_result.json` | PyPGx's calls, with its evidence |
+| `unlisted_variants.json` | The variants in the pharmacogenes that no allele definition lists, each with its consequence, frequency, AlphaMissense score, ClinVar classification and tier |
 | `report.html`, `timeline.html`, `trace.txt` | Nextflow's record of the run |
 
 Lanes that convert or genotype the input also keep the intermediate VCF (for example
@@ -138,6 +139,26 @@ recommendations rest on if no star allele is called, when one is; and, when Aler
 Warnings lists the positions PharmCAT had no genotype for, its own notes on those
 positions. A report rebuilt from a report.json alone has no such alert, and shows them.
 None appears on the Executive Summary.
+
+**Variants Outside the Allele Definitions.** PharmCAT and PyPGx call a gene from the
+variants their allele definitions name, and nothing else: a rare variant that stops the
+protein, if no definition lists it, leaves the gene reported as normal. Every run also
+reads every other variant in the coding exons, and splice sites, of 47 pharmacogenes: the
+drug-metabolising enzymes and transporters, and G6PD, VKORC1, NUDT15, TPMT and BCHE. Genes
+where a damaging variant means a disease rather than a drug response (ATM, APOE, CFTR, F5,
+RYR1 and others) are left out, so the check cannot make an incidental finding. A variant
+that passes the quality checks, is under 1% in every gnomAD genetic ancestry group and is
+predicted to cause loss of function (a stop, a frameshift, a splice site, a lost start), or
+to damage the protein (AlphaMissense above 0.564), is listed here with its consequence on
+the gene's MANE Select transcript, its frequency and ClinVar's classification, and the
+gene's call is marked: beside it, and in the Executive Summary's notes. Less certain
+predictions are listed too, and the rest only counted; `unlisted_variants.json` has them
+all. Nothing changes a call or a phenotype: the effect is a prediction, and whether the
+variant is on the same chromosome copy as an allele in the call is not known. CYP2D6,
+CYP2A6, GSTM1, GSTT1 and UGT2B17, whose reads are the least sure, are never marked. The
+check reads only the annotation the genome downloader builds once (`ANNOTATION_ENABLED`,
+{doc}`configuration`): nothing about the sample leaves the machine. Without it, this
+section says the check did not run.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.

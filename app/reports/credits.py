@@ -503,6 +503,57 @@ RCRS_1999 = Paper(
     doi="10.1038/13779",
 )
 # Reference genomes and panels -----------------------------------------------------
+# The first seven authors of each paper below with more: the byline names three
+# and "et al" past six, so the rest would never print.
+CSQ_2017 = Paper(
+    ("Danecek P", "McCarthy SA"),
+    "BCFtools/csq: haplotype-aware variant consequences",
+    "Bioinformatics",
+    "2017;33(13):2037–2039",
+    doi="10.1093/bioinformatics/btx100",
+)
+ALPHAMISSENSE_2023 = Paper(
+    ("Cheng J", "Novati G", "Pan J", "Bycroft C", "Žemgulytė A", "Applebaum T", "Pritzel A"),
+    "Accurate proteome-wide missense variant effect prediction with AlphaMissense",
+    "Science",
+    "2023;381(6664):eadg7492",
+    doi="10.1126/science.adg7492",
+)
+GNOMAD_2024 = Paper(
+    ("Chen S", "Francioli LC", "Goodrich JK", "Collins RL", "Kanai M", "Wang Q", "Alföldi J"),
+    "A genomic mutational constraint map using variation in 76,156 human genomes",
+    "Nature",
+    "2024;625(7993):92–100",
+    doi="10.1038/s41586-023-06045-0",
+)
+CLINVAR_2018 = Paper(
+    ("Landrum MJ", "Lee JM", "Benson M", "Brown GR", "Chao C", "Chitipiralla S", "Gu B"),
+    "ClinVar: improving access to variant interpretations and supporting evidence",
+    NAR,
+    "2018;46(D1):D1062–D1067",
+    doi="10.1093/nar/gkx1153",
+)
+MANE_2022 = Paper(
+    ("Morales J", "Pujar S", "Loveland JE", "Astashyn A", "Bennett R", "Berry A", "Cox E"),
+    "A joint NCBI and EMBL-EBI transcript set for clinical genomics and research",
+    "Nature",
+    "2022;604(7905):310–315",
+    doi="10.1038/s41586-022-04558-8",
+)
+ENSEMBL_2026 = Paper(
+    ("Yates AD", "Austine-Orimoloye O", "Azov AG", "Barba M", "Barnes I", "Barrera-Enriquez VP", "Becker A"),
+    "Ensembl 2026",
+    NAR,
+    "2026;54(D1):D1053–D1060",
+    doi="10.1093/nar/gkaf1239",
+)
+GIAB_STRATIFICATIONS_2024 = Paper(
+    ("Dwarshuis N", "Kalra D", "McDaniel J", "Sanio P", "Alvarez Jerez P", "Jadhav B", "Huang W"),
+    "The GIAB genomic stratifications resource for human reference genomes",
+    "Nature Communications",
+    "2024;15(1):9029",
+    doi="10.1038/s41467-024-53260-y",
+)
 GRCH38_2017 = Paper(
     (
         "Schneider VA",
@@ -1036,6 +1087,7 @@ CREDITS: Tuple[Credit, ...] = (
         (SAMTOOLS_2021, HTSLIB_2021),
         service="pharmcat",
         component="bcftools",
+        papers_when=(("unlisted_variants", CSQ_2017),),
     ),
     Credit(
         "pysam",
@@ -1440,6 +1492,72 @@ CREDITS: Tuple[Credit, ...] = (
             "(https://genome.ucsc.edu/license/)."
         ),
         used_when="GRCh37 VCF or BCF",
+    ),
+    Credit(
+        "ensembl_mane",
+        "Ensembl and MANE",
+        "data",
+        "The transcripts a variant no allele definition lists is read on",
+        "https://www.ensembl.org",
+        "No restrictions (Ensembl; NCBI and EMBL-EBI for MANE)",
+        lambda run: run.ran("unlisted_variants"),
+        (ENSEMBL_2026, MANE_2022),
+        release="Ensembl 116, MANE Select v1.5",
+        used_when="When the genome downloader has built the annotation",
+    ),
+    Credit(
+        "alphamissense",
+        "AlphaMissense",
+        "data",
+        "Scores the missense variants no allele definition lists",
+        "https://github.com/google-deepmind/alphamissense",
+        "CC-BY-4.0",
+        lambda run: run.ran("unlisted_variants"),
+        (ALPHAMISSENSE_2023,),
+        release="2023",
+        notice=(
+            "AlphaMissense predictions are Copyright 2023 DeepMind Technologies "
+            "Limited, licensed under CC BY 4.0. AlphaMissense has not been "
+            "validated for, and is not approved for, any clinical use."
+        ),
+        used_when="When the genome downloader has built the annotation",
+    ),
+    Credit(
+        "gnomad",
+        "gnomAD",
+        "data",
+        "How common each variant no allele definition lists is",
+        "https://gnomad.broadinstitute.org",
+        "CC0-1.0",
+        lambda run: run.ran("unlisted_variants"),
+        (GNOMAD_2024,),
+        release="v4.1, joint exomes and genomes",
+        used_when="When the genome downloader has built the annotation",
+    ),
+    Credit(
+        "clinvar",
+        "ClinVar",
+        "data",
+        "Classifications of the variants no allele definition lists",
+        "https://www.ncbi.nlm.nih.gov/clinvar/",
+        "No restrictions (NCBI)",
+        lambda run: run.ran("unlisted_variants"),
+        (CLINVAR_2018,),
+        release="2026-10-11",
+        used_when="When the genome downloader has built the annotation",
+    ),
+    Credit(
+        "giab_stratifications",
+        "GIAB genomic stratifications",
+        "data",
+        "Marks segmental duplications and low-mappability regions, where a "
+        "variant no allele definition lists is less sure",
+        "https://www.nist.gov/programs-projects/genome-bottle",
+        "Public domain (NIST)",
+        lambda run: run.ran("unlisted_variants"),
+        (GIAB_STRATIFICATIONS_2024,),
+        release="v3.6",
+        used_when="When the genome downloader has built the annotation",
     ),
     Credit(
         "kgp_panel",

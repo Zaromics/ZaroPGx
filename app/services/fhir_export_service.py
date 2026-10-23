@@ -844,6 +844,12 @@ class FHIRExportService:
                 }
             ]
 
+        # A variant no allele definition lists, predicted to stop or damage the
+        # protein (app/reports/unlisted.py): the genotype does not account for it.
+        flag = gene_data.get("unlisted_flag")
+        if isinstance(flag, dict) and flag.get("fhir_note"):
+            observation.setdefault("note", []).append({"text": flag["fhir_note"]})
+
         # No phenotype here: the genotype profile has no place for one, and the
         # IG states it as a therapeutic implication of the genotype
         # (_create_phenotype_implication). It was a text component.

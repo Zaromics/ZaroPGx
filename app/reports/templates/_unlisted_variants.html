@@ -1,0 +1,61 @@
+{# The variants in the pharmacogenes that no allele definition lists
+   (app/reports/unlisted.py, from the run's unlisted_variants.json). Shared by
+   report_template.html and interactive_report.html. #}
+
+{% macro section(u, level=2) -%}
+<div class="section unlisted-section">
+    <h{{ level }}>Variants Outside the Allele Definitions</h{{ level }}>
+    {% if not u or u.status != 'done' %}
+    <p>This run did not check for variants that no allele definition lists. {{ (u or {}).reason or '' }}</p>
+    {% else %}
+    <p>PharmCAT and PyPGx call each gene from the variants their allele definitions name.
+       This run also read every other variant in the coding exons of {{ u.genes_checked }}
+       pharmacogenes, and their splice sites{% if u.genes_without_transcript %} ({{ u.genes_without_transcript|join(', ') }}
+       not among them: GRCh38 places {{ 'it' if u.genes_without_transcript|length == 1 else 'them' }} off the primary assembly){% endif %}.
+       Of the {{ u.found + u.listed }} variants found there, {{ u.listed }} are part of an
+       allele definition and {{ u.found }} are not.</p>
+    {% if u.rows %}
+    <p>The {{ u.rows|length }} below may change the protein. They did not change any call or
+       phenotype in this report. Their function is unknown: the effect given is a
+       prediction, from what the variant does to the gene's MANE Select transcript and,
+       for a missense change, AlphaMissense's score. A prediction can be wrong in either
+       direction, none here has been validated for clinical use, and whether a variant
+       lies on the same chromosome copy as an allele in the call is not known.{% if u.flagged %}
+       Where one is predicted to cause loss of function or damage the protein, the
+       gene's call is marked: its phenotype assumes the variant does nothing.{% endif %}</p>
+    {% if u.dpyd_caveat %}<p>{{ u.dpyd_caveat }}</p>{% endif %}
+    <table class="unlisted-table">
+        <colgroup>
+            <col class="c-gene"><col class="c-variant"><col class="c-zygosity">
+            <col class="c-effect"><col class="c-evidence">
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Gene</th><th>Variant</th><th>Zygosity</th>
+                <th>Predicted effect</th><th>gnomAD and ClinVar</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in u.rows %}
+            <tr class="unlisted-tier-{{ r.tier|lower }}">
+                <td>{{ r.genes }}</td>
+                <td>{% if r.variant %}{{ r.variant|code_breaks }}{% endif %}{% if r.protein %}<div>{{ r.protein }}</div>{% endif %}<div class="call-note">{{ r.genomic|code_breaks }}{% if r.transcript %}, {{ r.transcript }}{% endif %}</div>{% for n in r.notes %}<div class="call-note">{{ n }}</div>{% endfor %}</td>
+                <td>{{ r.zygosity }}</td>
+                <td>{{ r.effect }}<div class="call-note">{{ r.consequence }}</div></td>
+                <td>{{ r.frequency }}<div>{{ r.clinvar.text }}</div>{% if r.clinvar.conditions %}<div class="call-note">{{ r.clinvar.conditions }}</div>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>None of them is predicted to change the protein.</p>
+    {% endif %}
+    {% set o = u.others %}
+    {% set rest = o.none + o.common + o.low_quality %}
+    {% if rest %}
+    <p class="header-note">{% if u.rows %}Not tabled: {% else %}The {{ rest }}: {% endif %}{% set parts = [] %}{% if o.none %}{% set _ = parts.append(o.none ~ ' with no predicted effect on the protein') %}{% endif %}{% if o.common %}{% set _ = parts.append(o.common ~ ' common, at 1% or more in a gnomAD genetic ancestry group') %}{% endif %}{% if o.low_quality %}{% set _ = parts.append(o.low_quality ~ (' call' if o.low_quality == 1 else ' calls') ~ ' not reliable enough to assess') %}{% endif %}{{ parts|join('; ') }}. The run's unlisted_variants.json lists them all.</p>
+    {% endif %}
+    <p class="header-note">Transcripts: Ensembl's MANE Select ({{ u.sources.gff3 or 'Ensembl' }}, {{ u.sources.mane or 'MANE' }}), through bcftools csq. Frequencies: {{ u.sources.gnomad or 'gnomAD' }}. Missense scores: AlphaMissense. Classifications: {{ u.sources.clinvar or 'ClinVar' }}. Low-confidence regions: {{ u.sources.segdups or 'GIAB' }}.</p>
+    {% endif %}
+</div>
+{%- endmacro %}

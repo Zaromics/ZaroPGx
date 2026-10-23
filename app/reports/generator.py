@@ -68,6 +68,7 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
+from app.reports import unlisted
 from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
@@ -565,12 +566,14 @@ def credit_run_for_job(
     file_type: Optional[str],
     pharmcat_data_version: Optional[str] = None,
     kroki: bool = True,
+    unlisted_checked: bool = False,
 ) -> CreditRun:
     """The facts about this job that decide what its report credits.
 
     ``records`` are its step rows (job_workflow.load_job_step_records); none means
     they could not be read, and the report then credits everything that could
-    have run, rather than leave out something that did.
+    have run, rather than leave out something that did. ``unlisted_checked``: the
+    check for variants no allele definition lists ran (unlisted_variants.json).
     """
     completed = (
         frozenset(r["name"] for r in records if r.get("status") == "completed")
@@ -589,6 +592,9 @@ def credit_run_for_job(
         and realigned_alt_loci(bam2vcf)
     ):
         completed = completed | {"alt_realignment"}
+    # Not a step either: Nextflow's UnlistedVariants, whose result says it ran.
+    if completed is not None and unlisted_checked:
+        completed = completed | {"unlisted_variants"}
     pypgx = next(
         (r.get("output") for r in records or () if r["name"] == "pypgx_analysis"),
         None,
@@ -2527,6 +2533,7 @@ _EXPORT_FILES = (
     ("{report_id}_pgx_pharmcat.json", "PharmCAT report", "JSON"),
     ("{report_id}_pgx_pharmcat.tsv", "PharmCAT report", "TSV"),
     ("{report_id}_pgx_pharmcat.html", "PharmCAT report", "HTML"),
+    ("unlisted_variants.json", "Variants outside the allele definitions", "JSON"),
     ("{report_id}_pgx_report.pdf", "This report", "PDF"),
 )
 
@@ -2558,6 +2565,7 @@ def create_interactive_html_report(
     downloads: Optional[List[Dict[str, str]]] = None,
     workflow_diagram: Optional[Dict[str, Any]] = None,
     pharmcat_notes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    unlisted_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -2644,6 +2652,10 @@ def create_interactive_html_report(
         # provenance facts above -- from a file this same report_dir already
         # holds, not from a value threaded in through the caller.
         mtdna_context = mtdna_report_context(report_dir, diplotypes)
+        # The variants no allele definition lists: the PDF's context, else read
+        # from the same directory (without PyPGx's word on the sample's sex).
+        if unlisted_context is None:
+            unlisted_context = unlisted.context(unlisted.read_result(report_dir))
 
         # Prepare the report data
         report_data = {
@@ -2657,6 +2669,7 @@ def create_interactive_html_report(
                 organize_gene_drug_recommendations(template_recommendations)
             ),
             "mtdna": mtdna_context,
+            "unlisted": unlisted_context,
             "pharmcat_notes": pharmcat_notes or {"general": [], "drugs": []},
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
@@ -4052,10 +4065,12 @@ def generate_report(
     # that ran (app/reports/credits.py). Built once for every output; `platform`
     # is its software, which the workflow diagram labels its steps with.
     workflow_records = load_job_step_records(db_session, job_id)
+    unlisted_result = unlisted.read_result(output_dir)
     credit_run = credit_run_for_job(
         workflow_records,
         load_job_file_type(db_session, job_id) or file_type,
         matcher_meta["data_version"],
+        unlisted_checked=(unlisted_result or {}).get("status") == "done",
     )
     credits = build_report_credits(credit_run)
     platform = platform_from_credits(credits)
@@ -4466,6 +4481,22 @@ def generate_report(
         ]
         template_data["workflow_warnings"] = workflow_warnings
 
+    # Variants no allele definition lists (app/reports/unlisted.py, from the run's
+    # unlisted_variants.json): the section, a note beside each flagged gene's call
+    # (and its FHIR genotype), and one alert. Same new-list rule. A result that does
+    # not read costs the section, not the report.
+    try:
+        unlisted_ctx = unlisted.context(unlisted_result, pypgx_results)
+    except Exception as e:
+        logger.warning("Unlisted variants not reported: %s", e, exc_info=True)
+        unlisted_ctx = {"status": "failed", "reason": "Its result could not be read.", "flagged": {}}
+    unlisted.annotate_genes(data.get("genes", []), unlisted_ctx)
+    template_data["unlisted"] = unlisted_ctx
+    _unlisted_alert = unlisted.alert(unlisted_ctx)
+    if _unlisted_alert:
+        workflow_warnings = list(workflow_warnings) + [_unlisted_alert]
+        template_data["workflow_warnings"] = workflow_warnings
+
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
     file_type = str(data.get("file_type", "vcf")).lower()
     used_gatk_flag = bool(data.get("used_gatk", False))
@@ -4631,6 +4662,8 @@ def generate_report(
                 # is load-bearing: a key set only on the first dict silently
                 # never reaches the page).
                 "mtdna": mtdna_report_context(report_dir, data.get("genes", [])),
+                # Variants no allele definition lists (app/reports/unlisted.py).
+                "unlisted": unlisted_ctx,
                 # PharmCAT's notes with no gene row or recommendation to sit on.
                 "pharmcat_notes": pharmcat_notes,
                 "disclaimer": get_disclaimer(),
@@ -5024,6 +5057,7 @@ def generate_report(
                 downloads=export_downloads(report_dir, report_id),
                 workflow_diagram=workflow_diagram,
                 pharmcat_notes=pharmcat_notes,
+                unlisted_context=unlisted_ctx,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 
