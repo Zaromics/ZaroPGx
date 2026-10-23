@@ -41,6 +41,9 @@ def downloader(tmp_path, monkeypatch):
     module.STATUS_FILE = str(tmp_path / "download_status.json")
     module.DOWNLOAD_COMPLETE_FLAG = str(tmp_path / ".download_complete")
     module.REF_CACHE_DIR = str(tmp_path / "ref_cache")
+    # The annotation bundle is tests/test_annotation_bundle.py's: off here, so a
+    # staged install has nothing else left to build.
+    module.ANNOTATION_ENABLED = False
     return module
 
 

@@ -10,7 +10,7 @@ passes to the app. After changing one, apply it with `docker compose up -d`. Cha
 in.
 
 A boolean is on for `1`, `true`, `yes` or `on`; blank or anything else is off. Exceptions:
-`PDF_FALLBACK`, `DOWNLOAD_ON_STARTUP` and `REF_CACHE_ENABLED` are on only for `true`.
+`PDF_FALLBACK`, `DOWNLOAD_ON_STARTUP`, `REF_CACHE_ENABLED` and `ANNOTATION_ENABLED` are on only for `true`.
 
 Where a template ships a different value from the code's default, both are given.
 
@@ -51,6 +51,7 @@ Where a template ships a different value from the code's default, both are given
 | `PHARMCAT_ABSENT_TO_REF`, `PHARMCAT_UNSPECIFIED_TO_REF` | `false` | The default state of PharmCAT's assume-reference options on the upload page; see {doc}`usage` |
 | `REF_CACHE_ENABLED` | `true` | Build the CRAM reference cache (3.2 GB download, 5.3 GB kept). Without it, only CRAMs written against UCSC hg38 decode, and **Run Demo**, whose CRAM needs the cache, answers 503 |
 | `DOWNLOAD_ON_STARTUP` | `true` | Let the genome downloader stage references when it starts |
+| `ANNOTATION_ENABLED` | `true` | Build the annotation the check for variants outside the allele definitions reads (about 1 GB fetched once, 3 MB kept, in `reference/annotation`): Ensembl's MANE transcripts, AlphaMissense, gnomAD v4.1 and ClinVar, cut to the pharmacogenes' coding exons. Without it, reports say the check did not run |
 | `NEXTFLOW_MAX_WAIT_SECONDS` | `86400` | How long the app waits for a pipeline run before failing the job |
 | `FASTQ_MAX_UPLOAD_BYTES` | `21474836480` (20 GB) | The largest FASTQ aligned, both mates together, in bytes; the app and the GATK service both read it. What limits it is disk and time: aligning needs about 9 times the FASTQ's size in free disk, which the GATK service checks before it starts, and a whole genome takes hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested |
 | `PYPGX_MEMORY_LIMIT`, `PYPGX_MAX_PARALLEL_GENES`, `PYPGX_BATCH_SIZE` | `7G`, `8`, `4` | PyPGx's memory and parallelism |
