@@ -1737,6 +1737,136 @@ def sv_inputs_from_vcf(vcf_path: str, temp_dir) -> Optional[Tuple[str, str]]:
     return str(paths[0]), str(paths[1])
 
 
+# CYP2C19's and SLCO1B1's deletions, which PyPGx has no copy-number model for, from
+# the same read depth and control gene (deletion_check.py beside this file). Run in a
+# subprocess, as PyPGx's own steps are, so its depth pass does not hold this process.
+DELETION_CHECK_HEADER_KEY = "ZaroPGx_deletion_check"
+DELETION_CHECK_SUFFIX = ".deletions.json"
+DELETION_CHECK_SCRIPT = Path(__file__).resolve().with_name("deletion_check.py")
+
+
+def _deletion_check():
+    """deletion_check.py, loaded from beside this file."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("deletion_check", DELETION_CHECK_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_deletion_check(
+    alignment_path: str, control_zip: str, out_prefix: str, assembly: str
+) -> Optional[str]:
+    """Check CYP2C19 and SLCO1B1 for deletions; the result's path, or None.
+
+    Only with the SV inputs: the whole-genome gate passed and VDR measured. A failure
+    costs the check (the report then says the genes' copy number was not assessed),
+    not the step.
+    """
+    out = out_prefix + DELETION_CHECK_SUFFIX
+    cmd = [
+        sys.executable, "-W", "ignore", str(DELETION_CHECK_SCRIPT),
+        alignment_path, control_zip, out, "--assembly", assembly,
+    ]
+    logger.info(f"Running {shlex.join(cmd)}")
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.error(f"Deletion check not run: {exc}")
+        return None
+    if proc.returncode != 0 or not os.path.isfile(out):
+        logger.error(f"Deletion check failed: {proc.stderr[-2000:]}")
+        if os.path.exists(out):
+            os.remove(out)
+        return None
+    return out
+
+
+def deletion_check_header_line(path: str) -> str:
+    return f"##{DELETION_CHECK_HEADER_KEY}={path}"
+
+
+def deletion_check_from_vcf(vcf_path: str, temp_dir) -> Optional[Dict[str, Any]]:
+    """The deletion check /create-input-vcf recorded in this VCF's header, or None.
+
+    Honoured as the SV inputs are (sv_inputs_from_vcf): only a file this sidecar could
+    have written, below temp_dir, with its name, present, and readable as a check.
+    """
+    prefix = f"##{DELETION_CHECK_HEADER_KEY}="
+    with open(vcf_path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    value = None
+    with opener(vcf_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.startswith("##"):
+                break
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip()
+                break
+    if not value:
+        return None
+    path = Path(value).resolve()
+    root = Path(temp_dir).resolve()
+    if (
+        root not in path.parents
+        or not path.name.endswith(DELETION_CHECK_SUFFIX)
+        or not path.is_file()
+    ):
+        logger.warning(f"Deletion check in the VCF header not honoured: {path}")
+        return None
+    try:
+        check = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Deletion check not read: {exc}")
+        return None
+    return check if isinstance(check.get("genes"), dict) else None
+
+
+def apply_deletion_check(aggregated: Dict[str, Any], check: Optional[Dict[str, Any]]) -> None:
+    """Put the deletion check on CYP2C19's and SLCO1B1's calls, in place.
+
+    Each gets the check (details["deletion_check"]) and its copy number
+    (details["copy_number"]: "Normal", or "WholeDel1"/"PartialDel1", "Hom" when both
+    copies are gone), marked as the check's (copy_number_by), not a PyPGx model's.
+    A named deletion under a homozygous call makes the call X/<deletion>, and that
+    call goes to PharmCAT as an outside call, since PharmCAT's own, from small
+    variants, cannot show it: CYP2C19 *1/*37 is an Intermediate Metabolizer that
+    small variants call *1/*1, Normal. A gene PyPGx did not genotype is left alone.
+    """
+    if not check:
+        return
+    module = _deletion_check()
+    results = aggregated.get("results") or {}
+    for gene, record in (check.get("genes") or {}).items():
+        result = results.get(gene)
+        if not isinstance(result, dict) or not result.get("success"):
+            continue
+        details = result.get("details") or {}
+        result["details"] = details
+        details["deletion_check"] = {
+            k: record.get(k) for k in ("status", "deletions", "bins") if k in record
+        }
+        call = module.genotype(result.get("diplotype"), record)
+        if call["copy_number"]:
+            details["copy_number"] = call["copy_number"]
+            details["copy_number_by"] = "deletion_check"
+        if call["conflict"]:
+            details["deletion_conflict"] = True
+        if call["diplotype"] and call["diplotype"] != result.get("diplotype"):
+            if not result.get("diplotype"):
+                details.pop("note", None)  # "no reads": both copies are deleted
+            details["snv_diplotype"] = result.get("diplotype")
+            # PyPGx's phenotype was for the call from small variants alone.
+            details["snv_phenotype"] = details.pop("phenotype", None)
+            result["diplotype"] = call["diplotype"]
+            result.pop("error", None)
+            outside = aggregated.get("outside_call_genes")
+            if isinstance(outside, list) and gene not in outside:
+                outside.append(gene)
+
+
 def uncovered_genes_in_alignment(alignment_path: str, assembly: str) -> list:
     """PyPGx genes with no confidently placed read in the alignment.
 
@@ -2994,6 +3124,13 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         )
         if sv_inputs:
             annotate_header_line(output_vcf_gz, sv_inputs_header_line(*sv_inputs))
+            # And from the same depth and control gene, CYP2C19's and SLCO1B1's
+            # deletions, which PyPGx has no model for. See run_deletion_check.
+            deletions = run_deletion_check(
+                calls_from, sv_inputs[1], output_vcf_gz[: -len(".vcf.gz")], str(assembly)
+            )
+            if deletions:
+                annotate_header_line(output_vcf_gz, deletion_check_header_line(deletions))
 
         # PharmCAT's own input -- see genotype_pharmcat_positions. GRCh38 only, as
         # PharmCAT's positions are; a non-GRCh38 alignment is refused at upload, so
@@ -3226,6 +3363,7 @@ async def genotype(
         measured_on = coverage_measured_on(str(input_filepath))
         off_reference = genes_off_reference_from_vcf(str(input_filepath))
         sv_inputs = sv_inputs_from_vcf(str(input_filepath), TEMP_DIR)
+        deletion_check = deletion_check_from_vcf(str(input_filepath), TEMP_DIR)
         if sv_inputs:
             # With whole-genome depth and a control gene, no reads over a gene whose
             # common null allele deletes it is a homozygous deletion PyPGx can call,
@@ -3471,6 +3609,12 @@ async def genotype(
                     unread, total, no_reads_in
                 )
                 result["details"] = details
+        # CYP2C19's and SLCO1B1's deletions, checked by /create-input-vcf: on their
+        # calls, and a named one in the call itself. See apply_deletion_check.
+        try:
+            apply_deletion_check(aggregated, deletion_check)
+        except Exception as exc:
+            logger.warning(f"Deletion check not applied: {exc}")
         # The per-gene pipeline folders and a summary JSON used to be written into
         # /data/reports/<patient>/ -- the patient's root, outside every job
         # directory, where nothing reads them (the report reads pypgx_result.json in

@@ -1102,6 +1102,9 @@ def pypgx_record(
         record["copy_number_summary"] = copy_number_summary(
             details["copy_number"], diplotype
         )
+        # ZaroPGx's deletion check (CYP2C19, SLCO1B1), not one of PyPGx's models.
+        if details.get("copy_number_by"):
+            record["copy_number_by"] = details["copy_number_by"]
     return record
 
 

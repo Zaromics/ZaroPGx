@@ -27,6 +27,11 @@ provenance.py), its own genes and PharmCAT's rows it supplied as an outside call
 An outside call PyPGx did not make (OUTSIDECALLSOVERRIDE's file, a lab's CYP2D6
 *1/*5) is neither tool's, and gets no note: its maker may have measured copy number.
 
+CYP2C19's and SLCO1B1's deletions, which PyPGx has no copy-number model for, are
+checked from the same read depth by docker/pypgx's deletion_check.py; the check marks
+its copy number as its own (``details["copy_number_by"]``), and a named deletion is
+in the call itself, as an outside call to PharmCAT (CYP2C19 *1/*37).
+
 PharmCAT's own calls (Call C) get notes of their own, on PharmCAT's authority.
 Its matcher calls star alleles from the small variants in its allele definitions,
 on every input, a whole genome included, and it names the structural alleles that
@@ -108,7 +113,8 @@ _PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2D6", "G6PD"})
 # CYP4F2 has no phenotype data at all. PyPGx 0.27 calls CYP2B6 *29 and duplications
 # and the CYP4F2 deletion (*DEL) from read depth (MISSED above); it has no
 # copy-number model for CYP2C19 or SLCO1B1 (its gene table: SV FALSE), and none of
-# its CYP2B6 copy-number states yields *30.
+# its CYP2B6 copy-number states yields *30. ZaroPGx checks CYP2C19 and SLCO1B1 for
+# deletions from PyPGx's read depth (CHECKED).
 PHARMCAT_MISSED: Dict[str, str] = {
     "CYP2B6": "a CYP2B7-CYP2B6 hybrid (*29, *30)",
     "CYP2C19": "a partial or whole-gene deletion (*36, *37)",
@@ -137,6 +143,9 @@ _PHARMCAT_PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2C19", "SLCO1B1"})
 # none of its copy-number states yields (pypgx/api/genotype.py, CYP2B6Genotyper).
 PYPGX_NO_MODEL = frozenset({"CYP2C19", "SLCO1B1"})
 PYPGX_NO_STATE = frozenset({"CYP2B6"})
+# The genes docker/pypgx's deletion_check.py checks, and the deletions it names.
+CHECKED: Dict[str, str] = {"CYP2C19": "*36, *37", "SLCO1B1": "*48, *49"}
+CHECKED_BY = "deletion_check"
 
 # docker/pypgx's WGS_MIN_MEDIAN_DEPTH, for a run whose record does not carry it.
 MIN_MEDIAN_DEPTH = 15.0
@@ -301,6 +310,35 @@ def pharmcat_called(row: Mapping[str, Any]) -> bool:
     return resolve_called_by(row).letter == CALLED_BY_PHARMCAT
 
 
+def _details(pypgx_results: Any, gene: str) -> Mapping[str, Any]:
+    """PyPGx's details for the gene in this run, or {}."""
+    results = (
+        pypgx_results.get("results") if isinstance(pypgx_results, Mapping) else None
+    )
+    if not isinstance(results, Mapping):
+        return {}
+    for name, result in results.items():
+        if str(name).strip().upper() == gene.upper() and isinstance(result, Mapping):
+            details = result.get("details")
+            if result.get("success") and isinstance(details, Mapping):
+                return details
+    return {}
+
+
+def checked_deletions(pypgx_results: Any, gene: str) -> List[str]:
+    """The deletions ZaroPGx's check found in the gene, in words; [] for none."""
+    details = _details(pypgx_results, gene)
+    if details.get("copy_number_by") != CHECKED_BY:
+        return []
+    check = details.get("deletion_check")
+    deletions = check.get("deletions") if isinstance(check, Mapping) else None
+    return [
+        str(d.get("description"))
+        for d in deletions or []
+        if isinstance(d, Mapping) and d.get("description")
+    ]
+
+
 def pypgx_copy_number(pypgx_results: Any, gene: str) -> Optional[str]:
     """PyPGx's copy-number call for the gene in this run (its CNV column), if any."""
     results = (
@@ -325,12 +363,15 @@ def pypgx_copy_number(pypgx_results: Any, gene: str) -> Optional[str]:
 # its line is plain. A measured gene with nothing left (CYP4F2) has no line at all.
 NOT_ASSESSED_MARKER = "Copy number not assessed"
 FOUND_MARKER = "PyPGx found a structural allele"
+DELETION_MARKER = "Deletion found from read depth"
 STAR30_MARKER = "*30 not assessed"
 # What PyPGx's normal copy number for a gene on PharmCAT's list rules out: what its
 # copy-number states for the gene can show (MISSED). CYP2C19 and SLCO1B1 have none.
 MEASURED_NORMAL: Dict[str, str] = {
     "CYP2B6": "no *29 hybrid or duplication",
     "CYP4F2": "no whole-gene deletion",
+    "CYP2C19": "no *36 or *37 deletion",
+    "SLCO1B1": "no *48 or *49 deletion",
 }
 STAR30 = "*30, a hybrid with CYP2B7"
 
@@ -359,6 +400,39 @@ def _measured_entry(kind: str, code: Optional[str]) -> Dict[str, Any]:
     return entry
 
 
+def _deletion_found_entry(
+    gene: str, found: List[str], in_call: bool, snv_diplotype: Optional[str]
+) -> Dict[str, Any]:
+    """A deletion ZaroPGx's check found in CYP2C19 or SLCO1B1 (CHECKED).
+
+    ``in_call``: the call has it (an outside call PharmCAT took). Otherwise the call
+    shown, from small variants, cannot show it, and it and its phenotype may be wrong.
+    """
+    what = "; ".join(found)
+    if in_call:
+        before = f" (from small variants alone, {snv_diplotype})" if snv_diplotype else ""
+        note = (
+            f"Read depth shows {what}. The call includes it{before}. Confirm it with "
+            "an independent test. See Alerts and Warnings."
+        )
+        kind, call_note = "deletion", f"{DELETION_MARKER} (see Alerts)"
+    else:
+        note = (
+            f"Read depth shows {what}, which this call, from small variants, cannot "
+            "show: the call and its phenotype may be wrong. See Alerts and Warnings."
+        )
+        kind = "found_deletion"
+        call_note = f"{DELETION_MARKER}, which this call cannot show (see Alerts)"
+    return {
+        "kind": kind,
+        "warn": True,
+        "marker": DELETION_MARKER,
+        "call_note": call_note,
+        "note": note,
+        "found": found,
+    }
+
+
 def listed_alleles_entry(
     row: Mapping[str, Any], pypgx_results: Any = None
 ) -> Optional[Dict[str, Any]]:
@@ -369,17 +443,23 @@ def listed_alleles_entry(
     - ``found``: PharmCAT's call, and PyPGx measured a copy number other than
       normal, which the call cannot show: it may be wrong;
     - ``measured``: PharmCAT's CYP2B6 call, PyPGx's copy number normal: only *30
-      is left (CYP4F2 measured normal has nothing left, and no entry);
-    - ``no_model``: PyPGx's call (Call P) of CYP2C19 or SLCO1B1, which it has no
-      copy-number model for;
+      is left (CYP4F2, CYP2C19 and SLCO1B1 measured normal have nothing left, and
+      no entry);
+    - ``deletion``: a deletion ZaroPGx's check found in CYP2C19 or SLCO1B1, in the
+      call; ``found_deletion``: one the call shown cannot show;
+    - ``no_model``: PyPGx's call (Call P) of CYP2C19 or SLCO1B1 with no copy number
+      measured (no read depth: PyPGx has no model for them, and the check needs it);
     - ``no_state``: PyPGx's CYP2B6 call with its copy number measured: *30.
     """
     gene = str(row.get("gene") or "").strip().upper()
     if gene not in PHARMCAT_MISSED:
         return None
     moves = gene in _PHARMCAT_PHENOTYPE_GENES
+    code = pypgx_copy_number(pypgx_results, gene)
+    found = checked_deletions(pypgx_results, gene) if gene in CHECKED else []
     if pharmcat_called(row):
-        code = pypgx_copy_number(pypgx_results, gene)
+        if found:
+            return _deletion_found_entry(gene, found, False, None)
         if not code:
             return {
                 "kind": "pharmcat",
@@ -421,6 +501,11 @@ def listed_alleles_entry(
     if not pypgx_called(row):
         return None
     if gene in PYPGX_NO_MODEL:
+        if found:
+            snv = _details(pypgx_results, gene).get("snv_diplotype")
+            return _deletion_found_entry(gene, found, bool(snv), snv)
+        if code:
+            return None
         return {
             "kind": "no_model",
             "warn": True,
@@ -469,8 +554,9 @@ def _listed(rows: Iterable[Mapping[str, Any]]) -> List[Tuple[str, Dict[str, Any]
 def measured_normal_genes(
     rows: Iterable[Mapping[str, Any]], pypgx_results: Any = None
 ) -> List[str]:
-    """PharmCAT's calls of the genes on its list whose copy number PyPGx measured
-    in this run and found normal, in the rows' order."""
+    """The calls of the genes on its list whose copy number was measured in this run
+    and found normal, in the rows' order: PharmCAT's (PyPGx's copy number, or the
+    deletion check's for CYP2C19 and SLCO1B1), and PyPGx's own of those two."""
     from app.reports.generator import gene_was_called
 
     found = []
@@ -482,7 +568,7 @@ def measured_normal_genes(
             gene in MEASURED_NORMAL
             and gene not in found
             and gene_was_called(row.get("diplotype"))
-            and pharmcat_called(row)
+            and (pharmcat_called(row) or (gene in CHECKED and pypgx_called(row)))
         ):
             code = pypgx_copy_number(pypgx_results, gene)
             if code and code.strip().lower() == "normal":
@@ -558,7 +644,12 @@ def _alleles(genes: List[str]) -> str:
     return ", or ".join(said)
 
 
-def _not_assessed_paragraph(entries: List[Tuple[str, Dict[str, Any]]]) -> str:
+def _not_assessed_paragraph(
+    entries: List[Tuple[str, Dict[str, Any]]], measured_any: bool = False
+) -> str:
+    """``measured_any``: this run measured copy number for some gene on the list,
+    so it had the read depth; the paragraph then says the check gave nothing rather
+    than how to get a measurement."""
     genes = [g for g, _ in entries]
     by_kind: Dict[str, List[str]] = {}
     for g, e in entries:
@@ -595,32 +686,79 @@ def _not_assessed_paragraph(entries: List[Tuple[str, Dict[str, Any]]]) -> str:
         if len(moved) < len(genes):
             text += f" of {_gene_list(moved)}"
         text += "."
-    if any(g in pharmcats for g in MEASURED_NORMAL):
-        text += (
-            " PyPGx measures copy number for CYP2B6 (not *30) and CYP4F2 from a "
-            "GRCh38 whole-genome BAM or CRAM, unless PYPGX_PHARMCAT_PREFERENCE is "
-            "pharmcat; no tool here measures it for CYP2C19 or SLCO1B1."
-        )
-    else:
-        unmodelled = [g for g in pharmcats if g in PYPGX_NO_MODEL]
-        if unmodelled:
+    unchecked = [g for g in genes if g in CHECKED]
+    if measured_any:
+        if unchecked:
             text += (
-                " No tool here measures copy number for "
-                f"{_gene_list(unmodelled, 'or')}."
+                " ZaroPGx's deletion check, which measures "
+                f"{_gene_list(unchecked)} from the read depth PyPGx uses, gave no "
+                "result in this run."
             )
+    elif pharmcats:
+        text += (
+            " From a GRCh38 whole-genome BAM or CRAM, unless "
+            "PYPGX_PHARMCAT_PREFERENCE is pharmcat, PyPGx measures copy number for "
+            "CYP2B6 (not *30) and CYP4F2, and ZaroPGx checks CYP2C19 and SLCO1B1 "
+            "for deletions from the same read depth."
+        )
     return text + "</p>"
 
 
+def _deletion_paragraph(
+    entries: List[Tuple[str, Dict[str, Any]]],
+    rows: List[Mapping[str, Any]],
+    pypgx_results: Any,
+) -> str:
+    """The deletions ZaroPGx's check found in CYP2C19 or SLCO1B1, each with what its
+    call does with it, and how far to trust a check this new."""
+    calls = {str(r.get("gene") or "").upper(): r.get("diplotype") for r in rows}
+    said = []
+    for gene, entry in entries:
+        text = f"Read depth shows {html.escape('; '.join(entry['found']))}. "
+        if entry["kind"] == "deletion":
+            snv = _details(pypgx_results, gene).get("snv_diplotype")
+            text += (
+                f"PharmCAT was given the call with it, {html.escape(str(calls.get(gene)))}"
+                + (f"; from small variants alone it reads {html.escape(snv)}" if snv else "")
+                + "."
+            )
+        else:
+            text += (
+                "The call shown, from small variants, cannot show it: the call and "
+                "its phenotype may be wrong."
+            )
+        said.append(text)
+    genes = [g for g, _ in entries]
+    return (
+        f"<p>⚠️ <strong>Deletion found:</strong> {_gene_list(genes)}. "
+        + " ".join(said)
+        + " PyPGx has no copy-number model for CYP2C19 or SLCO1B1; ZaroPGx checks "
+        "them for deletions from PyPGx's read depth, normalised to the same control "
+        "gene (VDR). Confirm a deletion with an independent test before acting on "
+        "it.</p>"
+    )
+
+
 def _measured_paragraph(measured: List[str], star30: Optional[str]) -> str:
-    """PyPGx's normal copy number for PharmCAT's calls, said once, and CYP2B6 *30.
+    """The normal copy number measured for the calls, said once, and CYP2B6 *30.
     ``star30``: "measured" (PharmCAT's CYP2B6, measured normal) or "no_state"
     (PyPGx's own CYP2B6 call), or None."""
     parts = []
-    if measured:
+    modelled = [g for g in measured if g not in CHECKED]
+    checked = [g for g in measured if g in CHECKED]
+    if modelled:
         parts.append(
             "PyPGx measured normal copy number for "
-            + _gene_list([f"{g} ({MEASURED_NORMAL[g]})" for g in measured])
+            + _gene_list([f"{g} ({MEASURED_NORMAL[g]})" for g in modelled])
             + "."
+        )
+    if checked:
+        parts.append(
+            "Read depth showed no deletion in "
+            + _gene_list([f"{g} ({CHECKED[g]})" for g in checked], "or")
+            + ", which ZaroPGx checks from the same depth and control gene, PyPGx "
+            "having no copy-number model for "
+            + ("it." if len(checked) == 1 else "them.")
         )
     if star30 == "no_state":
         parts.append(
@@ -644,6 +782,9 @@ def pharmcat_copy_number_alert(
     rows = [r for r in rows or [] if isinstance(r, Mapping)]
     entries = _listed(rows)
     found = [(g, e) for g, e in entries if e["kind"] == "found"]
+    deletions = [
+        (g, e) for g, e in entries if e["kind"] in ("deletion", "found_deletion")
+    ]
     unassessed = [(g, e) for g, e in entries if e["kind"] in ("pharmcat", "no_model")]
     star30 = next(
         (e["kind"] for g, e in entries if e["kind"] in ("measured", "no_state")),
@@ -651,10 +792,16 @@ def pharmcat_copy_number_alert(
     )
     measured = measured_normal_genes(rows, pypgx_results)
     paragraphs = []
+    if deletions:
+        paragraphs.append(_deletion_paragraph(deletions, rows, pypgx_results))
     if found:
         paragraphs.append(_found_paragraph(found))
     if unassessed:
-        paragraphs.append(_not_assessed_paragraph(unassessed))
+        paragraphs.append(
+            _not_assessed_paragraph(
+                unassessed, bool(measured or star30 or found or deletions)
+            )
+        )
     tail = _measured_paragraph(measured, star30)
     if tail:
         if paragraphs:
