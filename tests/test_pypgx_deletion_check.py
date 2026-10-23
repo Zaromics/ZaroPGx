@@ -126,6 +126,9 @@ def test_whole_genes_and_both_copies(check):
 def test_a_profile_off_two_copies_calls_nothing(check):
     record = check.call_gene("CYP2C19", _bins(CYP2C19_START, [1.4] * 18 + [0.5, 0.5]), CYP2C19_EXONS)
     assert record["status"] == "uncertain" and record["deletions"] == []
+    # SLCO1B1 reads a little under two copies on normal genomes: still measured.
+    low = check.call_gene("SLCO1B1", _bins(SLCO1B1_START, [1.55] * 23), SLCO1B1_EXONS)
+    assert low["status"] == "measured" and low["deletions"] == []
 
 
 def test_the_call_takes_the_deletion(check):

@@ -18,7 +18,10 @@ On 1000 Genomes 30x genomes: HG00268 reads ~0.9 copies from the region's start t
 94,799.5 kb, CYP2C19 *37 (exons 1-5; Krebs et al., npj Genom Med 2026;11:10, whose
 breakpoints are chr10:94,737,567-94,799,352); HG01771 reads ~1.0 over exons 2-5 with
 exon 1 kept, which is not *37 (the same paper proposes *42 for an exons 2-5 deletion;
-CPIC and PharmCAT have no function for it); normals read 1.5-2.3 in every bin.
+CPIC and PharmCAT have no function for it); HG01531 and HG03856 read ~0.86 across all
+of SLCO1B1 (*48) and HG03436 ~0.94 over its exons 1-2 (*49). No bin of these deletions
+read over 1.06 copies; in 42 GeT-RM reference genomes no two adjacent bins of either
+gene read under 1.51.
 
     python3 deletion_check.py ALIGNMENT CONTROL_STATISTICS OUT.json [--assembly GRCh38]
 
@@ -35,15 +38,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 GENES = ("CYP2C19", "SLCO1B1")
 BIN = 5000
-# A bin under ONE_COPY reads as one copy lost, under BOTH_COPIES as both. Normal bins
-# read 1.5-2.3 on 30x genomes and a one-copy deletion 0.8-1.1 (see the module note);
-# a run must be MIN_BINS long, so one noisy bin calls nothing.
+# A bin under ONE_COPY reads as one copy lost, under BOTH_COPIES as both: between a
+# one-copy deletion's bins (at most 1.06) and normal genomes' (no two adjacent under
+# 1.51; see the module note). A run must be MIN_BINS long, so one noisy bin (1.39 in
+# one normal genome) calls nothing.
 ONE_COPY = 1.35
 BOTH_COPIES = 0.4
 MIN_BINS = 2
 # The bins outside any run must read as two copies for a call to be made: a profile
 # whose rest is off (a low-quality or unusually normalised alignment) says nothing.
-NORMAL_RANGE = (1.6, 2.4)
+# Normal genomes' medians were 1.66-2.03 (SLCO1B1 reads a little under two copies).
+NORMAL_RANGE = (1.5, 2.5)
 VERSION = 1
 
 # What each deletion is, in PharmVar's names (CPIC: no function, limited evidence).
