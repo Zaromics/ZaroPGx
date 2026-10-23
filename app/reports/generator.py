@@ -76,6 +76,7 @@ from app.reports.alt_locus import (
     annotate_alt_locus,
     realigned_alt_loci,
 )
+from app.reports.copy_number import NAMED as NAMED_COPY_NUMBER
 from app.reports.copy_number import (
     annotate_copy_number,
     annotate_pharmcat_copy_number,
@@ -1081,12 +1082,13 @@ def credit_mtdna_call(genes: List[Dict[str, Any]], report_dir: str) -> bool:
 
 
 def pypgx_record(
-    details: Dict[str, Any], diplotype: Optional[str] = None
+    details: Dict[str, Any], diplotype: Optional[str] = None, gene: Optional[str] = None
 ) -> Dict[str, Any]:
     """What PyPGx reported for a gene beyond its genotype (docker/pypgx's
     parse_pypgx_results): candidate alleles, alternative phasings, the copy-number
     call, the variants behind each allele, and its plots. ``diplotype``, PyPGx's
-    call, names a tandem in the copy-number summary."""
+    call, names a tandem in the copy-number summary; ``gene`` names a copy-number
+    state PyPGx's genotyper leaves unnamed (copy_number.NAMED: CYP2B6 Tandem1, *30)."""
     record: Dict[str, Any] = {}
     for key in (
         "haplotype1",
@@ -1099,9 +1101,9 @@ def pypgx_record(
             record[key] = details[key]
     if details.get("copy_number"):
         record["copy_number"] = details["copy_number"]
-        record["copy_number_summary"] = copy_number_summary(
-            details["copy_number"], diplotype
-        )
+        record["copy_number_summary"] = NAMED_COPY_NUMBER.get(
+            (str(gene or "").strip().upper(), str(details["copy_number"]).strip())
+        ) or copy_number_summary(details["copy_number"], diplotype)
         # ZaroPGx's deletion check (CYP2C19, SLCO1B1), not one of PyPGx's models.
         if details.get("copy_number_by"):
             record["copy_number_by"] = details["copy_number_by"]
@@ -4284,7 +4286,9 @@ def generate_report(
                         continue
                     gene_name = str(gene_key).strip()
                     details = gene_res.get("details") or {}
-                    record = pypgx_record(details, gene_res.get("diplotype"))
+                    record = pypgx_record(
+                        details, gene_res.get("diplotype"), gene_name
+                    )
                     if gene_name.upper() in existing_genes:
                         # A PharmCAT row whose call PyPGx supplied -- an outside
                         # call with PyPGx's diplotype, as for CYP2D6 -- is PyPGx's
@@ -4431,9 +4435,9 @@ def generate_report(
     )
     # Calls that cannot show a structural allele PharmCAT lists as undetectable
     # (CYP2B6 *29/*30, CYP2C19 *36/*37, CYP4F2 *16, SLCO1B1 *48/*49): PharmCAT's own
-    # calls, on every input, a whole genome too; PyPGx's CYP2C19 and SLCO1B1, which
-    # it has no copy-number model for; PyPGx's CYP2B6, which cannot be *30. A note
-    # beside each and one alert of their own. PharmCAT's report.json carries no such
+    # calls, on every input, a whole genome too, unless their copy number was
+    # measured; PyPGx's CYP2C19 and SLCO1B1 when ZaroPGx's deletion check did not
+    # measure them. A note beside each and one alert of their own. PharmCAT's report.json carries no such
     # message, so nothing here repeats one of PharmCAT's.
     annotate_pharmcat_copy_number(data.get("genes", []), pypgx_results)
     _noted = [

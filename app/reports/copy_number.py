@@ -59,14 +59,16 @@ from app.reports.provenance import (
 # SV-defined alleles: its gene table's SV and Target genes (lexicon/gene-table.csv;
 # tests/test_report_copy_number.py keeps the two equal). Each lists what PyPGx 0.27's
 # genotyper for the gene calls from a copy-number state (pypgx/api/genotype.py, over
-# its cnv-table.csv); a state it calls Indeterminate is left out, as are *30 (CYP2B6)
-# and *61 and *63 (CYP2D6), SV alleles in its allele table that no state yields. The
-# hybrids are with the gene's paralog in its gene table (CYP2A7, CYP2B7, CYP2D7).
+# its cnv-table.csv); a state it calls Indeterminate is left out, as are *61 and *63
+# (CYP2D6), SV alleles in its allele table that no state yields. CYP2B6 *30 is in:
+# PyPGx's Tandem1 state, which it calls Indeterminate, is the *30 hybrid duplication
+# (NAMED below). The hybrids are with the gene's paralog in its gene table (CYP2A7,
+# CYP2B7, CYP2D7).
 # MISSED is for the Notes to the Executive Summary; CALL_NOTE, after "Copy number
 # not assessed (reason): ", for the note under the call in a narrow table column.
 MISSED: Dict[str, str] = {
     "CYP2A6": "a *4 deletion, a duplication or a CYP2A7 hybrid (*12, *34)",
-    "CYP2B6": "a *29 CYP2B7 hybrid or a duplication (and *30, which PyPGx does not call)",
+    "CYP2B6": "a *29 or *30 hybrid with CYP2B7, or a duplication",
     "CYP2D6": "a *5 deletion, extra copies (x2, x3) or a CYP2D7 hybrid (*13, *36, *68)",
     "CYP2E1": "extra copies of the whole gene (x2, x3) or of part of it (*S1)",
     "CYP4F2": "a whole-gene deletion (*DEL)",
@@ -81,7 +83,7 @@ MISSED: Dict[str, str] = {
 }
 CALL_NOTE: Dict[str, str] = {
     "CYP2A6": "would miss *4, duplications and hybrids",
-    "CYP2B6": "would miss *29 and duplications",
+    "CYP2B6": "would miss *29, *30 and duplications",
     "CYP2D6": "would miss *5, duplications and hybrids",
     "CYP2E1": "would miss extra copies (*S1, x2)",
     "CYP4F2": "would miss a deletion (*DEL)",
@@ -112,9 +114,9 @@ _PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2D6", "G6PD"})
 # CYP4F2 *16 are in its phenotype data, so could be read from an outside call;
 # CYP4F2 has no phenotype data at all. PyPGx 0.27 calls CYP2B6 *29 and duplications
 # and the CYP4F2 deletion (*DEL) from read depth (MISSED above); it has no
-# copy-number model for CYP2C19 or SLCO1B1 (its gene table: SV FALSE), and none of
-# its CYP2B6 copy-number states yields *30. ZaroPGx checks CYP2C19 and SLCO1B1 for
-# deletions from PyPGx's read depth (CHECKED).
+# copy-number model for CYP2C19 or SLCO1B1 (its gene table: SV FALSE); its CYP2B6
+# state Tandem1 is *30 (NAMED). ZaroPGx checks CYP2C19 and SLCO1B1 for deletions from
+# PyPGx's read depth (CHECKED).
 PHARMCAT_MISSED: Dict[str, str] = {
     "CYP2B6": "a CYP2B7-CYP2B6 hybrid (*29, *30)",
     "CYP2C19": "a partial or whole-gene deletion (*36, *37)",
@@ -139,10 +141,26 @@ PHARMCAT_ALERT: Dict[str, str] = {
 # function (its phenotype data). CYP4F2 has no phenotype.
 _PHARMCAT_PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2C19", "SLCO1B1"})
 # PyPGx's own calls of PharmCAT's listed genes that its read depth cannot help:
-# CYP2C19 and SLCO1B1, which it has no copy-number model for, and CYP2B6 *30, which
-# none of its copy-number states yields (pypgx/api/genotype.py, CYP2B6Genotyper).
+# CYP2C19 and SLCO1B1, which it has no copy-number model for.
 PYPGX_NO_MODEL = frozenset({"CYP2C19", "SLCO1B1"})
-PYPGX_NO_STATE = frozenset({"CYP2B6"})
+# PyPGx's copy-number states that are a named allele its genotyper does not name.
+# CYP2B6 Tandem1 (pypgx/api/genotype.py, CYP2B6Genotyper: Indeterminate): its one
+# example, the 1000 Genomes genome HG01806 that PyPGx's documentation trains it on
+# and the only one of 2,504 it calls Tandem1, has three copies from inside CYP2B7
+# around intron 4 to CYP2B6 between exons 4 and 5, about 70 kb, the distance between
+# the two genes' copies of their segmental duplication. A tandem duplication of that
+# segment joins CYP2B6 exons 1-4 to CYP2B7 exons 5-9 beside an intact CYP2B6: the
+# hybrid PharmVar names *30 (Martis et al., Pharmacogenomics J 2013;13(6):558-566).
+NAMED: Dict[Tuple[str, str], str] = {
+    ("CYP2B6", "Tandem1"): (
+        "the *30 hybrid duplication (CYP2B6 exons 1-4 joined to CYP2B7 exons 5-9, "
+        "beside an intact CYP2B6)"
+    ),
+}
+# The same, short, for the note under the call in a narrow table column.
+NAMED_SHORT: Dict[Tuple[str, str], str] = {
+    ("CYP2B6", "Tandem1"): "*30, a hybrid duplication",
+}
 # The genes docker/pypgx's deletion_check.py checks, and the deletions it names.
 CHECKED: Dict[str, str] = {"CYP2C19": "*36, *37", "SLCO1B1": "*48, *49"}
 CHECKED_BY = "deletion_check"
@@ -357,49 +375,21 @@ def pypgx_copy_number(pypgx_results: Any, gene: str) -> Optional[str]:
 
 
 # The Executive Summary's line under a noted call, by kind. A call that cannot show
-# an allele (nothing measured it) or may be wrong (PyPGx measured a structural allele
-# PharmCAT's call cannot show) is marked ⚠ (``warn``). A call whose copy number PyPGx
-# measured is not: only CYP2B6 *30, which no copy-number state yields, is left, and
-# its line is plain. A measured gene with nothing left (CYP4F2) has no line at all.
+# an allele (nothing measured it) or may be wrong (a structural allele was measured
+# that PharmCAT's call cannot show) is marked ⚠ (``warn``). A gene whose copy number
+# was measured and found normal has nothing left to show, and no line at all.
 NOT_ASSESSED_MARKER = "Copy number not assessed"
 FOUND_MARKER = "PyPGx found a structural allele"
 DELETION_MARKER = "Deletion found from read depth"
-STAR30_MARKER = "*30 not assessed"
 # What PyPGx's normal copy number for a gene on PharmCAT's list rules out: what its
-# copy-number states for the gene can show (MISSED). CYP2C19 and SLCO1B1 have none.
+# copy-number states for the gene can show (MISSED), or ZaroPGx's deletion check
+# (CHECKED).
 MEASURED_NORMAL: Dict[str, str] = {
-    "CYP2B6": "no *29 hybrid or duplication",
+    "CYP2B6": "no *29 or *30 hybrid, or duplication",
     "CYP4F2": "no whole-gene deletion",
     "CYP2C19": "no *36 or *37 deletion",
     "SLCO1B1": "no *48 or *49 deletion",
 }
-STAR30 = "*30, a hybrid with CYP2B7"
-
-
-def _measured_entry(kind: str, code: Optional[str]) -> Dict[str, Any]:
-    """CYP2B6 with its copy number measured: *30 is all it cannot show."""
-    if kind == "measured":
-        note = (
-            f"PyPGx measured normal copy number ({MEASURED_NORMAL['CYP2B6']}); no "
-            f"tool here calls {STAR30}. See Alerts and Warnings."
-        )
-    else:
-        note = (
-            f"None of PyPGx's copy-number states is {STAR30}, so this call cannot "
-            "show it. See Alerts and Warnings."
-        )
-    entry = {
-        "kind": kind,
-        "warn": False,
-        "marker": STAR30_MARKER,
-        "call_note": "*30 not assessed (see Alerts)",
-        "note": note,
-    }
-    if code:
-        entry["pypgx_code"] = code
-    return entry
-
-
 def _deletion_found_entry(
     gene: str, found: List[str], in_call: bool, snv_diplotype: Optional[str]
 ) -> Dict[str, Any]:
@@ -441,15 +431,12 @@ def listed_alleles_entry(
 
     - ``pharmcat``: PharmCAT's own call (Call C) with no copy number measured;
     - ``found``: PharmCAT's call, and PyPGx measured a copy number other than
-      normal, which the call cannot show: it may be wrong;
-    - ``measured``: PharmCAT's CYP2B6 call, PyPGx's copy number normal: only *30
-      is left (CYP4F2, CYP2C19 and SLCO1B1 measured normal have nothing left, and
-      no entry);
+      normal, which the call cannot show: it may be wrong (a gene measured normal
+      has nothing left to show, and no entry);
     - ``deletion``: a deletion ZaroPGx's check found in CYP2C19 or SLCO1B1, in the
       call; ``found_deletion``: one the call shown cannot show;
     - ``no_model``: PyPGx's call (Call P) of CYP2C19 or SLCO1B1 with no copy number
-      measured (no read depth: PyPGx has no model for them, and the check needs it);
-    - ``no_state``: PyPGx's CYP2B6 call with its copy number measured: *30.
+      measured (no read depth: PyPGx has no model for them, and the check needs it).
     """
     gene = str(row.get("gene") or "").strip().upper()
     if gene not in PHARMCAT_MISSED:
@@ -479,14 +466,19 @@ def listed_alleles_entry(
             # generator imports this module, so its helper is imported here.
             from app.reports.generator import copy_number_summary
 
-            plain = copy_number_summary(code) or "a structural variant"
+            plain = (
+                NAMED.get((gene, code.strip()))
+                or copy_number_summary(code)
+                or "a structural variant"
+            )
+            short = NAMED_SHORT.get((gene, code.strip()), plain)
             return {
                 "kind": "found",
                 "warn": True,
                 "pypgx_code": code,
                 "plain": plain,
                 "marker": FOUND_MARKER,
-                "call_note": f"PyPGx found {plain}, which this call cannot show "
+                "call_note": f"PyPGx found {short}, which this call cannot show "
                 "(see Alerts)",
                 "note": (
                     f"PyPGx found {plain}, which PharmCAT's call, from small "
@@ -495,8 +487,6 @@ def listed_alleles_entry(
                     + " may be wrong. See Alerts and Warnings."
                 ),
             }
-        if gene in PYPGX_NO_STATE:
-            return _measured_entry("measured", code)
         return None
     if not pypgx_called(row):
         return None
@@ -521,8 +511,6 @@ def listed_alleles_entry(
                 + ". See Alerts and Warnings."
             ),
         }
-    if gene in PYPGX_NO_STATE:
-        return _measured_entry("no_state", pypgx_copy_number(pypgx_results, gene))
     return None
 
 
@@ -698,7 +686,7 @@ def _not_assessed_paragraph(
         text += (
             " From a GRCh38 whole-genome BAM or CRAM, unless "
             "PYPGX_PHARMCAT_PREFERENCE is pharmcat, PyPGx measures copy number for "
-            "CYP2B6 (not *30) and CYP4F2, and ZaroPGx checks CYP2C19 and SLCO1B1 "
+            "CYP2B6 and CYP4F2, and ZaroPGx checks CYP2C19 and SLCO1B1 "
             "for deletions from the same read depth."
         )
     return text + "</p>"
@@ -739,10 +727,8 @@ def _deletion_paragraph(
     )
 
 
-def _measured_paragraph(measured: List[str], star30: Optional[str]) -> str:
-    """The normal copy number measured for the calls, said once, and CYP2B6 *30.
-    ``star30``: "measured" (PharmCAT's CYP2B6, measured normal) or "no_state"
-    (PyPGx's own CYP2B6 call), or None."""
+def _measured_paragraph(measured: List[str]) -> str:
+    """The normal copy number measured for the calls, said once."""
     parts = []
     modelled = [g for g in measured if g not in CHECKED]
     checked = [g for g in measured if g in CHECKED]
@@ -760,13 +746,6 @@ def _measured_paragraph(measured: List[str], star30: Optional[str]) -> str:
             "having no copy-number model for "
             + ("it." if len(checked) == 1 else "them.")
         )
-    if star30 == "no_state":
-        parts.append(
-            f"PyPGx measured CYP2B6's copy number, but none of its copy-number states "
-            f"is {STAR30}, so its call cannot show it."
-        )
-    elif star30:
-        parts.append(f"No tool here calls CYP2B6 {STAR30}.")
     return " ".join(parts)
 
 
@@ -776,9 +755,9 @@ def pharmcat_copy_number_alert(
     """The Alerts and Warnings entry for the genes on PharmCAT's list
     (listed_alleles_entry): one box, or None when there is nothing to say.
 
-    A structural allele PyPGx found comes first, then the calls nothing measured
-    (⚠, named in the heading), then, once and plainly, the genes whose copy
-    number PyPGx measured and found normal, and CYP2B6 *30, which nothing calls."""
+    A deletion the check found and a structural allele PyPGx found come first, then
+    the calls nothing measured (⚠, named in the heading), then, once and plainly,
+    the genes whose copy number was measured and found normal."""
     rows = [r for r in rows or [] if isinstance(r, Mapping)]
     entries = _listed(rows)
     found = [(g, e) for g, e in entries if e["kind"] == "found"]
@@ -786,10 +765,6 @@ def pharmcat_copy_number_alert(
         (g, e) for g, e in entries if e["kind"] in ("deletion", "found_deletion")
     ]
     unassessed = [(g, e) for g, e in entries if e["kind"] in ("pharmcat", "no_model")]
-    star30 = next(
-        (e["kind"] for g, e in entries if e["kind"] in ("measured", "no_state")),
-        None,
-    )
     measured = measured_normal_genes(rows, pypgx_results)
     paragraphs = []
     if deletions:
@@ -799,10 +774,10 @@ def pharmcat_copy_number_alert(
     if unassessed:
         paragraphs.append(
             _not_assessed_paragraph(
-                unassessed, bool(measured or star30 or found or deletions)
+                unassessed, bool(measured or found or deletions)
             )
         )
-    tail = _measured_paragraph(measured, star30)
+    tail = _measured_paragraph(measured)
     if tail:
         if paragraphs:
             paragraphs.append(f"<p>{tail}</p>")
