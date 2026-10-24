@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Union
 from sqlalchemy.orm import Session
 
 from app.reports.actionable import actionable_genes
-from app.services.fhir import terminology, xml_format
+from app.services.fhir import report_data, terminology, xml_format
 from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
@@ -157,8 +157,19 @@ class FHIRExportService:
             }
 
         try:
-            # Determine PharmCAT data source (database or provided)
+            # Determine PharmCAT data source (provided, the report's own, or the
+            # database)
             data = pharmcat_data
+            if data is None:
+                # What the job's report built its bundle from, if it kept it: the
+                # same rows, so the same bundle (app/services/fhir/report_data.py).
+                saved = self._saved_report_data(run_id=run_id, workflow_id=workflow_id)
+                if saved:
+                    data = saved["data"]
+                    run_id = run_id or saved.get("run_id")
+                    workflow_id = workflow_id or saved["workflow_id"]
+                    patient_id = patient_id or report_data.bundle_patient_id(saved)
+                    patient_info = patient_info or saved.get("patient_info")
             if data is None:
                 if not run_id:
                     return {
@@ -234,6 +245,17 @@ class FHIRExportService:
             }
 
         try:
+            if pharmcat_data is None:
+                # The job's report kept what it built its bundle from: export that
+                # (export_pgx_report reads it), not the database's PharmCAT rows.
+                saved = self._saved_report_data(workflow_id=workflow_id)
+                if saved:
+                    return self.export_pgx_report(
+                        run_id=saved.get("run_id"),
+                        patient_info=patient_info,
+                        output_format=output_format,
+                        workflow_id=saved["workflow_id"],
+                    )
             # Get PharmCAT data via workflow (or use provided data)
             data = (
                 pharmcat_data
@@ -428,7 +450,18 @@ class FHIRExportService:
             }
 
         try:
-            # Get PharmCAT data via workflow to find run_id
+            # What the job's report built its bundle from, else the workflow's
+            # PharmCAT data, to find run_id
+            saved = self._saved_report_data(workflow_id=workflow_id)
+            if saved:
+                return self.save_fhir_export(
+                    run_id=saved.get("run_id"),
+                    patient_id=patient_id or workflow_id,
+                    patient_info=patient_info or saved.get("patient_info"),
+                    output_format=output_format,
+                    pharmcat_data=saved["data"],
+                    workflow_id=saved["workflow_id"],
+                )
             pharmcat_data = self.pharmcat_service.get_pharmcat_data_for_workflow(
                 workflow_id
             )
@@ -1729,6 +1762,45 @@ class FHIRExportService:
         )
 
         return report
+
+    def _saved_report_data(
+        self, run_id: Optional[str] = None, workflow_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """What the job's report built its bundle from (report_data.read), or None.
+
+        By the job, or for a run by the jobs linked to it (their metadata's
+        pharmcat_run_id, as generator.lookup_pharmcat_run_id reads it), newest first.
+        """
+        jobs = [str(workflow_id)] if workflow_id else self._jobs_of_run(run_id)
+        for job_id in jobs:
+            try:
+                job_id = str(uuid.UUID(job_id))
+            except ValueError:
+                continue
+            record = report_data.read(
+                REPORT_DIR, job_id, self._job_patient_id(job_id), run_id
+            )
+            if record:
+                return record
+        return None
+
+    def _jobs_of_run(self, run_id: Optional[str]) -> List[str]:
+        """The jobs linked to a PharmCAT run, newest first."""
+        if not run_id:
+            return []
+        try:
+            from app.api.db import Job
+
+            rows = (
+                self.db.query(Job.id)
+                .filter(Job.job_metadata["pharmcat_run_id"].as_string() == str(run_id))
+                .order_by(Job.created_at.desc())
+                .all()
+            )
+        except Exception as e:
+            logger.debug(f"No jobs found for run {run_id}: {e}")
+            return []
+        return [str(row[0]) for row in rows]
 
     def _job_patient_id(self, workflow_id: Optional[str]) -> Optional[str]:
         """The patient a job belongs to (its metadata's patient_id, the name of
