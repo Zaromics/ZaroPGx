@@ -247,6 +247,22 @@ class JobLog(Base):
         return f"JobLog(id={self.id}, level={self.log_level}, message={self.message[:50]}...)"
 
 
+# The statuses a job ends in; any other is still running (or about to).
+FINISHED_JOB_STATUSES = (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED)
+
+
+def active_job_count(db=None) -> int:
+    """Jobs not yet finished: what stopping the stack would fail. In `db`, or a
+    session of its own."""
+    own = db is None
+    db = SessionLocal() if own else db
+    try:
+        return db.query(Job).filter(Job.status.notin_(FINISHED_JOB_STATUSES)).count()
+    finally:
+        if own:
+            db.close()
+
+
 # Dependency to get DB session using modern FastAPI pattern
 def get_db():
     """Database session dependency for FastAPI"""

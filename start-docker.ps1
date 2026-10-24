@@ -20,7 +20,8 @@
 #   powershell -ExecutionPolicy Bypass -File start-docker.ps1
 
 param(
-    [switch]$AutoLocal  # Automatically use .env.local without prompting
+    [switch]$AutoLocal,  # Automatically use .env.local without prompting
+    [switch]$Force       # Restart even while a job or an upload is running
 )
 
 $ReleaseVersion = "0.4.0"
@@ -1235,6 +1236,40 @@ Test-PublishedImageArch
 
 if ($env:DOCKER_USE_WSL -eq "1") {
     Write-Host "  Note: Running Docker commands through WSL" -ForegroundColor Gray
+}
+
+# Stopping the stack fails a job that is running and an upload still arriving. If the
+# app is up, ask it what it is doing (scripts/stack_activity.py, run inside its
+# container) and stop here if anything is; -Force restarts anyway.
+$running = (Invoke-Docker "docker compose ps --status running --services" 2>$null | Out-String) -split "\s+"
+if ($running -contains "app") {
+    $activity = (Invoke-Docker "docker compose exec -T app python /app/scripts/stack_activity.py" 2>$null | Out-String).Trim() -split "\s+"
+    if ($activity.Count -lt 2) {
+        Write-Host "  Could not ask ZaroPGx whether a job or upload is running." -ForegroundColor Yellow
+        if (-not $Force) {
+            Write-Host "  Make sure none is, then run .\start-docker.ps1 -Force." -ForegroundColor Yellow
+            if ($didPush) { Pop-Location }
+            exit 1
+        }
+    } else {
+        $uploads = $activity[0]
+        $jobs = $activity[1]
+        if ($uploads -eq "?") {
+            Write-Host "  The running version cannot say whether an upload is arriving; make sure none is." -ForegroundColor Yellow
+            $uploads = "0"
+        }
+        if ($jobs -ne "0" -or $uploads -ne "0") {
+            Write-Host "  ZaroPGx is busy: $jobs job(s) running, $uploads upload(s) arriving." -ForegroundColor Yellow
+            if ($Force) {
+                Write-Host "  -Force: restarting anyway; they will fail." -ForegroundColor Yellow
+            } else {
+                Write-Host "  Restarting now would fail them. Run .\start-docker.ps1 again when they finish," -ForegroundColor Yellow
+                Write-Host "  or .\start-docker.ps1 -Force to restart anyway." -ForegroundColor Yellow
+                if ($didPush) { Pop-Location }
+                exit 1
+            }
+        }
+    }
 }
 
 Write-Host "  Stopping existing containers..." -ForegroundColor Gray

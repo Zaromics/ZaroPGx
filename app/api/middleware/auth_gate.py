@@ -44,6 +44,8 @@ AUTH_MODES = frozenset({"open", "audit", "password"})
 ALLOWLIST_EXACT = frozenset(
     {
         "/health",
+        # Answers only a request from inside the app's own container (see its route).
+        "/internal/activity",
         "/openapi.json",
         "/api/docs",
         "/api/redoc",
