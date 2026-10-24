@@ -13,15 +13,16 @@ PyPGx's gene regions and PharmCAT's positions, the windows whose depth tells a w
 genome from a panel, HLA-A, -B and -C with the HLA allele contigs, and one chrM read in
 ten. `NA12878.pgx-demo.regions.bed` lists the regions; the script says why each is there.
 The demo runs every stage: the CRAM's conversion, HLA typing, PyPGx with its deletion and
-duplication calls, mtDNA, PharmCAT and the reports. Its stages took about 8 minutes on a
-10-core machine, most of it PyPGx.
+duplication calls, mtDNA, PharmCAT and the reports. Its stages take about 6 minutes on a
+10-core machine, 5 of them PyPGx.
 
 ## What it gives
 
 Checked on 2026-10-20 against the whole genome, through ZaroPGx's own services: the same
 66 PyPGx calls and copy numbers, the same HLA alleles and haplogroup, the same genotype at
 every PharmCAT position (1,199 reference, 24 variant, 3 uncertain), and the same 22
-PharmCAT calls. Where NA12878 has a published answer, it agrees:
+PharmCAT calls. PyPGx now calls 87 genes on it: on reads it also runs the 21 PharmCAT
+calls itself, for their copy number, and PharmCAT keeps its own calls. Where NA12878 has a published answer, it agrees:
 
 | Gene | Demo | Published |
 |---|---|---|
