@@ -19,9 +19,13 @@ On 1000 Genomes 30x genomes: HG00268 reads ~0.9 copies from the region's start t
 breakpoints are chr10:94,737,567-94,799,352); HG01771 reads ~1.0 over exons 2-5 with
 exon 1 kept, which is not *37 (the same paper proposes *42 for an exons 2-5 deletion;
 CPIC and PharmCAT have no function for it); HG01531 and HG03856 read ~0.86 across all
-of SLCO1B1 (*48) and HG03436 ~0.94 over its exons 1-2 (*49). No bin of these deletions
-read over 1.06 copies; in 42 GeT-RM reference genomes no two adjacent bins of either
-gene read under 1.51.
+of SLCO1B1 (*48) and HG03436 ~0.94 over its exons 1-2 (*49). Each deletion runs at least
+6 bins (30 kb), with a median of at most 1.0 copies. In 62 GeT-RM reference genomes no two
+adjacent bins of either gene read under 1.51, and no run of them was longer than 2 bins
+under 1.6. Downsampled to 15x, the depth PyPGx's whole-genome gate admits, the deletions'
+medians stayed at most 1.07, but one reference genome had two bins at 1.33 (SLCO1B1): so
+a run must be at least 3 bins long with a median of at most 1.2, which calls all five and
+none of the 62 at both depths. A deletion under 15 kb is not called.
 
     python3 deletion_check.py ALIGNMENT CONTROL_STATISTICS OUT.json [--assembly GRCh38]
 
@@ -39,17 +43,19 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 GENES = ("CYP2C19", "SLCO1B1")
 BIN = 5000
 # A bin under ONE_COPY reads as one copy lost, under BOTH_COPIES as both: between a
-# one-copy deletion's bins (at most 1.06) and normal genomes' (no two adjacent under
-# 1.51; see the module note). A run must be MIN_BINS long, so one noisy bin (1.39 in
-# one normal genome) calls nothing.
+# one-copy deletion's bins (at most 1.17 at 30x, 1.2 at 15x) and normal genomes' (no two
+# adjacent under 1.51 at 30x). A run must be MIN_BINS long and its median at most
+# RUN_MEDIAN, so the short dips noise makes at 15x (two bins at 1.33 in one normal
+# genome) call nothing; see the module note.
 ONE_COPY = 1.35
 BOTH_COPIES = 0.4
-MIN_BINS = 2
+MIN_BINS = 3
+RUN_MEDIAN = 1.2
 # The bins outside any run must read as two copies for a call to be made: a profile
 # whose rest is off (a low-quality or unusually normalised alignment) says nothing.
 # Normal genomes' medians were 1.66-2.03 (SLCO1B1 reads a little under two copies).
 NORMAL_RANGE = (1.5, 2.5)
-VERSION = 1
+VERSION = 2
 
 # What each deletion is, in PharmVar's names (CPIC: no function, limited evidence).
 # CYP2C19 *37 is "a partial deletion including at least the whole of exon 1"; a
@@ -78,18 +84,20 @@ def bins_of(
 
 
 def runs_under(bins: Sequence[Tuple[int, int, float]]) -> List[List[Tuple[int, int, float]]]:
-    """Runs of at least MIN_BINS consecutive bins under ONE_COPY."""
+    """Runs of at least MIN_BINS consecutive bins under ONE_COPY, whose median is at
+    most RUN_MEDIAN."""
     runs, current = [], []
     for b in bins:
         if b[2] < ONE_COPY and (not current or current[-1][1] == b[0]):
             current.append(b)
             continue
-        if len(current) >= MIN_BINS:
-            runs.append(current)
-        current = [b] if b[2] < ONE_COPY else []
-    if len(current) >= MIN_BINS:
         runs.append(current)
-    return runs
+        current = [b] if b[2] < ONE_COPY else []
+    runs.append(current)
+    return [
+        run for run in runs
+        if len(run) >= MIN_BINS and statistics.median(b[2] for b in run) <= RUN_MEDIAN
+    ]
 
 
 def exons_in(
@@ -239,7 +247,10 @@ def measure(alignment: str, control_statistics: str, assembly: str) -> Dict[str,
     return {
         "version": VERSION,
         "bin_size": BIN,
-        "thresholds": {"one_copy": ONE_COPY, "both_copies": BOTH_COPIES, "min_bins": MIN_BINS},
+        "thresholds": {
+            "one_copy": ONE_COPY, "both_copies": BOTH_COPIES, "min_bins": MIN_BINS,
+            "run_median": RUN_MEDIAN,
+        },
         "genes": genes,
     }
 

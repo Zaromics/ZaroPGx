@@ -121,8 +121,9 @@ note either.
 **Deletions in CYP2C19 and SLCO1B1.** PyPGx has no copy-number model for *CYP2C19* or
 *SLCO1B1*, so ZaroPGx checks them itself, from the read depth PyPGx measures on a GRCh38
 whole-genome alignment, normalised against the same control gene (*VDR*): the median copy
-number of each 5 kb across the gene, where a run of two or more stretches under 1.35 copies
-is a deletion of one copy, and under 0.4 of both. A deletion is named by the exons it takes:
+number of each 5 kb across the gene, where a run of three or more stretches under 1.35
+copies, with a median of at most 1.2, is a deletion of one copy, and under 0.4 of both (a
+deletion under 15 kb is not called). A deletion is named by the exons it takes:
 *CYP2C19* \*36 (the whole gene) or \*37 (a partial deletion that includes exon 1), *SLCO1B1*
 \*48 (the whole gene; a deletion that size may take part of *SLCO1B3* too) or \*49 (part of
 it), all no function in CPIC's tables. With one copy deleted, the other copy's variants read
@@ -135,8 +136,8 @@ independent test before acting on it. A deletion no star allele with a function 
 a deletion leaves PharmCAT's call, marked as one that cannot show it. Found normal, neither
 gene gets a note, and the alert says so once. On 1000 Genomes 30x genomes the check calls
 *CYP2C19* \*37 in HG00268, the exons 2-5 deletion in HG01771 and *SLCO1B1* \*48 in HG01531
-and HG03856 and \*49 in HG03436, and no deletion in 42 GeT-RM reference genomes: no bin of those deletions read over 1.06 copies, and no two adjacent
-bins of the reference genomes under 1.51.
+and HG03856 and \*49 in HG03436, and no deletion in 62 GeT-RM reference genomes, both at
+their own depth (about 30x) and downsampled to 15x, the lowest depth the check runs at.
 
 **PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
 shows them where PharmCAT's own report does, in PharmCAT's words (a link as its words and

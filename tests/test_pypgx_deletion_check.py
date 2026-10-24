@@ -106,6 +106,24 @@ def test_one_low_bin_is_noise(check):
     assert record["deletions"] == []
 
 
+def test_short_or_shallow_dips_at_15x_are_noise(check):
+    # A GeT-RM reference genome downsampled to 15x: two SLCO1B1 bins at 1.33, which the
+    # first thresholds (two bins under 1.35) called *49. Three shallow bins are noise too.
+    for dip in ([1.33, 1.33], [1.3, 1.3, 1.3]):
+        values = list(NA18861_SLCO1B1)
+        values[4 : 4 + len(dip)] = dip
+        record = check.call_gene("SLCO1B1", _bins(SLCO1B1_START, values), SLCO1B1_EXONS)
+        assert record["deletions"] == [], dip
+
+
+def test_a_deletion_at_15x_is_still_called(check):
+    # HG01771's exons 2-5 deletion at 15x: bins up to 1.2, median 1.07.
+    values = [v if v > 1.5 else min(1.2, v + 0.07) for v in HG01771_CYP2C19]
+    record = check.call_gene("CYP2C19", _bins(CYP2C19_START, values), CYP2C19_EXONS)
+    (deletion,) = record["deletions"]
+    assert deletion["exons"] == [2, 3, 4, 5] and deletion["copies_lost"] == 1
+
+
 def test_whole_genes_and_both_copies(check):
     whole = check.call_gene("CYP2C19", _bins(CYP2C19_START, [0.95] * 20), CYP2C19_EXONS)
     # A deletion of the whole region leaves no bins to compare: still called.
