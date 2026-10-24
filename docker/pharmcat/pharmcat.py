@@ -19,6 +19,7 @@ providing both file URLs and content in the API response.
 """
 
 import asyncio
+import collections
 import os
 import json
 import logging
@@ -28,6 +29,8 @@ import gzip
 import shutil
 from pathlib import Path
 import psutil
+import signal
+import threading
 import time
 from datetime import datetime
 import re
@@ -201,6 +204,42 @@ print(f"PharmCAT JAR location: {PHARMCAT_JAR}")
 # (docker/gatk-api/gatk_api.py, docker/pypgx/pypgx_wrapper.py,
 # docker/zarohla/app.py).
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
+# How long PharmCAT may run, in wall-clock seconds from its start, and how many of
+# the last lines it printed a failure's error carries (stderr is merged into stdout).
+PHARMCAT_TIMEOUT_SECONDS = 300
+PHARMCAT_ERROR_LINES = 10
+
+
+def kill_process_group(process: subprocess.Popen) -> None:
+    """Kill a process started in a session of its own, and everything it started.
+
+    pharmcat_pipeline is a Python script that runs PharmCAT's Java under it; killing
+    the script alone would leave the JVM running, and holding the output pipe open.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        logger.warning(f"PharmCAT process {process.pid} did not exit after SIGKILL")
+
+
+def pharmcat_failure(error: subprocess.SubprocessError) -> str:
+    """What to say about a PharmCAT run that failed or was stopped, with its last lines."""
+    if isinstance(error, subprocess.TimeoutExpired):
+        what = (
+            f"PharmCAT did not finish within {error.timeout:g} s and was stopped "
+            "(its process and everything it started were killed)"
+        )
+    elif error.returncode < 0:
+        what = f"PharmCAT was killed by signal {-error.returncode}"
+    else:
+        what = f"PharmCAT failed with exit code {error.returncode}"
+    last = (error.output or "").strip()
+    return f"{what}. Its last lines:\n{last}" if last else f"{what}, and printed nothing."
 
 # This service has no authentication and is reachable from every container on
 # the compose network, so `file.filename` off /genotype's multipart request is
@@ -734,7 +773,7 @@ async def process_genotype(
                 if job_client:
                     await job_client.log_progress("Executing PharmCAT pipeline", {
                         "command": " ".join(pharmcat_cmd),
-                        "timeout_seconds": 300
+                        "timeout_seconds": PHARMCAT_TIMEOUT_SECONDS
                     })
                     
                     # Update step with progress for proper mapping
@@ -746,9 +785,20 @@ async def process_genotype(
                 
                 try:
                     # Helper to stream process output to Docker logs and optionally tee to a file
-                    def _run_and_stream(cmd, env_vars, working_dir, workflow_identifier=None, timeout_seconds=300, tee_file_path=None):
-                        """Run a subprocess, merging stderr into stdout, stream to logger, optionally tee to file, enforce timeout."""
+                    def _run_and_stream(cmd, env_vars, working_dir, workflow_identifier=None, timeout_seconds=PHARMCAT_TIMEOUT_SECONDS, tee_file_path=None):
+                        """Run a subprocess, merging stderr into stdout, stream to logger, optionally tee to file, enforce timeout.
+
+                        The output is read in a thread of its own, and the timeout counts
+                        wall-clock time from the start: it used to be checked only when a
+                        line arrived, so a PharmCAT that hung without printing was never
+                        stopped. On timeout the process and everything it started are
+                        killed (kill_process_group) and TimeoutExpired is raised; a
+                        non-zero exit raises CalledProcessError. Both carry the last
+                        PHARMCAT_ERROR_LINES lines PharmCAT printed.
+                        """
                         tee_file_handle = open(tee_file_path, "a", encoding="utf-8") if tee_file_path else None
+                        tail = collections.deque(maxlen=PHARMCAT_ERROR_LINES)
+                        process_local = None
                         try:
                             process_local = subprocess.Popen(
                                 cmd,
@@ -757,7 +807,10 @@ async def process_genotype(
                                 text=True,
                                 bufsize=1,
                                 env=env_vars,
-                                cwd=working_dir
+                                cwd=working_dir,
+                                # A process group of its own, so a timeout can kill the
+                                # JVM pharmcat_pipeline starts, not only the script.
+                                start_new_session=True,
                             )
                             if workflow_identifier:
                                 # Track specific file paths for cleanup
@@ -781,31 +834,48 @@ async def process_genotype(
                                     "cleanup_paths": cleanup_paths_local
                                 })
 
-                            start_time_local = time.time()
                             stdout_length_local = 0
-                            # Stream line by line
-                            assert process_local.stdout is not None
-                            for line in process_local.stdout:
-                                line_to_log = line.rstrip("\n")
-                                stdout_length_local += len(line)
-                                logger.info(f"[pharmcat-pipeline] {line_to_log}")
-                                if tee_file_handle:
-                                    try:
-                                        tee_file_handle.write(line)
-                                    except Exception:
-                                        # Don't break pipeline on tee errors
-                                        pass
-                                # Check timeout
-                                if (time.time() - start_time_local) > timeout_seconds:
-                                    process_local.kill()
-                                    raise subprocess.TimeoutExpired(cmd, timeout_seconds)
 
-                            # Ensure process exits and capture return code
-                            return_code_local = process_local.wait(timeout=5)
+                            def pump():
+                                """Stream the output line by line, as it comes."""
+                                nonlocal stdout_length_local
+                                assert process_local.stdout is not None
+                                try:
+                                    for line in process_local.stdout:
+                                        line_to_log = line.rstrip("\n")
+                                        stdout_length_local += len(line)
+                                        tail.append(line_to_log)
+                                        logger.info(f"[pharmcat-pipeline] {line_to_log}")
+                                        if tee_file_handle:
+                                            try:
+                                                tee_file_handle.write(line)
+                                            except Exception:
+                                                # Don't break pipeline on tee errors
+                                                pass
+                                except (ValueError, OSError):
+                                    pass  # the pipe closed under it (see the finally below)
+
+                            reader = threading.Thread(target=pump, name="pharmcat-output", daemon=True)
+                            reader.start()
+                            try:
+                                return_code_local = process_local.wait(timeout=timeout_seconds)
+                            except subprocess.TimeoutExpired:
+                                kill_process_group(process_local)
+                                reader.join(timeout=5)
+                                raise subprocess.TimeoutExpired(cmd, timeout_seconds, output="\n".join(tail))
+                            # The rest of the output, which the pipe still holds.
+                            reader.join(timeout=5)
+                            if return_code_local != 0:
+                                raise subprocess.CalledProcessError(return_code_local, cmd, output="\n".join(tail))
                             return stdout_length_local, 0, return_code_local
                         finally:
                             if workflow_identifier:
                                 unregister_process(workflow_identifier)
+                            if process_local is not None and process_local.stdout:
+                                try:
+                                    process_local.stdout.close()
+                                except Exception:
+                                    pass
                             if tee_file_handle:
                                 try:
                                     tee_file_handle.flush()
@@ -822,12 +892,12 @@ async def process_genotype(
                     if job_id:
                         stdout_length, stderr_length, return_code = await asyncio.to_thread(
                             _run_and_stream,
-                            pharmcat_cmd, env, temp_dir, workflow_identifier=job_id, timeout_seconds=300, tee_file_path=tee_log_path
+                            pharmcat_cmd, env, temp_dir, workflow_identifier=job_id, timeout_seconds=PHARMCAT_TIMEOUT_SECONDS, tee_file_path=tee_log_path
                         )
                     else:
                         stdout_length, stderr_length, return_code = await asyncio.to_thread(
                             _run_and_stream,
-                            pharmcat_cmd, env, temp_dir, workflow_identifier=None, timeout_seconds=300, tee_file_path=tee_log_path
+                            pharmcat_cmd, env, temp_dir, workflow_identifier=None, timeout_seconds=PHARMCAT_TIMEOUT_SECONDS, tee_file_path=tee_log_path
                         )
 
                     logger.info("PharmCAT process completed successfully")
@@ -854,11 +924,15 @@ async def process_genotype(
                             output_data={"progress_percent": 70}
                         )
                         
-                except subprocess.TimeoutExpired:
-                    error_msg = "PharmCAT process timed out after 5 minutes"
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                    # A run that failed, or was stopped at the timeout, ends here, with
+                    # what PharmCAT last printed. A failed exit used to be logged and
+                    # passed over, so the run went on to fail later as "output files
+                    # not found", without PharmCAT's own words.
+                    timed_out = isinstance(e, subprocess.TimeoutExpired)
+                    error_msg = pharmcat_failure(e)
                     logger.error(error_msg)
                     
-                    # Update processing status for timeout error
                     processing_status.update({
                         "status": "error",
                         "progress": 0,
@@ -867,38 +941,12 @@ async def process_genotype(
                         "start_time": None
                     })
                     
-                    # Update workflow with timeout error
                     if job_client:
                         await job_client.fail_step(error_msg, {
-                            "error_type": "timeout",
-                            "timeout_seconds": 300
-                        })
-                    
-                    raise HTTPException(status_code=500, detail=error_msg)
-                    
-                except subprocess.CalledProcessError as e:
-                    error_msg = f"PharmCAT process failed with exit code {e.returncode}"
-                    logger.error(f"{error_msg}. stdout: {e.stdout}, stderr: {e.stderr}")
-                except subprocess.TimeoutExpired:
-                    error_msg = "PharmCAT process timed out after 5 minutes"
-                    logger.error(error_msg)
-                    
-                    # Update processing status for process error
-                    processing_status.update({
-                        "status": "error",
-                        "progress": 0,
-                        "last_error": error_msg,
-                        "current_file": None,
-                        "start_time": None
-                    })
-                    
-                    # Update workflow with process error
-                    if job_client:
-                        await job_client.fail_step(error_msg, {
-                            "error_type": "process_error",
-                            "return_code": e.returncode,
-                            "stdout": e.stdout,
-                            "stderr": e.stderr
+                            "error_type": "timeout" if timed_out else "process_error",
+                            "timeout_seconds": PHARMCAT_TIMEOUT_SECONDS if timed_out else None,
+                            "return_code": None if timed_out else e.returncode,
+                            "last_lines": (e.output or "").splitlines(),
                         })
                     
                     raise HTTPException(status_code=500, detail=error_msg)
@@ -1180,6 +1228,11 @@ async def process_genotype(
                     }
                 }
                 
+        except HTTPException:
+            # Raised above with the step already failed and the error said: pass it on
+            # as it is, rather than wrap it ("Error running PharmCAT: 500: ...") and
+            # fail the step again.
+            raise
         except subprocess.CalledProcessError as e:
             logger.error(f"PharmCAT process error: {e.stderr}")
             
@@ -1208,6 +1261,8 @@ async def process_genotype(
             
             raise HTTPException(status_code=500, detail=f"Error running PharmCAT: {str(e)}")
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         logger.error(traceback.format_exc())
