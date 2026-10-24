@@ -71,7 +71,7 @@ interactive report.
 
 | Prefix | What it is |
 |---|---|
-| `/upload` | Uploads, header preview (`POST /upload/inspect-header`), status, report links. `POST /upload/demo` runs the bundled demo (the page's **Run Demo**), taking the step switches as form fields; it answers 503, saying why, until the genome downloader has cached the reference the demo's CRAM decodes against |
+| `/upload` | Uploads, header preview (`POST /upload/inspect-header`: the file's start is enough, with its whole size as `file_size`; `header_incomplete` asks for a longer start), status, report links. `POST /upload/demo` runs the bundled demo (the page's **Run Demo**), taking the step switches as form fields; it answers 503, saying why, until the genome downloader has cached the reference the demo's CRAM decodes against |
 | `/api/v1/jobs` | Jobs, their steps and logs, progress, cancel. The pipeline's containers report their steps here (`PUT /api/v1/jobs/{job_id}/steps/{step_name}`) |
 | `/api/v1/workflows` | The workflow recipes and their steps |
 | `/api/pharmcat` | PharmCAT results loaded into the database, by run (`run_id` is the job id) |

@@ -412,6 +412,39 @@ def _read_vcf_text_header(filepath) -> List[str]:
     return [ln for ln in lines if ln]
 
 
+def header_cut_short(filepath: str, header_info: Dict) -> bool:
+    """Whether a file's start, sent without the rest (the header preview), ended
+    before its header did, so a longer start is needed to read it.
+
+    A header that could not be read at all is taken as cut short. A text header
+    must also have reached its end, since one cut part-way reads without an error:
+    a VCF's `#CHROM` line (cut before it, a VCF reads as one with no samples), a
+    SAM's first line that is not a header line (cut before it, a SAM reads with
+    some of its @SQ lines). Every other read the preview makes is bounded to the
+    first records, so nothing else needs more.
+    """
+    if not isinstance(header_info, dict) or header_info.get("error"):
+        return True
+    file_format = (header_info.get("file_info") or {}).get("format")
+    if file_format == "SAM":
+        try:
+            with open(filepath, "rt", encoding="utf-8", errors="replace") as fh:
+                return not any(not line.startswith("@") for line in fh)
+        except OSError:
+            return True
+    if file_format != "VCF":
+        return False
+    if any(line.startswith("#CHROM") for line in _read_vcf_text_header(filepath)):
+        return False
+    if not _HAS_PYSAM:
+        return True
+    try:
+        with pysam.VariantFile(filepath) as vcf:
+            return vcf.header is None
+    except Exception:
+        return True
+
+
 def inspect_header(
     filepath: str,
     max_bytes: Optional[int] = None,
