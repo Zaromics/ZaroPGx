@@ -11,8 +11,10 @@ Two faults in the sidecar's _run_and_stream, found 2026-10-24:
 
 Now the output is read in a thread, the timeout counts wall-clock time, a timeout
 kills the whole process group, and both a failed exit and a timeout fail the run at
-once with the last lines PharmCAT printed. The stubs here are real executables put on
-PATH as pharmcat_pipeline, so the process group is real too.
+once with the last lines PharmCAT printed. /cancel stops the whole group too: it used
+to terminate pharmcat_pipeline alone, so a cancelled job's JVM ran on to the end. The
+stubs here are real executables put on PATH as pharmcat_pipeline, so the process group
+is real too.
 """
 
 from __future__ import annotations
@@ -20,13 +22,18 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import socket
 import sys
+import threading
 import time
 import types
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+httpx = pytest.importorskip("httpx")
+uvicorn = pytest.importorskip("uvicorn")
 
 REPO = Path(__file__).resolve().parents[1]
 SIDECAR = REPO / "docker" / "pharmcat" / "pharmcat.py"
@@ -111,6 +118,29 @@ def pharmcat(tmp_path_factory):
         handler.close()
 
 
+@pytest.fixture
+def server(pharmcat):
+    """The sidecar's app on a real uvicorn server in a thread, so /cancel can come in
+    while /genotype runs (as in tests/test_pharmcat_health_while_busy.py)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    srv = uvicorn.Server(uvicorn.Config(pharmcat.app, log_level="warning", lifespan="off"))
+    thread = threading.Thread(target=srv.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not srv.started:
+        assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+        time.sleep(0.02)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        srv.should_exit = True
+        thread.join(timeout=15)
+        sock.close()
+
+
 def _install(tmp_path, monkeypatch, script: str) -> None:
     """`script` as pharmcat_pipeline, first on PATH (the sidecar passes its own
     environment to the process)."""
@@ -185,3 +215,54 @@ def test_the_timeout_is_the_same_300_seconds():
     """Wall-clock now, but the same value: the only setting it had was this literal."""
     source = SIDECAR.read_text(encoding="utf-8")
     assert "PHARMCAT_TIMEOUT_SECONDS = 300\n" in source
+
+
+def test_cancel_stops_pharmcat_and_everything_it_started(pharmcat, server, tmp_path, monkeypatch):
+    child_pid = tmp_path / "child.pid"
+    _install(tmp_path, monkeypatch, HANGS.format(child_pid=child_pid))
+    job_id = "11111111-2222-3333-4444-555555555555"
+    outcome = {}
+
+    def genotype():
+        try:
+            outcome["response"] = httpx.post(
+                f"{server}/genotype",
+                files={"file": ("in.vcf", VCF, "text/plain")},
+                data={"patient_id": "p1", "job_id": job_id},
+                timeout=60,
+            )
+        except Exception as exc:  # surfaced below, not lost in the thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=genotype, daemon=True)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 15
+        while not (child_pid.exists() and child_pid.read_text().strip()):
+            assert time.monotonic() < deadline, "the stub never started its child"
+            time.sleep(0.05)
+        pid = int(child_pid.read_text())
+        assert _running(pid)
+
+        t0 = time.monotonic()
+        cancel = httpx.post(
+            f"{server}/cancel",
+            json={"job_id": job_id, "patient_id": "p1", "action": "cancel"},
+            timeout=10,
+        )
+        assert cancel.status_code == 200, cancel.text
+        assert cancel.json()["terminated_processes"] == 1
+    finally:
+        worker.join(timeout=45)
+    assert "error" not in outcome, outcome.get("error")
+    # The run ended with the cancel, not when the hang ended by itself (30 s).
+    assert time.monotonic() - t0 < 15
+    resp = outcome["response"]
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["detail"].startswith("PharmCAT was stopped: the job was cancelled"), resp.text
+    # The child it started went with it.
+    for _ in range(50):
+        if not _running(pid):
+            break
+        time.sleep(0.1)
+    assert not _running(pid), f"child {pid} outlived the cancel"

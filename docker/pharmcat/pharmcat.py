@@ -211,29 +211,41 @@ PHARMCAT_TIMEOUT_SECONDS = 300
 PHARMCAT_ERROR_LINES = 10
 
 
+def signal_process_group(pid: int, sig: int = signal.SIGKILL) -> bool:
+    """Send `sig` to the process group `pid` leads (PharmCAT's: see
+    _run_and_stream's start_new_session); whether there was one to send it to."""
+    try:
+        os.killpg(pid, sig)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError as e:
+        logger.warning(f"Could not signal process group {pid}: {e}")
+        return False
+
+
 def kill_process_group(process: subprocess.Popen) -> None:
     """Kill a process started in a session of its own, and everything it started.
 
     pharmcat_pipeline is a Python script that runs PharmCAT's Java under it; killing
     the script alone would leave the JVM running, and holding the output pipe open.
     """
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+    signal_process_group(process.pid)
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         logger.warning(f"PharmCAT process {process.pid} did not exit after SIGKILL")
 
 
-def pharmcat_failure(error: subprocess.SubprocessError) -> str:
+def pharmcat_failure(error: subprocess.SubprocessError, cancelled: bool = False) -> str:
     """What to say about a PharmCAT run that failed or was stopped, with its last lines."""
     if isinstance(error, subprocess.TimeoutExpired):
         what = (
             f"PharmCAT did not finish within {error.timeout:g} s and was stopped "
             "(its process and everything it started were killed)"
         )
+    elif cancelled:
+        what = "PharmCAT was stopped: the job was cancelled"
     elif error.returncode < 0:
         what = f"PharmCAT was killed by signal {-error.returncode}"
     else:
@@ -286,6 +298,8 @@ processing_status = {
 
 # Store running processes by workflow_id for cancellation
 running_processes: Dict[str, Dict[str, Any]] = {}
+# The jobs /cancel stopped, so their runs say so rather than "killed by signal 9".
+cancelled_jobs: set = set()
 
 class CancelRequest(BaseModel):
     job_id: str
@@ -930,7 +944,9 @@ async def process_genotype(
                     # passed over, so the run went on to fail later as "output files
                     # not found", without PharmCAT's own words.
                     timed_out = isinstance(e, subprocess.TimeoutExpired)
-                    error_msg = pharmcat_failure(e)
+                    cancelled = bool(job_id) and job_id in cancelled_jobs
+                    cancelled_jobs.discard(job_id)
+                    error_msg = pharmcat_failure(e, cancelled=cancelled)
                     logger.error(error_msg)
                     
                     processing_status.update({
@@ -943,7 +959,7 @@ async def process_genotype(
                     
                     if job_client:
                         await job_client.fail_step(error_msg, {
-                            "error_type": "timeout" if timed_out else "process_error",
+                            "error_type": "timeout" if timed_out else ("cancelled" if cancelled else "process_error"),
                             "timeout_seconds": PHARMCAT_TIMEOUT_SECONDS if timed_out else None,
                             "return_code": None if timed_out else e.returncode,
                             "last_lines": (e.output or "").splitlines(),
@@ -1336,14 +1352,18 @@ async def cancel_workflow_job(request: CancelRequest):
             process_info = running_processes[job_id]
             pid = process_info.get("pid")
             
-            if pid and psutil.pid_exists(pid):
-                try:
-                    process = psutil.Process(pid)
-                    process.terminate()
-                    logger.info(f"Terminated process {pid} for job {job_id}")
+            # PharmCAT runs in a process group of its own (_run_and_stream's
+            # start_new_session): stop all of it, the JVM pharmcat_pipeline started
+            # included, as the timeout does. Terminating the script alone left the JVM
+            # running to the end of the job it had been cancelled from.
+            if pid:
+                cancelled_jobs.add(job_id)
+                if signal_process_group(pid):
+                    logger.info(f"Killed PharmCAT's process group {pid} for job {job_id}")
                     terminated_count += 1
-                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                    logger.warning(f"Could not terminate process {pid}: {e}")
+                else:
+                    cancelled_jobs.discard(job_id)
+                    logger.warning(f"No process group {pid} left to stop for job {job_id}")
             
             # Clean up specific tracked file paths
             cleanup_paths = process_info.get("cleanup_paths", [])
