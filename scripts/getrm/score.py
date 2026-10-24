@@ -56,6 +56,7 @@ ROOT = HERE.parent.parent
 # Legacy names to today's, where only the name changed.
 RENAME = {
     ("CYP2C19", "*38"): "*1",  # PharmCAT's reference haplotype; GeT-RM's *1 covers it
+    ("CYP1A2", "*1"): "*1A",  # GeT-RM's "nothing tested found"; PyPGx's reference is *1A
     ("NAT2", "*11"): "*4",  # no slow variant: the *4 group (see the docstring)
     ("NAT2", "*12"): "*4",
     ("NAT2", "*13"): "*4",
