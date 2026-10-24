@@ -1,4 +1,4 @@
-"""CYP2C19's and SLCO1B1's deletions, checked from the read depth PyPGx measures.
+"""CYP2C19's, SLCO1B1's and DPYD's deletions, checked from the read depth PyPGx measures.
 
 PyPGx has no copy-number model for either gene, so CYP2C19 *36/*37 and SLCO1B1
 *48/*49 went uncalled, and with one copy deleted the other reads homozygous: a *1/*37
@@ -9,11 +9,13 @@ PharmCAT is given.
 
 The profiles here are the check's own output on 1000 Genomes 30x genomes (public
 data): HG00268 carries CYP2C19 *37 (exons 1-5), HG01771 a deletion of exons 2-5 that
-keeps exon 1, and NA18861 neither.
+keeps exon 1, and NA18861 neither. DPYD's are 1 kb bins: GeT-RM's DPYD study has one
+copy of exon 11 deleted in NA19093 and of exon 4 in HG00325.
 """
 
 from __future__ import annotations
 
+import csv
 import gzip
 import importlib.util
 import json
@@ -53,6 +55,27 @@ NA18861_CYP2C19 = [2.0, 1.89, 1.77, 1.89, 1.71, 1.83, 1.94, 1.77, 1.94, 2.0, 1.7
 NA18861_SLCO1B1 = [1.66, 1.83, 1.71, 1.66, 1.6, 1.66, 1.71, 1.66, 1.77, 1.66, 1.83,
                    1.6, 1.77, 1.66, 1.77, 1.71, 1.54, 2.06, 1.71, 1.77, 1.66, 1.83,
                    1.66]
+# DPYD's 1 kb bins over 30 kb (- strand: exon 11 at 97,573,759, exon 4 at 97,740,391).
+DPYD_EXON_11_START = 97566742
+NA19093_DPYD = [1.9, 2.21, 1.79, 1.9, 1.68, 1.58, 0.9, 0.74, 0.95, 1.0, 1.9, 1.63, 1.92,
+                1.84, 1.68, 2.0, 1.84, 1.95, 1.84, 1.84, 1.84, 1.79, 1.79, 2.21, 1.68, 2.1,
+                2.21, 2.0, 1.53, 1.53]
+NA18861_DPYD = [2.06, 1.66, 1.6, 1.89, 1.89, 1.6, 1.77, 1.77, 1.83, 1.89, 1.83, 1.94,
+                1.49, 1.66, 1.77, 1.66, 1.77, 1.6, 1.49, 1.6, 1.83, 1.66, 1.43, 1.83, 1.77,
+                1.8, 1.66, 1.49, 1.83, 1.54]
+DPYD_EXON_4_START = 97726742
+HG00325_DPYD = [1.88, 1.88, 2.0, 2.0, 1.56, 1.94, 1.62, 1.94, 0.88, 1.0, 0.75, 0.94, 0.81,
+                0.81, 1.12, 0.88, 1.0, 0.94, 1.06, 1.0, 1.0, 0.94, 1.81, 1.69, 1.62, 1.88,
+                1.75, 1.81, 1.81, 2.25]
+
+
+def _dpyd_exons():
+    """DPYD's GRCh38 exons, from PyPGx's gene table (lexicon/gene-table.csv)."""
+    with open(ROOT / "lexicon" / "gene-table.csv", newline="", encoding="utf-8") as fh:
+        row = next(r for r in csv.DictReader(fh) if r["Gene"] == "DPYD")
+    starts = [int(x) for x in row["GRCh38ExonStarts"].strip(",").split(",")]
+    ends = [int(x) for x in row["GRCh38ExonEnds"].strip(",").split(",")]
+    return list(zip(starts, ends))
 
 
 @pytest.fixture(scope="module")
@@ -167,6 +190,44 @@ def test_an_unnamed_deletion_leaves_the_call(check):
     assert check.genotype("*1/*1", record) == {
         "diplotype": "*1/*1", "copy_number": "PartialDel1", "conflict": False,
     }
+
+
+@pytest.mark.parametrize(
+    "start, values, exon",
+    [(DPYD_EXON_11_START, NA19093_DPYD, 11), (DPYD_EXON_4_START, HG00325_DPYD, 4)],
+)
+def test_dpyd_exon_deletions_are_called_and_leave_the_call(check, start, values, exon):
+    record = check.call_gene("DPYD", _bins(start, values, 1000), _dpyd_exons(), "-")
+    (deletion,) = record["deletions"]
+    assert record["bin_size"] == 1000 and record["min_bins"] == 4
+    assert deletion["exons"] == [exon] and deletion["copies_lost"] == 1
+    assert deletion["allele"] is None
+    assert deletion["description"] == f"a deletion of one copy of DPYD exon {exon}"
+    # No allele names it, so the call from small variants stands.
+    assert check.genotype("Reference/c.1627A>G (*5)", record) == {
+        "diplotype": "Reference/c.1627A>G (*5)", "copy_number": "PartialDel1",
+        "conflict": False,
+    }
+
+
+def test_dpyds_noise_at_15x_is_not_a_deletion(check):
+    # At 15x, normal genomes had runs of 3 bins with a median of 1.1 and of 4 with 1.2;
+    # the deletions read 0.92-0.94 over 4 or more.
+    for dip in ([1.1, 1.1, 1.1], [1.2, 1.2, 1.2, 1.2]):
+        values = list(NA18861_DPYD)
+        values[6 : 6 + len(dip)] = dip
+        record = check.call_gene("DPYD", _bins(DPYD_EXON_11_START, values, 1000), _dpyd_exons(), "-")
+        assert record["deletions"] == [], dip
+    values = list(NA18861_DPYD)
+    values[6:10] = [0.92] * 4
+    record = check.call_gene("DPYD", _bins(DPYD_EXON_11_START, values, 1000), _dpyd_exons(), "-")
+    assert [d["exons"] for d in record["deletions"]] == [[11]]
+
+
+def test_cyp2c19_and_slco1b1_keep_their_rule(check):
+    assert check.RULES["CYP2C19"] == check.RULES["SLCO1B1"] == (5000, 3, 1.2)
+    assert check.RULES["DPYD"] == (1000, 4, 1.1)
+    assert check.GENES == ("CYP2C19", "SLCO1B1", "DPYD")
 
 
 def test_no_depth_measures_nothing(check):
@@ -295,6 +356,25 @@ def test_a_contradiction_keeps_pharmcats_call(pypgx, check, tmp_path):
     assert cyp2c19["diplotype"] == "*1/*2"
     assert cyp2c19["details"]["deletion_conflict"] is True
     assert "CYP2C19" not in aggregated["outside_call_genes"]
+
+
+def test_a_dpyd_deletion_marks_the_call_and_leaves_it_pharmcats(pypgx, check):
+    record = {"genes": {"DPYD": check.call_gene(
+        "DPYD", _bins(DPYD_EXON_4_START, HG00325_DPYD, 1000), _dpyd_exons(), "-"
+    )}}
+    aggregated = {
+        "results": {"DPYD": {"success": True, "diplotype": "Reference/Reference",
+                             "details": {"phenotype": "Normal Metabolizer"}}},
+        "outside_call_genes": [],
+    }
+    pypgx.apply_deletion_check(aggregated, record)
+    dpyd = aggregated["results"]["DPYD"]
+    assert dpyd["diplotype"] == "Reference/Reference"
+    assert dpyd["details"]["copy_number"] == "PartialDel1"
+    assert dpyd["details"]["copy_number_by"] == "deletion_check"
+    assert dpyd["details"]["phenotype"] == "Normal Metabolizer"
+    assert dpyd["details"]["deletion_check"]["deletions"][0]["exons"] == [4]
+    assert aggregated["outside_call_genes"] == []
 
 
 def test_genes_pypgx_did_not_genotype_are_left_alone(pypgx, check, tmp_path):

@@ -742,10 +742,15 @@ def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
 
 def test_every_listed_gene_can_be_measured():
     """PyPGx models CYP2B6 and CYP4F2; ZaroPGx's deletion check measures the two it
-    has no model for, CYP2C19 and SLCO1B1."""
-    from app.reports.copy_number import CHECKED, MEASURED_NORMAL, PYPGX_NO_MODEL
+    has no model for, CYP2C19 and SLCO1B1, and DPYD's exon deletions."""
+    from app.reports.copy_number import (
+        CHECKED,
+        MEASURED_NORMAL,
+        PYPGX_NO_MODEL,
+        UNLISTED_STRUCTURAL,
+    )
 
-    assert set(MEASURED_NORMAL) == set(PHARMCAT_MISSED)
+    assert set(MEASURED_NORMAL) == set(PHARMCAT_MISSED) | set(UNLISTED_STRUCTURAL)
     assert set(CHECKED) == PYPGX_NO_MODEL
 
 
@@ -783,20 +788,20 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
         row = page[page.index(f'id="summary-{gene}"') :]
         assert "see the notes" not in row[: row.index("</tr>")]
     # A run without the deletion check (an older pypgx image, or the check failed):
-    # CYP2C19 and SLCO1B1 still not assessed, and said so.
-    for gene in ("CYP2C19", "SLCO1B1"):
+    # CYP2C19, SLCO1B1 and DPYD still not assessed, and said so.
+    for gene in ("CYP2C19", "SLCO1B1", "DPYD"):
         row = page[page.index(f'id="summary-{gene}"') :]
         assert "⚠ Copy number not assessed: see the notes" in row[: row.index("</tr>")]
     alerts = body[: body.index("Executive Summary")]
-    assert "Structural alleles not assessed: CYP2C19 and SLCO1B1." in alerts
+    assert "Structural alleles not assessed: CYP2C19, DPYD and SLCO1B1." in alerts
     assert (
         "PyPGx measured normal copy number for CYP2B6 (no *29 or *30 hybrid, or "
         "duplication) and CYP4F2 (no whole-gene deletion)." in alerts
     )
     assert "No tool here calls" not in alerts
     assert (
-        "ZaroPGx's deletion check, which measures CYP2C19 and SLCO1B1 from the read "
-        "depth PyPGx uses, gave no result in this run." in alerts
+        "ZaroPGx's deletion check, which measures CYP2C19, DPYD and SLCO1B1 from the "
+        "read depth PyPGx uses, gave no result in this run." in alerts
     )
     # The alert does not tell how to get what this run measured.
     assert "unless PYPGX_PHARMCAT_PREFERENCE is pharmcat" not in body
@@ -834,7 +839,8 @@ def test_pharmcats_alert():
     assert text.endswith(
         "From a GRCh38 whole-genome BAM or CRAM, unless PYPGX_PHARMCAT_PREFERENCE is "
         "pharmcat, PyPGx measures copy number for CYP2B6 and CYP4F2, and "
-        "ZaroPGx checks CYP2C19 and SLCO1B1 for deletions from the same read depth."
+        "ZaroPGx checks CYP2C19, SLCO1B1 and DPYD for deletions from the same read "
+        "depth."
     )
     assert pharmcat_copy_number_alert([]) is None
     assert pharmcat_copy_number_alert([{"gene": "G6PD"}]) is None
@@ -888,7 +894,12 @@ def test_a_report_notes_pharmcats_calls_once_and_apart(monkeypatch, tmp_path):
     # Two alerts, each naming its own genes.
     assert "Copy number not assessed: CYP2D6, GSTM1 and UGT2B17." in body
     assert (
-        "Structural alleles not assessed: CYP2B6, CYP2C19, CYP4F2 and SLCO1B1." in body
+        "Structural alleles not assessed: CYP2B6, CYP2C19, CYP4F2, DPYD and SLCO1B1."
+        in body
+    )
+    assert (
+        "or a deletion of DPYD exons, which CPIC's DPYD table does not list and which "
+        "can reduce DPD activity." in body
     )
     assert body.count("Structural alleles not assessed") == 1
     rows = {r["gene"]: r for r in result["processed_data"]["genes"]}
@@ -896,7 +907,7 @@ def test_a_report_notes_pharmcats_calls_once_and_apart(monkeypatch, tmp_path):
     # A short note for each behind the summary, and each one's call note.
     notes = page[page.index('id="exec-summary-notes"') :]
     notes = unescape(_clean(notes[: notes.index("<h2>Genetic Results</h2>")]))
-    for gene in PHARMCAT_MISSED:
+    for gene in list(PHARMCAT_MISSED) + ["DPYD"]:
         row = page[page.index(f'id="summary-{gene}"') :]
         assert "Copy number not assessed: see the notes" in row[: row.index("</tr>")]
         assert "⚠ " + rows[gene]["copy_number_not_assessed"]["call_note"] in body
@@ -915,8 +926,8 @@ LOW_DEPTH = {"short": "depth 9.0x, under 15x", "sentence": "", "gate": "15"}
 
 def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
     """A heavy alignment run, PyPGx calling every gene it can (auto): copy-number
-    notes on six of the summary's genes (CYP2D6, CYP2B6, CYP4F2 and G6PD without
-    depth; CYP2C19 and SLCO1B1, which PyPGx has no model for), CYP2D6's reads mostly
+    notes on seven of the summary's genes (CYP2D6, CYP2B6, CYP4F2 and G6PD without
+    depth; CYP2C19, SLCO1B1 and DPYD, which PyPGx has no model for), CYP2D6's reads mostly
     at mapping quality 0, and a positions note on every called gene. The Executive
     Summary stays one page, filled to its foot, and its notes fit the page behind
     it."""
@@ -969,7 +980,7 @@ def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
     notes = unescape(_clean(notes[: notes.index("<h2>Genetic Results</h2>")]))
     for gene in ("CYP2D6", "CYP2B6", "CYP4F2", "G6PD"):
         assert f"⚠ {gene} : Copy number was not assessed" in notes, gene
-    for gene in ("CYP2C19", "SLCO1B1"):
+    for gene in ("CYP2C19", "SLCO1B1", "DPYD"):
         assert f"⚠ {gene} : Copy number not assessed (PyPGx has no" in notes, gene
     document, _ = generator_module.render_pdf_document(page)
     assert len(section_pages(document, "exec-summary")) == 1
@@ -1165,6 +1176,7 @@ def test_checked_genes_measured_normal_say_so_once(monkeypatch, tmp_path):
     pypgx["results"]["CYP4F2"] = _result("*1/*3", "Normal", cnv_model=True)
     pypgx["results"]["CYP2C19"] = _checked("*1/*2", "Normal")
     pypgx["results"]["SLCO1B1"] = _checked("*1/*15", "Normal")
+    pypgx["results"]["DPYD"] = _checked("Reference/Reference", "Normal")
     result = _report(monkeypatch, tmp_path, pypgx, file_type="cram")
     page = (tmp_path / result["html_path"].split("/")[-1]).read_text()
     body = unescape(_clean(page.split("</style>")[-1]))
@@ -1174,7 +1186,70 @@ def test_checked_genes_measured_normal_say_so_once(monkeypatch, tmp_path):
     alerts = body[: body.index("Executive Summary")]
     assert "not assessed" not in alerts
     assert (
-        "Read depth showed no deletion in CYP2C19 (*36, *37) or SLCO1B1 (*48, *49)"
-        in alerts
+        "Read depth showed no deletion in CYP2C19 (*36, *37), DPYD (of one exon or "
+        "more) or SLCO1B1 (*48, *49)" in alerts
     )
     assert body.count("Read depth showed no deletion in") == 1
+
+
+DPYD_EXON_4 = "a deletion of one copy of DPYD exon 4"
+
+
+def test_a_dpyd_deletion_is_an_alert_and_leaves_pharmcats_call():
+    """HG00325 (GeT-RM's DPYD study): one copy of exon 4 deleted. No allele names it,
+    so PharmCAT's call and phenotype stand, and the report says what they cannot
+    show and how to confirm it before a fluoropyrimidine."""
+    rows = [{
+        "gene": "DPYD", "diplotype": "Reference/Reference", "call_source": "MATCHER",
+        "phenotype": "Normal Metabolizer",
+    }]
+    pypgx = {"results": {"DPYD": _checked("Reference/Reference", "PartialDel1", [DPYD_EXON_4])}}
+    annotate_pharmcat_copy_number(rows, pypgx)
+    entry = rows[0]["copy_number_not_assessed"]
+    assert entry["kind"] == "found_deletion" and entry["warn"] is True
+    assert entry["call_note"] == (
+        "Deletion found from read depth, which this call cannot show (see Alerts)"
+    )
+    assert entry["note"] == (
+        f"Read depth shows {DPYD_EXON_4}, which this call, from small variants, cannot "
+        "show. DPD activity may be reduced: confirm it with an independent test, such "
+        "as DPD phenotyping (DPD activity or plasma uracil) or a DPYD copy-number "
+        "assay, before fluoropyrimidine treatment. See Alerts and Warnings."
+    )
+    # The phenotype is PharmCAT's, unchanged.
+    assert rows[0]["phenotype"] == "Normal Metabolizer"
+    text = unescape(_clean(pharmcat_copy_number_alert(rows, pypgx)))
+    assert text.startswith(
+        f"⚠️ Deletion found: DPYD. Read depth shows {DPYD_EXON_4}. CPIC's DPYD table "
+        "assigns no function to a deletion of DPYD exons, and PharmCAT's call, from "
+        "small variants, cannot show one, so its phenotype does not take it into "
+        "account. Deletions of DPYD exons have been found in patients with DPD "
+        "deficiency (van Kuilenburg et al., Hum Genet 2009; Saarenheimo et al., Cancer "
+        "Chemother Pharmacol 2021). DPD activity may be reduced: confirm it with an "
+        "independent test"
+    )
+    assert "before fluoropyrimidine treatment." in text
+    assert "PyPGx has no copy-number model for DPYD; ZaroPGx checks it" in text
+    # How to confirm it is said once.
+    assert "Confirm a deletion with an independent test before acting on it" not in text
+    assert "not assessed" not in text
+
+
+def test_dpyd_measured_normal_is_said_with_the_other_checked_genes():
+    rows = [
+        {"gene": "CYP2C19", "diplotype": "*1/*2", "call_source": "MATCHER"},
+        {"gene": "DPYD", "diplotype": "Reference/Reference", "call_source": "MATCHER"},
+    ]
+    pypgx = {"results": {
+        "CYP2C19": _checked("*1/*2", "Normal"),
+        "DPYD": _checked("Reference/Reference", "Normal"),
+    }}
+    annotate_pharmcat_copy_number(rows, pypgx)
+    assert all("copy_number_not_assessed" not in r for r in rows)
+    text = _clean(pharmcat_copy_number_alert(rows, pypgx))
+    assert text.startswith(
+        "Structural alleles: Read depth showed no deletion in CYP2C19 (*36, *37) or "
+        "DPYD (of one exon or more), which ZaroPGx checks from the same depth and "
+        "control gene, PyPGx having no copy-number model for them."
+    )
+    assert "⚠" not in text

@@ -143,6 +143,26 @@ gene gets a note, and the alert says so once. On 1000 Genomes 30x genomes the ch
 and HG03856 and \*49 in HG03436, and no deletion in 62 GeT-RM reference genomes, both at
 their own depth (about 30x) and downsampled to 15x, the lowest depth the check runs at.
 
+**Deletions of DPYD exons.** CPIC's *DPYD* table names alleles by variant and lists no
+deletion, so neither PharmCAT nor PyPGx calls one, and a call from small variants cannot
+show one. Yet deletions of *DPYD* exons have been found in patients with DPD deficiency
+(van Kuilenburg et al., Hum Genet 2009;125:581-590: exon 12 in three patients, exons 14-16 in
+one; Saarenheimo et al., Cancer Chemother Pharmacol 2021;87:657-663: exon 4 in four Finnish
+patients), and DPD deficiency can make a fluoropyrimidine (5-fluorouracil, capecitabine)
+dangerous. So the same check measures *DPYD*, in 1 kb stretches, since these deletions take
+an exon or a few and a few kb: a run of four or more under 1.35 copies, with a median of at
+most 1.1, is a deletion (one under 4 kb is not called). No allele names it, so PharmCAT's
+call and phenotype stand; the row says ⚠ "Deletion found from read depth", and the alert
+says which exons, that CPIC assigns the deletion no function and the call cannot show it,
+and that DPD activity may be reduced, so to confirm it with an independent test, such as DPD
+phenotyping (DPD activity or plasma uracil) or a *DPYD* copy-number assay, before
+fluoropyrimidine treatment. Found normal, the alert says so with *CYP2C19* and *SLCO1B1*.
+Without read depth (a VCF, BCF or gVCF, or a genome under 15x) the call is marked as one that
+cannot show a deletion of *DPYD* exons. GeT-RM's *DPYD* study (Gaedigk et al., J Mol Diagn
+2024;26(10):864-875) has one copy of exon 4 deleted in HG00325 and of exon 11 in NA19093: on
+their 1000 Genomes genomes the check calls both, and no deletion in the 65 others, at their
+own depth (about 30x) and downsampled to 20x and to 15x.
+
 **PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
 shows them where PharmCAT's own report does, in PharmCAT's words (a link as its words and
 its address): a gene's under Genetic Results ("PharmCAT's notes on these calls"), one line

@@ -30,7 +30,9 @@ An outside call PyPGx did not make (OUTSIDECALLSOVERRIDE's file, a lab's CYP2D6
 CYP2C19's and SLCO1B1's deletions, which PyPGx has no copy-number model for, are
 checked from the same read depth by docker/pypgx's deletion_check.py; the check marks
 its copy number as its own (``details["copy_number_by"]``), and a named deletion is
-in the call itself, as an outside call to PharmCAT (CYP2C19 *1/*37).
+in the call itself, as an outside call to PharmCAT (CYP2C19 *1/*37). So are DPYD's
+exon deletions, which no allele names: PharmCAT's call stands, and the report says
+what it cannot show (UNLISTED_STRUCTURAL).
 
 PharmCAT's own calls (Call C) get notes of their own, on PharmCAT's authority.
 Its matcher calls star alleles from the small variants in its allele definitions,
@@ -141,8 +143,8 @@ PHARMCAT_ALERT: Dict[str, str] = {
 # function (its phenotype data). CYP4F2 has no phenotype.
 _PHARMCAT_PHENOTYPE_GENES = frozenset({"CYP2B6", "CYP2C19", "SLCO1B1"})
 # PyPGx's own calls of PharmCAT's listed genes that its read depth cannot help:
-# CYP2C19 and SLCO1B1, which it has no copy-number model for.
-PYPGX_NO_MODEL = frozenset({"CYP2C19", "SLCO1B1"})
+# CYP2C19 and SLCO1B1, which it has no copy-number model for, and DPYD.
+PYPGX_NO_MODEL = frozenset({"CYP2C19", "SLCO1B1", "DPYD"})
 # PyPGx's copy-number states that are a named allele its genotyper does not name.
 # CYP2B6 Tandem1 (pypgx/api/genotype.py, CYP2B6Genotyper: Indeterminate): its one
 # example, the 1000 Genomes genome HG01806 that PyPGx's documentation trains it on
@@ -161,8 +163,30 @@ NAMED: Dict[Tuple[str, str], str] = {
 NAMED_SHORT: Dict[Tuple[str, str], str] = {
     ("CYP2B6", "Tandem1"): "*30, a hybrid duplication",
 }
+# DPYD's exon deletions are not on PharmCAT's list: CPIC's DPYD table defines none,
+# so PharmCAT has no allele for one (its DPYD definitions, 84 alleles, have none). A
+# call from small variants cannot show one either, and exon deletions have been found
+# in patients with DPD deficiency (van Kuilenburg et al., Hum Genet 2009;125:581-590:
+# exon 12 in three, exons 14-16 in one; Saarenheimo et al., Cancer Chemother
+# Pharmacol 2021;87:657-663: exon 4 in four Finnish patients), so the report says what
+# the call cannot show, in words of its own, and checks for them (CHECKED).
+UNLISTED_STRUCTURAL: Dict[str, Dict[str, str]] = {
+    "DPYD": {
+        "missed": (
+            "a deletion of one or more exons (CPIC's DPYD table lists none; one can "
+            "reduce DPD activity)"
+        ),
+        "call_note": "would miss exon deletions",
+        "alert": (
+            "a deletion of DPYD exons, which CPIC's DPYD table does not list and which "
+            "can reduce DPD activity"
+        ),
+    },
+}
 # The genes docker/pypgx's deletion_check.py checks, and the deletions it names.
-CHECKED: Dict[str, str] = {"CYP2C19": "*36, *37", "SLCO1B1": "*48, *49"}
+CHECKED: Dict[str, str] = {
+    "CYP2C19": "*36, *37", "SLCO1B1": "*48, *49", "DPYD": "of one exon or more",
+}
 CHECKED_BY = "deletion_check"
 
 # docker/pypgx's WGS_MIN_MEDIAN_DEPTH, for a run whose record does not carry it.
@@ -389,7 +413,30 @@ MEASURED_NORMAL: Dict[str, str] = {
     "CYP4F2": "no whole-gene deletion",
     "CYP2C19": "no *36 or *37 deletion",
     "SLCO1B1": "no *48 or *49 deletion",
+    "DPYD": "no exon deletion",
 }
+
+
+def _missed(gene: str) -> str:
+    """What a call of the gene from small variants cannot show, for its notes."""
+    if gene in UNLISTED_STRUCTURAL:
+        return UNLISTED_STRUCTURAL[gene]["missed"]
+    return PHARMCAT_MISSED[gene]
+
+
+def _missed_call_note(gene: str) -> str:
+    if gene in UNLISTED_STRUCTURAL:
+        return UNLISTED_STRUCTURAL[gene]["call_note"]
+    return PHARMCAT_CALL_NOTE[gene]
+
+
+# What to do about a DPYD deletion: DPD activity may be reduced, and CPIC's table
+# cannot say by how much.
+DPYD_CONFIRM = (
+    "DPD activity may be reduced: confirm it with an independent test, such as DPD "
+    "phenotyping (DPD activity or plasma uracil) or a DPYD copy-number assay, before "
+    "fluoropyrimidine treatment"
+)
 def _deletion_found_entry(
     gene: str, found: List[str], in_call: bool, snv_diplotype: Optional[str]
 ) -> Dict[str, Any]:
@@ -399,6 +446,18 @@ def _deletion_found_entry(
     shown, from small variants, cannot show it, and it and its phenotype may be wrong.
     """
     what = "; ".join(found)
+    if gene == "DPYD":
+        return {
+            "kind": "found_deletion",
+            "warn": True,
+            "marker": DELETION_MARKER,
+            "call_note": f"{DELETION_MARKER}, which this call cannot show (see Alerts)",
+            "note": (
+                f"Read depth shows {what}, which this call, from small variants, cannot "
+                f"show. {DPYD_CONFIRM}. See Alerts and Warnings."
+            ),
+            "found": found,
+        }
     if in_call:
         before = f" (from small variants alone, {snv_diplotype})" if snv_diplotype else ""
         note = (
@@ -439,7 +498,7 @@ def listed_alleles_entry(
       measured (no read depth: PyPGx has no model for them, and the check needs it).
     """
     gene = str(row.get("gene") or "").strip().upper()
-    if gene not in PHARMCAT_MISSED:
+    if gene not in PHARMCAT_MISSED and gene not in UNLISTED_STRUCTURAL:
         return None
     moves = gene in _PHARMCAT_PHENOTYPE_GENES
     code = pypgx_copy_number(pypgx_results, gene)
@@ -453,11 +512,11 @@ def listed_alleles_entry(
                 "warn": True,
                 "marker": NOT_ASSESSED_MARKER,
                 "call_note": (
-                    f"Copy number not assessed: {PHARMCAT_CALL_NOTE[gene]} (see Alerts)"
+                    f"Copy number not assessed: {_missed_call_note(gene)} (see Alerts)"
                 ),
                 "note": (
                     "Copy number not assessed, so this call would miss "
-                    f"{PHARMCAT_MISSED[gene]}"
+                    f"{_missed(gene)}"
                     + (", which can change the phenotype" if moves else "")
                     + ". See Alerts and Warnings."
                 ),
@@ -502,11 +561,11 @@ def listed_alleles_entry(
             "marker": NOT_ASSESSED_MARKER,
             "call_note": (
                 "Copy number not assessed (no copy-number model): "
-                f"{PHARMCAT_CALL_NOTE[gene]} (see Alerts)"
+                f"{_missed_call_note(gene)} (see Alerts)"
             ),
             "note": (
                 "Copy number not assessed (PyPGx has no copy-number model for this "
-                f"gene), so this call would miss {PHARMCAT_MISSED[gene]}"
+                f"gene), so this call would miss {_missed(gene)}"
                 + (", which can change the phenotype" if moves else "")
                 + ". See Alerts and Warnings."
             ),
@@ -663,10 +722,16 @@ def _not_assessed_paragraph(
             f" PyPGx called {_gene_list(models)}, and has no copy-number model for "
             f"{'it' if len(models) == 1 else 'them'}."
         )
+    listed = [g for g in genes if g in PHARMCAT_ALERT]
+    shown = [
+        f"{_alleles(listed)}, structural alleles PharmCAT lists as undetectable from "
+        "a VCF"
+    ] if listed else []
+    shown += [UNLISTED_STRUCTURAL[g]["alert"] for g in genes if g in UNLISTED_STRUCTURAL]
     text += (
         f" {'These calls' if len(genes) > 1 else 'This call'} cannot show "
-        f"{_alleles(genes)}, structural alleles PharmCAT lists as undetectable from "
-        "a VCF."
+        + ", or ".join(shown)
+        + "."
     )
     moved = [g for g in genes if g in _PHARMCAT_PHENOTYPE_GENES]
     if moved:
@@ -686,7 +751,7 @@ def _not_assessed_paragraph(
         text += (
             " From a GRCh38 whole-genome BAM or CRAM, unless "
             "PYPGX_PHARMCAT_PREFERENCE is pharmcat, PyPGx measures copy number for "
-            "CYP2B6 and CYP4F2, and ZaroPGx checks CYP2C19 and SLCO1B1 "
+            "CYP2B6 and CYP4F2, and ZaroPGx checks CYP2C19, SLCO1B1 and DPYD "
             "for deletions from the same read depth."
         )
     return text + "</p>"
@@ -697,13 +762,22 @@ def _deletion_paragraph(
     rows: List[Mapping[str, Any]],
     pypgx_results: Any,
 ) -> str:
-    """The deletions ZaroPGx's check found in CYP2C19 or SLCO1B1, each with what its
-    call does with it, and how far to trust a check this new."""
+    """The deletions ZaroPGx's check found in CYP2C19, SLCO1B1 or DPYD, each with what
+    its call does with it, and how far to trust a check this new."""
     calls = {str(r.get("gene") or "").upper(): r.get("diplotype") for r in rows}
     said = []
     for gene, entry in entries:
         text = f"Read depth shows {html.escape('; '.join(entry['found']))}. "
-        if entry["kind"] == "deletion":
+        if gene == "DPYD":
+            text += (
+                "CPIC's DPYD table assigns no function to a deletion of DPYD exons, and "
+                "PharmCAT's call, from small variants, cannot show one, so its phenotype "
+                "does not take it into account. Deletions of DPYD exons have been found "
+                "in patients with DPD deficiency (van Kuilenburg et al., Hum Genet 2009; "
+                "Saarenheimo et al., Cancer Chemother Pharmacol 2021). "
+                f"{DPYD_CONFIRM}."
+            )
+        elif entry["kind"] == "deletion":
             snv = _details(pypgx_results, gene).get("snv_diplotype")
             text += (
                 f"PharmCAT was given the call with it, {html.escape(str(calls.get(gene)))}"
@@ -720,10 +794,13 @@ def _deletion_paragraph(
     return (
         f"<p>⚠️ <strong>Deletion found:</strong> {_gene_list(genes)}. "
         + " ".join(said)
-        + " PyPGx has no copy-number model for CYP2C19 or SLCO1B1; ZaroPGx checks "
-        "them for deletions from PyPGx's read depth, normalised to the same control "
-        "gene (VDR). Confirm a deletion with an independent test before acting on "
-        "it.</p>"
+        + f" PyPGx has no copy-number model for {_gene_list(genes, 'or')}; ZaroPGx "
+        f"checks {'it' if len(genes) == 1 else 'them'} for deletions from PyPGx's read "
+        "depth, normalised to the same control gene (VDR)."
+        # DPYD's says how to confirm it already.
+        + ("" if set(genes) == {"DPYD"} else
+           " Confirm a deletion with an independent test before acting on it.")
+        + "</p>"
     )
 
 
