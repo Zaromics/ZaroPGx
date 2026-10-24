@@ -259,3 +259,104 @@ def test_a_small_file_short_of_ready_is_fetched_again(
     downloader.discard_interrupted_output(genome, prior)
 
     assert vcf.exists() is not discarded
+
+
+class _Flaky:
+    """requests, failing the first `failures` GETs mid-stream."""
+
+    def __init__(self, body, failures, error=ConnectionError("connection reset")):
+        self.body, self.failures, self.error, self.gets = body, failures, error, 0
+
+    def head(self, *a, **k):
+        return _Response([self.body])
+
+    def get(self, *a, **k):
+        self.gets += 1
+        return _Response([self.body[:5], self.body[5:]], fail_after=1 if self.gets <= self.failures else None)
+
+
+def test_a_dropped_download_is_tried_again(downloader, tmp_path, monkeypatch):
+    dest = tmp_path / "hg38.fa.gz"
+    flaky = _Flaky(b"0123456789", failures=1)
+    monkeypatch.setattr(downloader, "requests", flaky)
+    waits = []
+    monkeypatch.setattr(downloader.time, "sleep", waits.append)
+    monkeypatch.setattr(downloader, "RETRY_DELAYS", (30, 120))
+
+    assert downloader.download_file("https://x/hg38.fa.gz", str(dest), "hg38") is True
+    assert dest.read_bytes() == b"0123456789"
+    assert flaky.gets == 2 and waits == [30]
+    assert "error" not in downloader.download_status["genomes"]["hg38"]
+
+
+def test_a_download_that_keeps_failing_says_how_often_it_was_tried(
+    downloader, tmp_path, monkeypatch
+):
+    dest = tmp_path / "hg38.fa.gz"
+    flaky = _Flaky(b"0123456789", failures=99)
+    monkeypatch.setattr(downloader, "requests", flaky)
+    waits = []
+    monkeypatch.setattr(downloader.time, "sleep", waits.append)
+    monkeypatch.setattr(downloader, "RETRY_DELAYS", (30, 120))
+
+    assert downloader.download_file("https://x/hg38.fa.gz", str(dest), "hg38") is False
+    assert flaky.gets == 3 and waits == [30, 120]
+    entry = downloader.download_status["genomes"]["hg38"]
+    assert entry["status"] == "error" and "tried 3 times" in entry["error"]
+    assert not dest.exists() and not list(tmp_path.glob("*.part"))
+
+
+@pytest.mark.parametrize("code, retried", [(404, False), (403, False), (503, True), (429, True)])
+def test_only_a_failure_that_can_pass_is_retried(downloader, code, retried):
+    response = types.SimpleNamespace(status_code=code)
+    error = downloader.HTTPError(f"{code}", response=response)
+    assert downloader.worth_retrying(error) is retried
+    assert downloader.worth_retrying(downloader.ChecksumMismatch("x")) is True
+    assert downloader.worth_retrying(OSError("No space left on device")) is False
+
+
+def test_a_finished_install_fetches_an_item_a_later_release_added(
+    downloader, tmp_path, monkeypatch
+):
+    flag = tmp_path / ".download_complete"
+    flag.write_text("Completed")
+    monkeypatch.setattr(downloader, "DOWNLOAD_COMPLETE_FLAG", str(flag))
+    staged, bed = tmp_path / "hg38.fa", tmp_path / "pharmcat_regions.bed"
+    (tmp_path / "hg38.fa.fai").write_text("chr1\t10\n")
+    genomes = [
+        {"name": "hg38", "fasta_path": str(staged)},
+        {"name": "pharmcat_regions", "fasta_path": str(bed), "is_bed": True},
+    ]
+    monkeypatch.setattr(downloader, "GENOMES", genomes)
+    downloader.download_status["completed"] = True
+
+    assert downloader.backfill_missing() == ["pharmcat_regions"]
+
+    assert not flag.exists(), "so the run (or POST /start-download) fetches it"
+    assert downloader.download_status["completed"] is False
+    assert downloader.download_status["genomes"]["pharmcat_regions"]["status"] == "pending"
+    saved = json.loads(Path(downloader.STATUS_FILE).read_text(encoding="utf-8"))
+    assert saved["completed"] is False
+
+
+def test_a_finished_install_with_everything_staged_is_left_alone(
+    downloader, tmp_path, monkeypatch
+):
+    flag = tmp_path / ".download_complete"
+    flag.write_text("Completed")
+    monkeypatch.setattr(downloader, "DOWNLOAD_COMPLETE_FLAG", str(flag))
+    (tmp_path / "hg38.fa.fai").write_text("chr1\t10\n")
+    monkeypatch.setattr(downloader, "GENOMES", [{"name": "hg38", "fasta_path": str(tmp_path / "hg38.fa")}])
+
+    assert downloader.backfill_missing() == []
+    assert flag.exists()
+
+
+def test_startup_backfills_without_forcing_a_download():
+    source = SOURCE.read_text(encoding="utf-8")
+    main = source[source.index('if __name__ == "__main__":') :]
+    assert main.index("backfill_missing()") < main.index("schedule_download(")
+    guarded = main[main.index("backfill_missing()") - 200 : main.index("schedule_download(")]
+    assert "except OSError" in guarded
+    # DOWNLOAD_ON_STARTUP=false still decides: backfill only clears the flag.
+    assert "repinned = bool(backfill_missing())" not in main

@@ -104,6 +104,7 @@ services:
       - ./reference:/reference
     environment:
       - DOWNLOAD_ON_STARTUP=${DOWNLOAD_ON_STARTUP:-true}
+      - DOWNLOAD_RETRY_DELAYS=${DOWNLOAD_RETRY_DELAYS:-30,120}
       # The CRAM reference cache (/reference/ref_cache, REF_PATH below): 3.2 GB
       # fetched, 5.3 GB kept. Off only where no CRAM is read (compose.e2e.yml).
       - REF_CACHE_ENABLED=${REF_CACHE_ENABLED:-true}
