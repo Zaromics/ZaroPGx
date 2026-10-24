@@ -205,7 +205,12 @@ services:
       - hapi.fhir.default_page_size=20
       - hapi.fhir.subscription.resthook_enabled=true
       - hapi.fhir.subscription.websocket_enabled=false
-      - JAVA_OPTS=-Djava.io.tmpdir=/tmp -Xmx2g
+      # The image starts java directly (exec form, no shell), so a JAVA_OPTS here was
+      # never read and the JVM sized its heap from the host: a quarter of its memory.
+      # The JVM itself reads JAVA_TOOL_OPTIONS. 2 GB measured: first start with the IG
+      # install, then three 600-entry transactions and a $validate, peaked at 1.1 GB live
+      # with no GC pressure; 1 GB filled up.
+      - JAVA_TOOL_OPTIONS=-Xmx${HAPI_JAVA_HEAP:-2g} -Djava.io.tmpdir=/tmp
       - SPRING_DATASOURCE_INITIALIZATION_MODE=always
       # The HL7 Genomics Reporting IG 3.0.0, whose profiles the FHIR export follows, so
       # that $validate checks a bundle against them. Installed from the pinned files in
