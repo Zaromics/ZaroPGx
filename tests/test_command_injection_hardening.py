@@ -444,9 +444,10 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
     """Namespace + environment for run_pypgx_create_input_vcf.
 
     It resolves a per-assembly reference FASTA under REFERENCE_DIR and indexes the
-    FASTA/BAM via `import pysam` (there is no standalone samtools in the image). Point
-    REFERENCE_DIR at a temp tree with the FASTA and its .fai present (so no faidx runs),
-    and stub pysam so index() is a no-op on the empty fixture BAM.
+    FASTA/BAM with pysam in a child process (pysam_command: there is no standalone
+    samtools in the image, and pysam's commands hold the GIL in-process). Point
+    REFERENCE_DIR at a temp tree with the FASTA and its .fai present (so no faidx runs);
+    the index command reaches the recorder like every other subprocess sink.
     """
     ref_dir = tmp_path / "reference"
     (ref_dir / "grch38").mkdir(parents=True, exist_ok=True)
@@ -454,16 +455,16 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
     fasta.write_bytes(b">chr1\nACGT\n")
     (fasta.parent / (fasta.name + ".fai")).write_bytes(b"chr1\t4\t6\t4\t5\n")
 
-    fake_pysam = types.SimpleNamespace(
-        faidx=lambda *a, **k: None, index=lambda *a, **k: None
-    )
-    monkeypatch.setitem(sys.modules, "pysam", fake_pysam)
+    # pysam's commands go through the recorder now (pysam_command); nothing else of
+    # pysam's runs before the conversion's sink.
+    monkeypatch.setitem(sys.modules, "pysam", types.SimpleNamespace())
 
     return _load_from_source(
         PYPGX_WRAPPER,
-        {"run_pypgx_create_input_vcf", "_reference_fasta_for_assembly"},
+        {"run_pypgx_create_input_vcf", "_reference_fasta_for_assembly", "pysam_command"},
         _pypgx_namespace(
             recorder,
+            sys=sys,
             REFERENCE_DIR=ref_dir,
             bgzip_in_place=lambda *a, **k: None,
             tabix_index=lambda *a, **k: None,
@@ -551,6 +552,13 @@ def test_create_input_vcf_passes_hostile_path_as_one_argv_element(
     # pypgx 0.26+ is positional: create-input-vcf [--assembly A] <vcf> <fasta> <bams...>,
     # so the hostile BAM is the final argv element, opaque and not shell-interpreted.
     assert args[-1] == str(hostile_bam)
+    # Indexing it (no .bai beside it) runs pysam in a child process: the path is one
+    # argv element there too, after the fixed code, never part of it.
+    index_calls = [c for c in recorder.calls if c[0][3:4] == ["index"]]
+    assert index_calls, f"no pysam index call: {recorder.calls!r}"
+    index_args, index_kwargs = index_calls[0]
+    _assert_argv_is_safe(index_args, index_kwargs, PAYLOAD_MARKER)
+    assert index_args[:2] == [sys.executable, "-c"] and index_args[-1] == str(hostile_bam)
 
 
 def test_create_input_vcf_has_a_single_argv_sink(tmp_path, monkeypatch):
@@ -560,6 +568,9 @@ def test_create_input_vcf_has_a_single_argv_sink(tmp_path, monkeypatch):
 
     hostile_bam = tmp_path / PAYLOAD_NAME
     hostile_bam.write_bytes(b"")
+    # A current index beside it, so the one failing sink is PyPGx's own (indexing
+    # would be a subprocess too, and fail first under this recorder).
+    (tmp_path / (PAYLOAD_NAME + ".bai")).write_bytes(b"")
 
     result = ns["run_pypgx_create_input_vcf"](
         str(hostile_bam), str(tmp_path / "out.vcf.gz"), "GRCh38"
