@@ -15,17 +15,19 @@ annotation bundle the genome downloader builds (/reference/annotation): nothing 
 the sample leaves the machine. Without the bundle it reports that it did not run.
 
 "Listed" is an exact match, after splitting and left-aligning both sides (bcftools
-norm), with a position and allele in PharmCAT's positions VCF (every allele its
-definitions use, and its positions of interest) or in PyPGx's variant table (core and
-tag variants, and their synonyms). A different allele at a listed position is not
-listed, and is marked: PharmCAT reads such a variant as the reference for DPYD, TPMT,
-NUDT15, G6PD, RYR1 and CACNA1S, and leaves the gene uncalled for the rest.
+norm) and writing both in capitals, with a position and allele in PharmCAT's
+positions VCF (every allele its definitions use, and its positions of interest) or
+in PyPGx's variant table (core and tag variants, and their synonyms). A different
+allele at a listed position is not listed, and is marked: PharmCAT reads such a
+variant as the reference for DPYD, TPMT, NUDT15, G6PD, RYR1 and CACNA1S, and leaves
+the gene uncalled for the rest.
 
 Tiers, for a variant that passes QC, is not listed, and is rare (under 1% in every
 gnomAD genetic ancestry group, or absent):
   A    loss of function: stop gained, frameshift, splice donor or acceptor (the two
        intronic bases), start lost; ClinVar pathogenic or likely pathogenic with a
-       review star for the gene's drug-response condition (CLINVAR_CONDITIONS)
+       review star for the gene's drug-response condition (CLINVAR_CONDITIONS; for
+       CACNA1S, RYR1, F2 and F5 that condition comes of a gain of function)
   A-low  the same, but in the last 5% of the coding sequence (LOFTEE's cut-off: the
        protein may escape decay and keep its function), in a gene with a single
        coding exon, or in a segmental duplication or low-mappability region (GIAB)
@@ -36,8 +38,10 @@ gnomAD genetic ancestry group, or absent):
        a missense AlphaMissense has no score for
   none no predicted effect on the protein (synonymous, intronic) or AlphaMissense
        below 0.152
-A gene with an A or B variant is flagged beside its call, except where its calls are
-the least sure of any here (NO_FLAG_GENES); its variants are still listed.
+A gene with a variant of any of these tiers is marked beside its call (MARK_TIERS):
+the report words the mark by tier, and for a gene with a near-identical neighbour
+says the variant may be that gene's. Common variants, those with no predicted effect
+and calls that fail QC are listed in the result but mark nothing.
 """
 
 from __future__ import annotations
@@ -73,11 +77,12 @@ HOM_BALANCE = 0.9
 MAX_DEPTH_OVER_MEDIAN = 2.5
 LOSS_OF_FUNCTION = ("stop_gained", "frameshift", "splice_donor", "splice_acceptor", "start_lost")
 UNCERTAIN = ("inframe_insertion", "inframe_deletion", "inframe_altering", "stop_lost", "splice_region")
-# Copy-number genes and those with a paralog close enough to take their reads: a
-# variant there is listed, never flagged beside the call.
-NO_FLAG_GENES = frozenset({"CYP2D6", "CYP2A6", "UGT2B17", "GSTM1", "GSTT1"})
+# The tiers that mark a gene's call: every one with a predicted or possible effect on
+# the protein, in every gene.
+MARK_TIERS = ("A", "A-low", "B", "B-low", "C")
 # The condition ClinVar names when its classification is about the gene's drug
-# response: for these genes, a pathogenic variant is a loss of function here.
+# response: for these genes, a pathogenic variant is a loss of function here, but
+# for those in CLINVAR_GAIN, whose condition comes of a gain of function.
 CLINVAR_CONDITIONS = {
     "DPYD": ("dihydropyrimidine dehydrogenase deficiency", "fluorouracil", "capecitabine", "dpyd"),
     "G6PD": ("glucose-6-phosphate dehydrogenase deficiency", "g6pd deficiency", "anemia, nonspherocytic hemolytic"),
@@ -85,6 +90,19 @@ CLINVAR_CONDITIONS = {
     "NUDT15": ("thiopurine", "nudt15"),
     "BCHE": ("butyrylcholinesterase", "cholinesterase", "succinylcholine"),
     "UGT1A1": ("gilbert", "crigler", "hyperbilirubinemia"),
+    "CFTR": ("cystic fibrosis", "cftr"),
+    "RYR1": ("malignant hyperthermia",),
+    "CACNA1S": ("malignant hyperthermia",),
+    "F2": ("thrombophilia",),
+    "F5": ("thrombophilia",),
+}
+# Its condition in the label, for a gene whose pathogenic variants gain a function:
+# "loss of function" would say the opposite of what they do.
+CLINVAR_GAIN = {
+    "RYR1": "malignant hyperthermia susceptibility",
+    "CACNA1S": "malignant hyperthermia susceptibility",
+    "F2": "thrombophilia",
+    "F5": "thrombophilia",
 }
 REVIEW_STARS = {
     "practice_guideline": 4,
@@ -124,6 +142,29 @@ def _run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(list(cmd), check=True, capture_output=True, text=True, **kwargs)
 
 
+# A REF or ALT of bases alone, in either case: the alleles uppercase_alleles writes in
+# capitals. A symbolic allele (<DEL>) or a breakend (G]chr1:123]) is left as it is.
+PLAIN_ALLELES = re.compile(r"[ACGTNacgtn*.]+(,[ACGTNacgtn*.]+)*")
+
+
+def uppercase_alleles(line: str) -> str:
+    """A VCF line with its REF and ALT in capitals. bcftools against a soft-masked
+    FASTA (PyPGx's create-input-vcf, on pypgx_grch38.fasta) writes an indel in a
+    masked stretch in lower case, chr15 74747271 at>a (CYP1A2 -2467delT), and every
+    table here (PharmCAT's and PyPGx's alleles, gnomAD, ClinVar, AlphaMissense)
+    writes capitals: compared as written, a listed indel came out unlisted, and its
+    lookups found nothing."""
+    if line.startswith("#"):
+        return line
+    col = line.split("\t")
+    if len(col) < 5:
+        return line
+    for i in (3, 4):
+        if PLAIN_ALLELES.fullmatch(col[i]):
+            col[i] = col[i].upper()
+    return "\t".join(col)
+
+
 def _norm_keys(vcf_text: str, fasta: Path, work: Path, name: str) -> Set[Key]:
     """The (chrom, pos, ref, alt) of every allele of a VCF, split and left-aligned."""
     src = work / f"{name}.vcf"
@@ -136,7 +177,7 @@ def _norm_keys(vcf_text: str, fasta: Path, work: Path, name: str) -> Set[Key]:
         if line.startswith("#"):
             continue
         col = line.split("\t")
-        keys.add((col[0], int(col[1]), col[3], col[4]))
+        keys.add((col[0], int(col[1]), col[3].upper(), col[4].upper()))
     return keys
 
 
@@ -183,10 +224,10 @@ def listed_alleles(fasta: Path, work: Path, pharmcat_vcf: Path, pypgx_data: Path
         col = line.split("\t")
         for alt in col[4].split(","):
             if alt not in (".", "*"):
-                records.append((col[0], int(col[1]), col[3], alt))
+                records.append((col[0], int(col[1]), col[3].upper(), alt.upper()))
     for name in pypgx_variant_names(pypgx_data):
         chrom, pos, ref, alt = name.split("-")
-        records.append(("chr" + chrom, int(pos), ref, alt))
+        records.append(("chr" + chrom, int(pos), ref.upper(), alt.upper()))
     keys = _norm_keys(_vcf_text(records, contigs), fasta, work, "listed")
     positions = {(c, p) for c, p, _, _ in records} | {(c, p) for c, p, _, _ in keys}
     return keys, positions
@@ -236,11 +277,15 @@ def annotated_records(vcf: Path, fasta: Path, bundle: Path, work: Path) -> Tuple
     samples = _run(["bcftools", "query", "-l", str(vcf)]).stdout.split()
     if not samples:
         raise NotRun("The VCF has no sample, so no genotypes to check.")
-    steps = [
-        # Overlap, not position: a deletion that starts upstream of an exon's flank
-        # and takes its splice site is read too.
-        ["bcftools", "view", "-T", str(regions), "--targets-overlap", "1", "-s", samples[0], "-Ou", str(vcf)],
-    ]
+    # Overlap, not position: a deletion that starts upstream of an exon's flank and
+    # takes its splice site is read too. Then the alleles in capitals, before norm
+    # and csq compare them with the reference (uppercase_alleles).
+    selected = _run(
+        ["bcftools", "view", "-T", str(regions), "--targets-overlap", "1", "-s", samples[0], str(vcf)]
+    ).stdout
+    capitals = work / "selected.vcf"
+    capitals.write_text("".join(uppercase_alleles(line) + "\n" for line in selected.splitlines()))
+    steps = [["bcftools", "view", "-Ou", str(capitals)]]
     if style == "":
         rename = work / "chr.map"
         rename.write_text("".join(f"{c}\tchr{c}\n" for c in [*map(str, range(1, 23)), "X", "Y"]) + "MT\tchrM\n")
@@ -278,7 +323,7 @@ def parse_vcf(path: Path):
     for line in path.read_text().splitlines():
         if line.startswith("#"):
             continue
-        col = line.split("\t")
+        col = uppercase_alleles(line).split("\t")
         info = {}
         for item in col[7].split(";"):
             k, _, v = item.partition("=")
@@ -362,7 +407,7 @@ def _table(path: Path, wanted: Set[Key]) -> Dict[Key, dict]:
         head = f.readline().rstrip("\n").split("\t")
         for line in f:
             col = line.rstrip("\n").split("\t")
-            key = (col[0], int(col[1]), col[2], col[3])
+            key = (col[0], int(col[1]), col[2].upper(), col[3].upper())
             if key in wanted:
                 found[key] = dict(zip(head, col))
     return found
@@ -562,9 +607,11 @@ def tier_for(gene: str, consequence: str, protein_pos: Optional[int], transcript
     return "none"
 
 
-def label_for(tier: str, am: Optional[float], clinvar_only: bool) -> str:
-    """The tier in words; a loss of function ClinVar alone establishes says so."""
+def label_for(tier: str, am: Optional[float], clinvar_only: bool, gene: str = "") -> str:
+    """The tier in words; a tier A ClinVar alone establishes says so."""
     if tier == "A" and clinvar_only:
+        if gene in CLINVAR_GAIN:
+            return f"Pathogenic for {CLINVAR_GAIN[gene]}, by ClinVar"
         return "Loss of function, by ClinVar"
     text = TIER_LABELS[tier]
     if tier in ("B", "B-low") and am is not None:
@@ -626,6 +673,10 @@ def check(vcf: Path, fasta: Path, work: Path, bundle: Path = ANNOTATION_DIR,
         clinvar = clinvar_entry(clinvar_rows.get(key))
         low = lowconf.label(chrom, pos, pos + len(ref) - 1)
         problems = quality_problems(rec, median_depth)
+        clinvar_only = (
+            clinvar_says_loss(main["gene"], clinvar)
+            and not set(main["consequence"].split("&")) & set(LOSS_OF_FUNCTION)
+        )
         if problems:
             tier = "low_quality"
         elif grpmax is not None and grpmax >= RARE:
@@ -656,19 +707,18 @@ def check(vcf: Path, fasta: Path, work: Path, bundle: Path = ANNOTATION_DIR,
             "clinvar": clinvar,
             "low_confidence": low,
             "tier": tier,
-            "label": label_for(
-                tier, am,
-                clinvar_says_loss(main["gene"], clinvar)
-                and not set(main["consequence"].split("&")) & set(LOSS_OF_FUNCTION),
-            ),
+            "label": label_for(tier, am, clinvar_only, main["gene"]),
+            # Tier A on ClinVar's word alone, not on what the variant does.
+            "clinvar_basis": tier == "A" and clinvar_only,
+            # ClinVar classifies it, with a star, for the gene's drug response.
+            "clinvar_drug_response": clinvar_says_loss(main["gene"], clinvar),
         })
     variants.sort(key=lambda v: ("A A-low B B-low C none common low_quality".split().index(v["tier"]), v["gene"], v["pos"]))
     flagged: Dict[str, List[int]] = {}
     for i, v in enumerate(variants):
-        if v["tier"] in ("A", "B"):
+        if v["tier"] in MARK_TIERS:
             for gene in v["genes"]:
-                if gene not in NO_FLAG_GENES:
-                    flagged.setdefault(gene, []).append(i)
+                flagged.setdefault(gene, []).append(i)
     return {
         "status": "done",
         "sample": sample,

@@ -34,6 +34,15 @@ Your `.env` keeps its value. If it says `PYPGX_PHARMCAT_PREFERENCE=pharmcat`, ch
 docker compose up -d pypgx
 ```
 
+### Reports list the variants no allele definition lists
+
+The genome downloader now builds the annotation this check reads, once, on its first
+start after the update: about 1 GB fetched (Ensembl's transcripts, AlphaMissense, ClinVar,
+gnomAD v4.1's ranges for these genes), about 3 MB kept in `reference/annotation`. Its
+sources are pinned, ClinVar to a dated release, and each ZaroPGx release that refreshes
+them rebuilds it. To skip the check, set `ANNOTATION_ENABLED=false` in `.env` before
+starting; reports then say it did not run.
+
 ## v0.3.2 → v0.4.0
 
 ### The image tag moves with the release

@@ -54,25 +54,29 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 # Bump when the genes, a source or a file below changes: the downloader rebuilds a
 # bundle whose manifest names another version.
-BUNDLE_VERSION = "1"
+BUNDLE_VERSION = "2"
 
-# The genes checked: drug-metabolising enzymes and transporters, and the other genes
-# whose reduced function changes a drug's effect (G6PD, VKORC1, NUDT15, TPMT, BCHE).
-# Left out on purpose, though PyPGx calls them: genes where a damaging variant means a
-# disease rather than a drug response (ATM, APOE, CFTR, F2, F5, RYR1 and CACNA1S, whose
-# malignant hyperthermia variants PharmCAT already reads, CYP1B1, CYP17A1, CYP19A1,
-# CYP26A1, CYP2R1, ITPA, POR, PTGIS, TBXAS1, XPC), so the check cannot report an
-# incidental finding; and the receptors and other genes PyPGx types by a single
-# association variant (ADRA2A, ADRB2, ANKK1, BDNF, COMT, DBH, DRD2, GRIK1, GRIK4,
-# GRIN2B, HTR1A, HTR2A, IFNL3, IFNL4, ITGB3, MTHFR, OPRK1, OPRM1, RARG, SLC28A3,
+# The genes checked: every gene PharmCAT 3.4 has allele definitions for, and the
+# drug-metabolising enzymes and transporters PyPGx types. PharmCAT's include genes
+# where a damaging variant can also mean a disease or a carrier state (CACNA1S and
+# RYR1, malignant hyperthermia; CFTR, cystic fibrosis; F2 and F5, thrombophilia):
+# checked all the same, since PharmCAT reports them for a drug's effect. Not checked:
+# IFNL3, which PharmCAT types by one association variant outside its coding exons;
+# MT-RNR1, mitochondrial rRNA (PharmCAT reads its listed variants); HLA, typed by
+# OptiType; the other genes PyPGx calls where a damaging variant means a disease
+# rather than a drug response (ATM, APOE, CYP1B1, CYP17A1, CYP19A1, CYP26A1, CYP2R1,
+# ITPA, POR, PTGIS, TBXAS1, XPC); and the receptors and other genes PyPGx types by a
+# single association variant (ADRA2A, ADRB2, ANKK1, BDNF, COMT, DBH, DRD2, GRIK1,
+# GRIK4, GRIN2B, HTR1A, HTR2A, IFNL4, ITGB3, MTHFR, OPRK1, OPRM1, RARG, SLC28A3,
 # SLC47A2, SLC6A4, ACYP2), where a rare variant's effect on a drug is not known.
 GENES = (
-    "ABCB1", "ABCG2", "BCHE", "CYP1A1", "CYP1A2", "CYP2A6", "CYP2A13", "CYP2B6",
-    "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1", "CYP2J2", "CYP2S1",
-    "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11", "CYP4A22", "CYP4B1",
-    "CYP4F2", "DPYD", "G6PD", "GSTM1", "GSTP1", "GSTT1", "NAT1", "NAT2", "NUDT15",
-    "SLC15A2", "SLC22A2", "SLCO1B1", "SLCO1B3", "SLCO2B1", "SULT1A1", "TPMT",
-    "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7", "UGT2B15", "UGT2B17", "VKORC1",
+    "ABCB1", "ABCG2", "BCHE", "CACNA1S", "CFTR", "CYP1A1", "CYP1A2", "CYP2A6",
+    "CYP2A13", "CYP2B6", "CYP2C8", "CYP2C9", "CYP2C19", "CYP2D6", "CYP2E1", "CYP2F1",
+    "CYP2J2", "CYP2S1", "CYP2W1", "CYP3A4", "CYP3A5", "CYP3A7", "CYP3A43", "CYP4A11",
+    "CYP4A22", "CYP4B1", "CYP4F2", "DPYD", "F2", "F5", "G6PD", "GSTM1", "GSTP1",
+    "GSTT1", "NAT1", "NAT2", "NUDT15", "RYR1", "SLC15A2", "SLC22A2", "SLCO1B1",
+    "SLCO1B3", "SLCO2B1", "SULT1A1", "TPMT", "UGT1A1", "UGT1A4", "UGT1A6", "UGT2B7",
+    "UGT2B15", "UGT2B17", "VKORC1",
 )
 # Each coding exon is read this far either side: the splice region (8 bp into the
 # intron) and the splice sites inside it.

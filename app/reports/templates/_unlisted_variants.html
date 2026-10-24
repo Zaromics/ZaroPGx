@@ -18,12 +18,15 @@
     <p>The {{ u.rows|length }} below may change the protein. They did not change any call or
        phenotype in this report. Their function is unknown: the effect given is a
        prediction, from what the variant does to the gene's MANE Select transcript and,
-       for a missense change, AlphaMissense's score. A prediction can be wrong in either
+       for a missense change, AlphaMissense's score, or ClinVar's classification where it
+       has one for the gene's drug response. A prediction can be wrong in either
        direction, none here has been validated for clinical use, and whether a variant
        lies on the same chromosome copy as an allele in the call is not known.{% if u.flagged %}
-       Where one is predicted to cause loss of function or damage the protein, the
-       gene's call is marked: its phenotype assumes the variant does nothing.{% endif %}</p>
+       Each one marks its gene's call, in words that say how strong its prediction is
+       (from a predicted loss of function to an effect that cannot be predicted): the
+       phenotype assumes the variant does nothing.{% endif %}</p>
     {% if u.dpyd_caveat %}<p>{{ u.dpyd_caveat }}</p>{% endif %}
+    {% if u.disease_note %}<p>{{ u.disease_note }}</p>{% endif %}
     <table class="unlisted-table">
         <colgroup>
             <col class="c-gene"><col class="c-variant"><col class="c-zygosity">

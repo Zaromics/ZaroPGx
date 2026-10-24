@@ -167,6 +167,11 @@ def test_tiers(uv, gene, consequence, protein_pos, am, clinvar, low, tier):
         ("DPYD", "Pathogenic", "criteria_provided,_single_submitter", "Some_other_disease", False),
         # A gene with no drug-response condition listed.
         ("CYP2C9", "Pathogenic", "reviewed_by_expert_panel", "Warfarin_response", False),
+        # PharmCAT's genes whose condition is also a disease's.
+        ("RYR1", "Pathogenic", "reviewed_by_expert_panel", "Malignant_hyperthermia_of_anesthesia", True),
+        ("RYR1", "Pathogenic", "criteria_provided,_single_submitter", "Central_core_myopathy", False),
+        ("CFTR", "Pathogenic", "reviewed_by_expert_panel", "Cystic_fibrosis", True),
+        ("F5", "Pathogenic", "criteria_provided,_single_submitter", "Thrombophilia_due_to_activated_protein_C_resistance", True),
     ],
 )
 def test_clinvar_makes_a_loss_of_function_only_for_the_genes_drug_response(uv, gene, sig, review, condition, loss):
@@ -194,3 +199,59 @@ def test_without_the_bundle_the_check_says_it_did_not_run(uv, tmp_path):
     result = uv.check(tmp_path / "in.vcf.gz", tmp_path / "ref.fa", tmp_path / "work", bundle=tmp_path / "none")
     assert result["status"] == "not_run"
     assert "genome downloader" in result["reason"]
+
+
+def test_clinvars_word_on_a_gain_of_function_gene_is_not_called_a_loss(uv):
+    assert uv.label_for("A", None, True, "DPYD") == "Loss of function, by ClinVar"
+    assert uv.label_for("A", None, True, "RYR1") == (
+        "Pathogenic for malignant hyperthermia susceptibility, by ClinVar"
+    )
+    assert uv.label_for("A", None, True, "F5") == "Pathogenic for thrombophilia, by ClinVar"
+    assert uv.label_for("A", None, False, "RYR1") == "Predicted loss of function"
+
+
+def test_every_tier_with_an_effect_marks_its_gene_in_every_gene(uv):
+    """The user's choice (2026-10-24): A, B and C mark, low-confidence ones too, and
+    CYP2D6 and the other duplicated-region genes are no longer left out."""
+    assert uv.MARK_TIERS == ("A", "A-low", "B", "B-low", "C")
+    assert not hasattr(uv, "NO_FLAG_GENES")
+
+
+# chr15 74747271 at>a: CYP1A2 -2467delT (in *1L) as bcftools writes it against the
+# soft-masked pypgx_grch38.fasta.
+LOWER = "chr15\t74747271\t.\tat\ta\t50\tPASS\tDP=30\tGT:AD\t0/1:15,15"
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        (LOWER, "chr15\t74747271\t.\tAT\tA\t50\tPASS\tDP=30\tGT:AD\t0/1:15,15"),
+        ("chr1\t10\t.\tg\tc,t\t.\t.\t.", "chr1\t10\t.\tG\tC,T\t.\t.\t."),
+        # A symbolic allele and a breakend keep their case: "chr" is part of a name.
+        ("chr1\t10\t.\tg\t<DEL>\t.\t.\t.", "chr1\t10\t.\tG\t<DEL>\t.\t.\t."),
+        ("chr1\t10\t.\tg\tg]chr2:5]\t.\t.\t.", "chr1\t10\t.\tG\tg]chr2:5]\t.\t.\t."),
+        ("##contig=<ID=chr15,length=101991189>", "##contig=<ID=chr15,length=101991189>"),
+    ],
+)
+def test_alleles_are_compared_in_capitals(uv, line, expected):
+    assert uv.uppercase_alleles(line) == expected
+
+
+def test_a_lowercase_indel_is_read_and_looked_up_in_capitals(uv, tmp_path):
+    """A listed indel written in lower case came out unlisted, and gnomAD, ClinVar and
+    AlphaMissense, which write capitals, found nothing for it."""
+    import gzip
+
+    vcf = tmp_path / "in.vcf"
+    vcf.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS\n" + LOWER + "\n")
+    (rec,) = list(uv.parse_vcf(vcf))
+    key = (rec["chrom"], rec["pos"], rec["ref"], rec["alt"])
+    assert key == ("chr15", 74747271, "AT", "A")
+    table = tmp_path / "gnomad.tsv.gz"
+    with gzip.open(table, "wt") as f:
+        f.write("chrom\tpos\tref\talt\tAF_joint\nchr15\t74747271\tAT\tA\t0.2\n")
+    assert uv._table(table, {key})[key]["AF_joint"] == "0.2"
+    # And a table written in lower case still matches the run's capitals.
+    with gzip.open(table, "wt") as f:
+        f.write("chrom\tpos\tref\talt\tAF_joint\nchr15\t74747271\tat\ta\t0.2\n")
+    assert key in uv._table(table, {key})

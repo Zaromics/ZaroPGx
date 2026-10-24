@@ -114,11 +114,22 @@ def test_every_source_is_pinned_and_free_for_commercial_use(bundle):
     assert not {"cadd_phred", "revel_max", "spliceai_ds_max"} & set(bundle.GNOMAD_FIELDS)
 
 
-def test_the_genes_leave_out_those_where_a_damaging_variant_is_a_disease_finding(bundle):
-    for gene in ("ATM", "APOE", "CFTR", "F5", "RYR1", "CACNA1S", "CYP1B1", "XPC", "POR"):
-        assert gene not in bundle.GENES, gene
-    for gene in ("DPYD", "TPMT", "NUDT15", "CYP2C19", "CYP2C9", "G6PD", "UGT1A1", "SLCO1B1"):
+def test_every_gene_pharmcat_reports_is_checked_but_those_no_exon_scan_can_read(bundle):
+    """PharmCAT's panel (config/genes.json), CFTR, RYR1, CACNA1S, F2 and F5 among them:
+    the user chose every PharmCAT gene, though a variant there can also bear on a
+    disease (2026-10-24). Not IFNL3 (one association variant outside its exons),
+    MT-RNR1 (mitochondrial rRNA) or HLA (typed by OptiType)."""
+    import json
+    from pathlib import Path
+
+    genes = json.loads((Path(__file__).resolve().parents[1] / "config" / "genes.json").read_text())
+    panel = set(genes["sets"]["pharmcat_all"]) - {"IFNL3", "MT-RNR1", "HLA-A", "HLA-B"}
+    assert panel - set(bundle.GENES) == set()
+    for gene in ("CFTR", "RYR1", "CACNA1S", "F2", "F5"):
         assert gene in bundle.GENES, gene
+    # PyPGx's other genes where a damaging variant means a disease stay out.
+    for gene in ("ATM", "APOE", "CYP1B1", "XPC", "POR", "IFNL3"):
+        assert gene not in bundle.GENES, gene
 
 
 def test_a_bundle_of_another_version_is_not_current(bundle, tmp_path):
