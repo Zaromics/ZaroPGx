@@ -5,7 +5,8 @@
 RESULTS_DIR holds one directory per sample, as run.py writes it: the PharmCAT JSON
 (pharmcat.json), PyPGx's result (pypgx_result.json) and OptiType's (hla_result.json).
 Writes calls.tsv, one row per sample, gene and caller with its verdict, and summary.tsv,
-the counts per gene and caller.
+the counts per gene and caller. A row's role is "report" for the call the report makes,
+"second" for PyPGx's own call of a gene the report takes from PharmCAT.
 
 A GeT-RM genotype is not a complete one, so the comparison is made only where both
 sides can speak:
@@ -28,7 +29,11 @@ sides can speak:
   191G>A *14) or, with none, *4, the group *11, *12 and *13 belong to. PharmCAT 3.4 names
   NAT2 by PharmVar, where 341T>C on 803A is *16 and the reference haplotype is *1, so its
   names are read as their group (pharmcat_alleles.tsv's legacy column) before comparing.
-- HLA is compared at two fields.
+- HLA is compared at two fields; "B*40:06/11" is 40:06 or 40:11.
+- A copy-number state GeT-RM never reported for a gene and study, a one-copy deletion
+  or extra copies, was not tested there: GSTM1's assays saw a deletion only when both
+  copies were gone, CYP2A6's no duplications. A call with such a state is compared as if
+  the copies were there (GSTM1 *0/*B as *B/*B, CYP2A6 *1x2/*1 as *1/*1), and said.
 
 Verdicts: match; match_projected (after the reading above; the note says what was
 set aside); discordant; caller_cannot_name (discordant, and GeT-RM's call has an allele
@@ -245,13 +250,16 @@ def calls_for(sample_dir: Path) -> dict:
 
 
 def report_callers(calls: dict, gene: str) -> list:
-    """The report's call, and PyPGx's own where it is a different caller."""
+    """The report's call, and PyPGx's own where it is a different caller ("second").
+    A gene PharmCAT does not report is PyPGx's alone, so its call is the report's."""
     rows = calls.get(gene, [])
     report = [r for r in rows if r[0] == "report"]
     pypgx = [r for r in rows if r[0] == "pypgx"]
-    if report and report[0][1] == "pypgx":
+    if not report:
+        return [("report",) + r[1:] for r in pypgx]
+    if report[0][1] == "pypgx":
         return report
-    return report + pypgx
+    return report + [("second",) + r[1:] for r in pypgx]
 
 
 # --- scoring ---------------------------------------------------------------------
@@ -340,12 +348,12 @@ def score_star(truth: str, gene: str, labels: list, caller_vocab: set, tested: s
     unnamed = set()
     for w in wants:
         pw = tuple(project(h, keep, ref) for h in w)
-        for h in haves:
+        for h, untested in (untested_copies(h, tested) for h in haves):
             ph = tuple(project(x, keep, ref) for x in h)
             set_aside = set().union(*(d for _, d in ph)) - {ref}
             missing = set().union(*(d for _, d in pw)) - {ref}
             if same(tuple(p for p, _ in pw), tuple(p for p, _ in ph)):
-                why = []
+                why = [untested] if untested else []
                 if set_aside:
                     why.append("not tested by GeT-RM: " + ", ".join(sorted(set_aside)))
                 if missing:
@@ -362,18 +370,52 @@ def score_star(truth: str, gene: str, labels: list, caller_vocab: set, tested: s
     return "discordant", called, ""
 
 
+# Marks in a study's vocabulary (tested_alleles) for the copy-number states it reported.
+HET_DELETION, EXTRA_COPIES = "<one copy deleted>", "<extra copies>"
+
+
+def untested_copies(pair: tuple[Counter, Counter], tested: set) -> tuple[tuple, str]:
+    """The call with the copy-number states GeT-RM did not test undone, and what was."""
+    a, b = pair
+    said = []
+    if EXTRA_COPIES not in tested and any(n > 1 for h in pair for n in h.values()):
+        a, b = (Counter({c: 1 for c in h}) for h in (a, b))
+        said.append("extra copies")
+    deleted = Counter({"*0": 1})
+    if HET_DELETION not in tested and (a == deleted) != (b == deleted):
+        a, b = (b, b) if a == deleted else (a, a)
+        said.append("a one-copy deletion")
+    return (a, b), (" and ".join(said) + " not tested by GeT-RM") if said else ""
+
+
 def two_field(allele: str) -> str:
     """"HLA-A*02:01:01", "A*02:01" and "*02:01" all as "02:01"."""
     m = re.search(r"\*?(\d+):(\d+)", allele)
     return f"{m.group(1)}:{m.group(2)}" if m else allele.strip()
 
 
+def hla_options(truth: str) -> list[set]:
+    """GeT-RM's HLA pair as each allele's two-field readings: "B*40:06/11/B*51:06" ->
+    [{40:06, 40:11}, {51:06}]."""
+    out = []
+    for token in truth.split("/"):
+        token = token.strip()
+        if re.fullmatch(r"\d+", token) and out:
+            out[-1] |= {f"{next(iter(out[-1])).split(':')[0]}:{token}"}
+        else:
+            out.append({two_field(token)})
+    return out
+
+
 def score_hla(truth: str, labels: list) -> tuple[str, str, str]:
     if not labels:
         return "no_call", "", ""
-    want = sorted(two_field(a) for a in truth.split("/"))
+    want = hla_options(truth)
     have = sorted(two_field(a) for a in labels[0].split("/"))
-    return ("match" if want == have else "discordant"), "/".join(have), ""
+    agree = len(want) == 2 and len(have) == 2 and (
+        (have[0] in want[0] and have[1] in want[1]) or (have[0] in want[1] and have[1] in want[0])
+    )
+    return ("match" if agree else "discordant"), "/".join(have), ""
 
 
 def tested_alleles(truth_rows: list) -> dict:
@@ -389,6 +431,10 @@ def tested_alleles(truth_rows: list) -> dict:
             d = diplotype(alt, gene)
             for h in d or ():
                 vocab[key] |= set(h)
+                if sum(h.values()) > 1:
+                    vocab[key].add(EXTRA_COPIES)
+            if d and (d[0] == Counter({"*0": 1})) != (d[1] == Counter({"*0": 1})):
+                vocab[key].add(HET_DELETION)
     return vocab
 
 
@@ -416,16 +462,16 @@ def main() -> None:
         vocab_tested = tested[(gene, t["source"])]
         if gene.startswith("HLA-"):
             got = report_callers(calls, gene)
-            scored = [("optitype",) + score_hla(value, got[0][2] if got else [])]
+            scored = [("report", "optitype") + score_hla(value, got[0][2] if got else [])]
         elif gene in SINGLE_SNVS:
             g, rsid = SINGLE_SNVS[gene]
             entry = next((r[3] for r in calls.get(g, []) if r[0] == "report"), None)
             want = value.replace("/", "").upper().count("A") if re.fullmatch(r"[GA]/?[GA]", value) else None
             have = variant_counts(entry).get(rsid) if entry else None
-            scored = [("pharmcat",) + score_count(want, have, rsid)]
+            scored = [("report", "pharmcat") + score_count(want, have, rsid)]
         elif gene == "DPYD":
             entry = next((r[3] for r in calls.get(gene, []) if r[0] == "report"), None)
-            scored = [("pharmcat",) + score_dpyd(value, entry, vocab_tested)]
+            scored = [("report", "pharmcat") + score_dpyd(value, entry, vocab_tested)]
         elif gene == "SLCO1B1":
             entry = next((r[3] for r in calls.get(gene, []) if r[0] == "report"), None)
             wants = set()
@@ -435,10 +481,10 @@ def main() -> None:
                 wants.add(sum(SLCO1B1_521C[c] for c in parts) if d and all(c in SLCO1B1_521C for c in parts) else None)
             want = wants.pop() if len(wants) == 1 else None
             have = variant_counts(entry).get("rs4149056") if entry else None
-            scored = [("pharmcat",) + score_count(want, have, "c.521T>C")]
+            scored = [("report", "pharmcat") + score_count(want, have, "c.521T>C")]
         elif gene in calls:
             scored = []
-            for _, source, labels, _ in report_callers(calls, gene):
+            for role, source, labels, _ in report_callers(calls, gene):
                 vocab = pharmcat_vocab[gene] if source == "pharmcat" else pypgx_vocab[gene]
                 legacy = labels
                 if gene == "NAT2" and source == "pharmcat":
@@ -448,27 +494,27 @@ def main() -> None:
                 if legacy != labels:
                     called = " | ".join(labels)
                     note = "; ".join(filter(None, [f"read as {' | '.join(legacy)}", note]))
-                scored.append((source, verdict, called, note))
+                scored.append(("report" if role == "report" else "second", source, verdict, called, note))
         else:
-            scored = [("", "not_scored", "", "no caller here calls this gene")]
-        for caller, verdict, called, note in scored:
-            rows.append((sample, gene, value, tentative, caller, called, verdict, note))
+            scored = [("", "", "not_scored", "", "no caller here calls this gene")]
+        for role, caller, verdict, called, note in scored:
+            rows.append((sample, gene, value, tentative, caller, called, verdict, note, role))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "calls.tsv", "w", newline="") as fh:
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
-        w.writerow(("sample", "gene", "getrm", "tentative", "caller", "zaropgx", "verdict", "note"))
+        w.writerow(("sample", "gene", "getrm", "tentative", "caller", "zaropgx", "verdict", "note", "role"))
         w.writerows(rows)
     counts = defaultdict(Counter)
-    for sample, gene, _, _, caller, _, verdict, _ in rows:
-        counts[(gene, caller)][verdict] += 1
+    for sample, gene, _, _, caller, _, verdict, _, role in rows:
+        counts[(gene, caller, role)][verdict] += 1
     verdicts = ["match", "match_projected", "discordant", "caller_cannot_name", "no_call", "not_scored"]
     with open(out_dir / "summary.tsv", "w", newline="") as fh:
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
-        w.writerow(("gene", "caller", *verdicts, "concordance"))
-        for (gene, caller), c in sorted(counts.items()):
+        w.writerow(("gene", "caller", "role", *verdicts, "concordance"))
+        for (gene, caller, role), c in sorted(counts.items()):
             agree, scored = c["match"] + c["match_projected"], sum(c[v] for v in verdicts[:4])
-            w.writerow((gene, caller, *(c[v] for v in verdicts), f"{agree / scored:.3f}" if scored else ""))
+            w.writerow((gene, caller, role, *(c[v] for v in verdicts), f"{agree / scored:.3f}" if scored else ""))
     print(f"{len(rows)} rows -> {out_dir / 'calls.tsv'}, {out_dir / 'summary.tsv'}")
 
 

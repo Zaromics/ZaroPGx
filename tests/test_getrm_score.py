@@ -180,3 +180,40 @@ def test_nat2_is_compared_by_legacy_group(score):
     tested = {"*4", "*5", "*6", "*7", "*14"}
     assert score.score_star("*5/*6", "NAT2", ["*6/*5"], vocab, tested, "*4")[0] == "match"
     assert score.score_star("(*12)/*5", "NAT2", ["*4/*5"], vocab, tested, "*4")[0] == "match"
+
+
+def test_hla_ambiguity_is_either_allele(score):
+    assert score.score_hla("B*40:06/11/B*51:06", ["B*40:06/B*51:06"])[0] == "match"
+    assert score.score_hla("B*40:06/11/B*51:06", ["B*40:11/B*51:06"])[0] == "match"
+    assert score.score_hla("C*06:02/C*07:18", ["C*06:02/C*07:01"])[0] == "discordant"
+
+
+def test_copy_states_a_study_never_reported_are_set_aside(score):
+    # GeT-RM's GSTM1 genotypes are DEL/DEL or two named copies: no one-copy deletion.
+    verdict, _, note = score.score_star(
+        "*B/*B", "GSTM1", ["*0/*B"], caller_vocab={"*0", "*A", "*B"},
+        tested={"*0", "*A", "*B"}, ref="*A",
+    )
+    assert verdict == "match_projected" and "one-copy deletion not tested" in note
+    # Where GeT-RM did report one (GSTT1 "*A/0"), the difference stands.
+    verdict, _, _ = score.score_star(
+        "*A/*A", "GSTT1", ["*0/*A"], caller_vocab={"*0", "*A"},
+        tested={"*0", "*A", score.HET_DELETION}, ref="*A",
+    )
+    assert verdict == "discordant"
+    # CYP2A6: no duplication reported, so *1x2 reads as *1.
+    verdict, _, note = score.score_star(
+        "*1/*1", "CYP2A6", ["*1x2/*1"], caller_vocab={"*1"}, tested={"*1", "*4"}, ref="*1",
+    )
+    assert verdict == "match_projected" and "extra copies not tested" in note
+
+
+def test_the_study_vocabulary_marks_copy_states(score):
+    rows = [
+        {"sample": "s1", "gene": "GSTT1", "truth": "(*A/0)", "source": "x"},
+        {"sample": "s2", "gene": "GSTT1", "truth": "(*A/*AXN)", "source": "x"},
+        {"sample": "s3", "gene": "GSTM1", "truth": "DEL/DEL", "source": "x"},
+    ]
+    vocab = score.tested_alleles(rows)
+    assert {score.HET_DELETION, score.EXTRA_COPIES} <= vocab[("GSTT1", "x")]
+    assert score.HET_DELETION not in vocab[("GSTM1", "x")]
