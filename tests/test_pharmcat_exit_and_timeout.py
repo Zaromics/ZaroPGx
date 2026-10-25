@@ -106,7 +106,9 @@ def pharmcat(tmp_path_factory):
         mp.syspath_prepend(str(ASSUME_REF_LIB))
         mp.setitem(sys.modules, "psutil", _fake_psutil())
         mp.setitem(sys.modules, "job_client", _fake_job_client())
-        spec = importlib.util.spec_from_file_location("zaropgx_pharmcat_exit_test", SIDECAR)
+        spec = importlib.util.spec_from_file_location(
+            "zaropgx_pharmcat_exit_test", SIDECAR
+        )
         module = importlib.util.module_from_spec(spec)
         mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
@@ -126,12 +128,16 @@ def server(pharmcat):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    srv = uvicorn.Server(uvicorn.Config(pharmcat.app, log_level="warning", lifespan="off"))
+    srv = uvicorn.Server(
+        uvicorn.Config(pharmcat.app, log_level="warning", lifespan="off")
+    )
     thread = threading.Thread(target=srv.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10
     while not srv.started:
-        assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+        assert (
+            thread.is_alive() and time.monotonic() < deadline
+        ), "uvicorn did not start"
         time.sleep(0.02)
     try:
         yield f"http://127.0.0.1:{port}"
@@ -169,14 +175,18 @@ def _running(pid: int) -> bool:
     return state != "Z"
 
 
-def test_a_failed_exit_fails_the_run_with_pharmcats_last_lines(pharmcat, tmp_path, monkeypatch):
+def test_a_failed_exit_fails_the_run_with_pharmcats_last_lines(
+    pharmcat, tmp_path, monkeypatch
+):
     _install(tmp_path, monkeypatch, FAILS)
 
     resp = _genotype(pharmcat)
 
     assert resp.status_code == 500, resp.text
     detail = resp.json()["detail"]
-    assert detail.startswith("PharmCAT failed with exit code 3. Its last lines:"), detail
+    assert detail.startswith(
+        "PharmCAT failed with exit code 3. Its last lines:"
+    ), detail
     assert "IllegalStateException: bad VCF header" in detail
     assert "VcfReader.java:120" in detail
     assert "output files not found" not in detail
@@ -217,7 +227,9 @@ def test_the_timeout_is_the_same_300_seconds():
     assert "PHARMCAT_TIMEOUT_SECONDS = 300\n" in source
 
 
-def test_cancel_stops_pharmcat_and_everything_it_started(pharmcat, server, tmp_path, monkeypatch):
+def test_cancel_stops_pharmcat_and_everything_it_started(
+    pharmcat, server, tmp_path, monkeypatch
+):
     child_pid = tmp_path / "child.pid"
     _install(tmp_path, monkeypatch, HANGS.format(child_pid=child_pid))
     job_id = "11111111-2222-3333-4444-555555555555"
@@ -259,7 +271,9 @@ def test_cancel_stops_pharmcat_and_everything_it_started(pharmcat, server, tmp_p
     assert time.monotonic() - t0 < 15
     resp = outcome["response"]
     assert resp.status_code == 500, resp.text
-    assert resp.json()["detail"].startswith("PharmCAT was stopped: the job was cancelled"), resp.text
+    assert resp.json()["detail"].startswith(
+        "PharmCAT was stopped: the job was cancelled"
+    ), resp.text
     # The child it started went with it.
     for _ in range(50):
         if not _running(pid):
