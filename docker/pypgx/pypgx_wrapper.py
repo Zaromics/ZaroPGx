@@ -348,7 +348,12 @@ PYPGX_MAX_PARALLEL_GENES = int(os.getenv('PYPGX_MAX_PARALLEL_GENES', '8'))
 PYPGX_BATCH_SIZE = int(os.getenv('PYPGX_BATCH_SIZE', '4'))
 
 # PyPGx/PharmCAT preference configuration
-PYPGX_PHARMCAT_PREFERENCE = os.getenv('PYPGX_PHARMCAT_PREFERENCE', 'auto').lower()
+PYPGX_PHARMCAT_PREFERENCE = os.getenv('PYPGX_PHARMCAT_PREFERENCE', 'auto').strip().lower()
+
+# The input types that are reads, as main.nf names them (analysed_input_type; a BCF
+# or gVCF reaches here as "vcf"). Only reads carry the depth PyPGx measures copy
+# number from (prepare_sv_inputs).
+ALIGNMENT_INPUT_TYPES = frozenset({"bam", "cram", "sam", "fastq"})
 
 def get_memory_usage() -> Dict[str, float]:
     """Get current memory usage statistics"""
@@ -385,35 +390,42 @@ def chunk_list(lst: List[str], chunk_size: int) -> List[List[str]]:
     return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
 
 def determine_pypgx_gene_set(preference: str, input_type: str) -> str:
+    """The genes.json set PyPGx genotypes when asked for ALL.
+
+    pypgx: all of PyPGx's genes ("pypgx"). pharmcat: all but those PharmCAT calls
+    itself ("pypgx_minus_pharmcat"; that still has CYP2D6, which PharmCAT takes from
+    PyPGx). auto: "pypgx" for reads (ALIGNMENT_INPUT_TYPES), so PyPGx measures copy
+    number for PharmCAT's CYP2B6 and CYP4F2 too; "pypgx_minus_pharmcat" for anything
+    else: a VCF, BCF or gVCF has no read depth, and an unknown type is not taken for
+    reads. Any other preference is read as auto. Which of these calls PharmCAT then
+    uses is pharmcat_outside_call_genes'.
     """
-    Determine which gene set PyPGx should use based on preference and input type.
-    
-    Args:
-        preference: Environment variable value ('auto', 'pypgx', 'pharmcat')
-        input_type: Input file type from workflow data ('vcf', 'bam', 'fastq', 'unknown')
-    
-    Returns:
-        Gene set name to use
-    """
+    preference = str(preference or "").strip().lower()
     if preference == 'pypgx':
-        # Always prefer PyPGx calls
         return 'pypgx'
-    elif preference == 'pharmcat':
-        # Always prefer PharmCAT calls for overlapping genes
+    if preference == 'pharmcat':
         return 'pypgx_minus_pharmcat'
-    elif preference == 'auto':
-        # Auto mode: VCF -> prefer PharmCAT, BAM/FASTQ -> prefer PyPGx
-        if input_type == 'vcf':
-            return 'pypgx_minus_pharmcat'
-        else:  # bam, fastq, unknown
-            return 'pypgx'
-    else:
-        # Invalid preference, default to auto behavior
+    if preference != 'auto':
         logger.warning(f"Invalid PYPGX_PHARMCAT_PREFERENCE value: {preference}, using auto")
-        if input_type == 'vcf':
-            return 'pypgx_minus_pharmcat'
-        else:
-            return 'pypgx'
+    if str(input_type or "").strip().lower() in ALIGNMENT_INPUT_TYPES:
+        return 'pypgx'
+    return 'pypgx_minus_pharmcat'
+
+
+def pharmcat_outside_call_genes(preference: str, genes: List[str]) -> List[str]:
+    """The genes whose PyPGx call main.nf hands PharmCAT as an outside call.
+
+    PharmCAT takes an outside call over its own call of the gene ("PharmCAT would have
+    called ... based on the VCF but it has been ignored in favor of the outside call",
+    PharmCAT 3.4.0). So only under pypgx does every call go. Otherwise PharmCAT
+    keeps its call for the genes it calls itself ("pharmcat_can_call"): auto has PyPGx
+    genotype them from reads for their copy number, which the report gives beside
+    PharmCAT's call (app/reports/copy_number.py), not to replace it.
+    """
+    if str(preference or "").strip().lower() == 'pypgx':
+        return list(genes)
+    own = set(gene_config.get_gene_set('pharmcat_can_call'))
+    return [gene for gene in genes if gene not in own]
 
 
 def prepare_vcf_for_pypgx(vcf_path: str) -> str:
@@ -3058,6 +3070,9 @@ async def genotype(
     """
     # Normalize requested genes: support single gene, comma-separated list, gene sets, or ALL
     requested_genes: List[str]
+    # Set for ALL, which is what main.nf asks for (pharmcat_outside_call_genes). None
+    # for a request that named its genes: the response then carries no list.
+    outside_call_genes: Optional[List[str]] = None
 
     # Check if genes parameter refers to a predefined gene set
     if genes and genes.strip().upper() != "ALL":
@@ -3101,6 +3116,9 @@ async def genotype(
         logger.info(f"Using gene set: {preferred_gene_set} (preference: {PYPGX_PHARMCAT_PREFERENCE}, input_type: {detected_input_type})")
         
         requested_genes = gene_config.get_gene_set(preferred_gene_set)
+        outside_call_genes = pharmcat_outside_call_genes(
+            PYPGX_PHARMCAT_PREFERENCE, requested_genes
+        )
     else:
         # Merge legacy single `gene` with `genes` list if provided
         gene_list = []
@@ -3351,7 +3369,10 @@ async def genotype(
             aggregated["patient_id"] = patient_id
         if report_id:
             aggregated["report_id"] = report_id
-        
+        if outside_call_genes is not None:
+            # main.nf writes PharmCAT's outside calls for these genes alone.
+            aggregated["outside_call_genes"] = outside_call_genes
+
         # Process each batch in parallel
         for batch_idx, gene_batch in enumerate(gene_batches):
             logger.info(f"Processing batch {batch_idx + 1}/{len(gene_batches)} with {len(gene_batch)} genes: {gene_batch}")

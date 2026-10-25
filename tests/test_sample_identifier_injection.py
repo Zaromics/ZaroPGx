@@ -145,6 +145,10 @@ EXPECTED_INTERPOLATIONS = {
     "upload_type",
     "absent_to_ref",
     "unspecified_to_ref",
+    # Audited 2026-10-21: Nextflow's own directory of main.nf, not user input. Read
+    # by PyPGxGenotypeAll's Python for config/genes.json when an older pypgx sends no
+    # outside_call_genes; the same path main.nf already builds empty_file_ch from.
+    "projectDir",
 }
 
 

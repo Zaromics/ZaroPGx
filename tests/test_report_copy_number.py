@@ -726,6 +726,53 @@ def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
     assert "PyPGx also measured CYP2B6's copy number in this run (Normal)" in note
 
 
+def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
+    monkeypatch, tmp_path
+):
+    """PYPGX_PHARMCAT_PREFERENCE auto, the default: from reads PyPGx genotypes
+    PharmCAT's genes too, for their copy number, and main.nf does not hand PharmCAT
+    those calls, so its own stand (Call C). On the owner's whole genome under the old
+    default, pharmcat, CYP2B6 and CYP4F2 read "Copy number not assessed"."""
+    pypgx = _wgs_run()
+    pypgx["results"]["CYP2D6"] = _result("*1/*3", "Normal", cnv_model=True)
+    # PyPGx's own diplotypes differ from PharmCAT's (*1/*1 for both): not shown.
+    pypgx["results"]["CYP2B6"] = _result("*1/*6", "Normal", cnv_model=True)
+    pypgx["results"]["CYP4F2"] = _result("*1/*3", "Normal", cnv_model=True)
+    pypgx["results"]["CYP2C19"] = _result("*1/*2", cnv_model=False)
+    result = _report(monkeypatch, tmp_path, pypgx, file_type="cram")
+    page = (tmp_path / result["html_path"].split("/")[-1]).read_text()
+    body = unescape(_clean(page.split("</style>")[-1]))
+    genes = result["processed_data"]["genes"]
+    rows = {r["gene"]: r for r in genes}
+    for gene in ("CYP2B6", "CYP4F2", "CYP2C19"):
+        assert [r["gene"] for r in genes].count(gene) == 1
+        assert (rows[gene]["called_by"], rows[gene]["diplotype"]) == (
+            "C",
+            "*38/*38" if gene == "CYP2C19" else "*1/*1",
+        )
+    for gene in ("CYP2B6", "CYP4F2"):
+        noted = rows[gene]["copy_number_not_assessed"]
+        assert noted["call_note"] == (
+            f"PharmCAT's call, from small variants: {PHARMCAT_CALL_NOTE[gene]}; "
+            "PyPGx measured copy number Normal (see Alerts)"
+        )
+        row = page[page.index(f'id="summary-{gene}"') :]
+        row = row[: row.index("</tr>")]
+        assert "Structural alleles: see the notes" in row
+        assert "not assessed" not in row
+        assert (
+            f"PyPGx also measured {gene}'s copy number in this run (Normal); the call "
+            "shown is PharmCAT's." in body
+        )
+    # PyPGx has no copy-number model for CYP2C19 or SLCO1B1: still not assessed.
+    for gene in ("CYP2C19", "SLCO1B1"):
+        row = page[page.index(f'id="summary-{gene}"') :]
+        assert "Copy number not assessed: see the notes" in row[: row.index("</tr>")]
+    # The alert does not tell how to get what this run measured.
+    assert "No tool here measures copy number for CYP2C19 or SLCO1B1." in body
+    assert "unless PYPGX_PHARMCAT_PREFERENCE is pharmcat" not in body
+
+
 def test_one_summary_note_for_all_of_them():
     rows = _pharmcat_rows()
     annotate_pharmcat_copy_number(rows)
@@ -757,6 +804,11 @@ def test_pharmcats_alert():
         "SLCO1B1 *48 and *49 (partial or whole-gene deletions)." in text
     )
     assert "a whole genome included" in text and "(not *30)" in text
+    # auto, the default, has PyPGx measure it from reads; only pharmcat does not.
+    assert (
+        "and CYP4F2 from a GRCh38 whole-genome BAM or CRAM, unless "
+        "PYPGX_PHARMCAT_PREFERENCE is pharmcat;" in text
+    )
     assert pharmcat_copy_number_alert([]) is None
     assert pharmcat_copy_number_alert([{"gene": "G6PD"}]) is None
     # PyPGx's calls only: no word of what PyPGx could measure instead.
