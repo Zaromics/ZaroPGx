@@ -72,26 +72,39 @@ def test_untested_alleles_are_set_aside_and_said(score):
     # NA12878's UGT1A1: GeT-RM tested *60, which PharmCAT has no definition of, and never
     # *80, which PharmCAT calls on the same haplotype as *28.
     verdict, called, note = score.score_star(
-        "*60/*28", "UGT1A1", ["*1/*80+*28"],
+        "*60/*28",
+        "UGT1A1",
+        ["*1/*80+*28"],
         caller_vocab={"*1", "*28", "*80", "*80+*28"},
-        tested={"*1", "*28", "*60"}, ref="*1",
+        tested={"*1", "*28", "*60"},
+        ref="*1",
     )
     assert verdict == "match_projected"
-    assert "not tested by GeT-RM: *80" in note and "not defined by the caller: *60" in note
+    assert (
+        "not tested by GeT-RM: *80" in note and "not defined by the caller: *60" in note
+    )
 
 
 def test_a_real_difference_stays_one(score):
     verdict, _, _ = score.score_star(
-        "*1/*2", "CYP2C19", ["*1/*17"],
-        caller_vocab={"*1", "*2", "*17"}, tested={"*1", "*2", "*17"}, ref="*1",
+        "*1/*2",
+        "CYP2C19",
+        ["*1/*17"],
+        caller_vocab={"*1", "*2", "*17"},
+        tested={"*1", "*2", "*17"},
+        ref="*1",
     )
     assert verdict == "discordant"
 
 
 def test_an_allele_the_caller_cannot_name_is_not_called_its_error(score):
     verdict, _, note = score.score_star(
-        "*2/*3", "NUDT15", ["*3/*3"],
-        caller_vocab={"*1", "*3"}, tested={"*1", "*2", "*3"}, ref="*1",
+        "*2/*3",
+        "NUDT15",
+        ["*3/*3"],
+        caller_vocab={"*1", "*3"},
+        tested={"*1", "*2", "*3"},
+        ref="*1",
     )
     assert verdict == "caller_cannot_name" and "*2" in note
 
@@ -102,7 +115,10 @@ def test_an_allele_the_caller_cannot_name_is_not_called_its_error(score):
         ("*1/(*4)", {"c.1601G>A": 1}),
         ("*9/*9", {"c.85T>C": 2}),
         ("c.1627A>G het, c.1905+1G>A het", {"c.1627A>G": 1, "c.1905+1G>A": 1}),
-        ("c.1120C>T, c.1896T>C / c.1120C>T, c.1896T>C", {"c.1120C>T": 2, "c.1896T>C": 2}),
+        (
+            "c.1120C>T, c.1896T>C / c.1120C>T, c.1896T>C",
+            {"c.1120C>T": 2, "c.1896T>C": 2},
+        ),
         ("c.1679T>G/ no variant detected", {"c.1679T>G": 1}),
         ("exon 4 deletion/ no variants detected", None),
     ],
@@ -113,11 +129,13 @@ def test_dpyd_is_read_as_variants(score, value, expected):
 
 
 def test_dpyd_compares_genotypes_at_the_tested_variants(score):
-    entry = {"variants": [
-        {"call": "C/T", "referenceAllele": "C", "alleles": ["c.1601G>A (*4)"]},
-        {"call": "T/C", "referenceAllele": "T", "alleles": ["c.1627A>G (*5)"]},
-        {"call": "C/C", "referenceAllele": "C", "alleles": ["c.1905+1G>A (*2A)"]},
-    ]}
+    entry = {
+        "variants": [
+            {"call": "C/T", "referenceAllele": "C", "alleles": ["c.1601G>A (*4)"]},
+            {"call": "T/C", "referenceAllele": "T", "alleles": ["c.1627A>G (*5)"]},
+            {"call": "C/C", "referenceAllele": "C", "alleles": ["c.1905+1G>A (*2A)"]},
+        ]
+    }
     # GeT-RM's 2016 study never tested c.1627A>G, so NA12878's *5 is not held against it.
     assert score.score_dpyd("*1/(*4)", entry, {"c.1601G>A", "c.85T>C"})[0] == "match"
     assert score.score_dpyd("*4/*4", entry, {"c.1601G>A"})[0] == "discordant"
@@ -142,11 +160,13 @@ def test_every_truth_value_is_read_but_a_handful(score):
             ok = all(score.diplotype(v, gene) for v in score.alternatives(value))
         if not ok:
             unread.append((gene, value))
-    assert sorted(unread) == sorted([
-        ("CYP2B6", "*1(*5) or *1(*22)"),
-        ("DPYD", "exon 4 deletion/ no variants detected"),
-        ("DPYD", "c.85T>C, (c.1218G>A) (hemizygous), c.1627A>G / exon 11 deletion"),
-    ])
+    assert sorted(unread) == sorted(
+        [
+            ("CYP2B6", "*1(*5) or *1(*22)"),
+            ("DPYD", "exon 4 deletion/ no variants detected"),
+            ("DPYD", "c.85T>C, (c.1218G>A) (hemizygous), c.1627A>G / exon 11 deletion"),
+        ]
+    )
 
 
 def test_truth_and_samples_agree():
@@ -162,9 +182,12 @@ def test_truth_and_samples_agree():
 def test_a_nameable_allele_missed_beside_an_unnameable_one_is_an_error(score):
     # GeT-RM *27/*28+*60; PyPGx has no *60, but it has *27 and left it out.
     verdict, _, _ = score.score_star(
-        "*27/(*28+*60)", "UGT1A1", ["*1/*80+*28"],
+        "*27/(*28+*60)",
+        "UGT1A1",
+        ["*1/*80+*28"],
         caller_vocab={"*1", "*27", "*28", "*80", "*80+*28"},
-        tested={"*1", "*27", "*28", "*60"}, ref="*1",
+        tested={"*1", "*27", "*28", "*60"},
+        ref="*1",
     )
     assert verdict == "discordant"
 
@@ -174,12 +197,19 @@ def test_nat2_is_compared_by_legacy_group(score):
     # haplotype, 803G, the legacy *12, which GeT-RM's labs mostly reported as *4.
     groups = score.pharmcat_nat2_groups()
     assert groups["*16"] == "*5" and groups["*1"] == "*4" and groups["*6"] == "*6"
-    assert "*30" not in groups and "*61" not in groups  # two slow variants; one GeT-RM never tested
+    assert (
+        "*30" not in groups and "*61" not in groups
+    )  # two slow variants; one GeT-RM never tested
     assert score.legacy_nat2("*6/*16", groups) == "*6/*5"
     vocab = {"*4", "*5", "*6", "*7", "*14"}
     tested = {"*4", "*5", "*6", "*7", "*14"}
-    assert score.score_star("*5/*6", "NAT2", ["*6/*5"], vocab, tested, "*4")[0] == "match"
-    assert score.score_star("(*12)/*5", "NAT2", ["*4/*5"], vocab, tested, "*4")[0] == "match"
+    assert (
+        score.score_star("*5/*6", "NAT2", ["*6/*5"], vocab, tested, "*4")[0] == "match"
+    )
+    assert (
+        score.score_star("(*12)/*5", "NAT2", ["*4/*5"], vocab, tested, "*4")[0]
+        == "match"
+    )
 
 
 def test_hla_ambiguity_is_either_allele(score):
@@ -191,19 +221,32 @@ def test_hla_ambiguity_is_either_allele(score):
 def test_copy_states_a_study_never_reported_are_set_aside(score):
     # GeT-RM's GSTM1 genotypes are DEL/DEL or two named copies: no one-copy deletion.
     verdict, _, note = score.score_star(
-        "*B/*B", "GSTM1", ["*0/*B"], caller_vocab={"*0", "*A", "*B"},
-        tested={"*0", "*A", "*B"}, ref="*A",
+        "*B/*B",
+        "GSTM1",
+        ["*0/*B"],
+        caller_vocab={"*0", "*A", "*B"},
+        tested={"*0", "*A", "*B"},
+        ref="*A",
     )
     assert verdict == "match_projected" and "one-copy deletion not tested" in note
     # Where GeT-RM did report one (GSTT1 "*A/0"), the difference stands.
     verdict, _, _ = score.score_star(
-        "*A/*A", "GSTT1", ["*0/*A"], caller_vocab={"*0", "*A"},
-        tested={"*0", "*A", score.HET_DELETION}, ref="*A",
+        "*A/*A",
+        "GSTT1",
+        ["*0/*A"],
+        caller_vocab={"*0", "*A"},
+        tested={"*0", "*A", score.HET_DELETION},
+        ref="*A",
     )
     assert verdict == "discordant"
     # CYP2A6: no duplication reported, so *1x2 reads as *1.
     verdict, _, note = score.score_star(
-        "*1/*1", "CYP2A6", ["*1x2/*1"], caller_vocab={"*1"}, tested={"*1", "*4"}, ref="*1",
+        "*1/*1",
+        "CYP2A6",
+        ["*1x2/*1"],
+        caller_vocab={"*1"},
+        tested={"*1", "*4"},
+        ref="*1",
     )
     assert verdict == "match_projected" and "extra copies not tested" in note
 
