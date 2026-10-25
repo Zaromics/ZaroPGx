@@ -64,7 +64,7 @@ RUN cd /root && git clone --branch $(pip show pypgx | grep -oP 'Version: \K.*') 
 WORKDIR /app
 
 # Copy the wrapper script and workflow client
-COPY docker/pypgx/pypgx_wrapper.py /app/
+COPY docker/pypgx/pypgx_wrapper.py docker/pypgx/deletion_check.py /app/
 COPY docker/pypgx/setup_pypgx.sh /app/
 COPY app/utils/job_client.py /job-client/
 COPY app/utils/shared_input.py /job-client/

@@ -101,12 +101,13 @@ names the structural alleles it cannot detect from a VCF: the *CYP2B7*-*CYP2B6* 
 report.json this report is built from. Each such call of PharmCAT's (Call C) is marked
 ⚠ "Copy number not assessed", with the alleles it would miss. Under the default, `auto`,
 PyPGx also runs these genes on an alignment, for their copy number, and the calls stay
-PharmCAT's. Where PyPGx measured it and found it normal (*CYP2B6* and *CYP4F2*, from a
-whole genome) there is no ⚠: the alert says so once, and only *CYP2B6* \*30, which no tool
-here calls, gets a plain note ("\*30 not assessed"). When PyPGx makes these calls instead
-(`pypgx`), it cannot show them all either: it has no copy-number model for *CYP2C19* or
-*SLCO1B1* ("Copy number not assessed (no copy-number model)"), and none of its *CYP2B6*
-copy-number states is \*30. Its *CYP4F2* call from a whole genome measures the gene's copy
+PharmCAT's. Where the copy number was measured and found normal (*CYP2B6* and *CYP4F2* by
+PyPGx, *CYP2C19* and *SLCO1B1* by ZaroPGx's deletion check, below, from a whole genome)
+there is no ⚠: the alert says so once, and only *CYP2B6* \*30, which no tool here calls,
+gets a plain note ("\*30 not assessed"). When PyPGx makes these calls instead (`pypgx`), it
+cannot show them all either: it has no copy-number model for *CYP2C19* or *SLCO1B1*, so
+without the read depth the deletion check needs they are "Copy number not assessed (no
+copy-number model)", and none of its *CYP2B6* copy-number states is \*30. Its *CYP4F2* call from a whole genome measures the gene's copy
 number, so it can show a whole-gene deletion (PyPGx's \*DEL), though not a partial one. If
 PyPGx measured a copy number other than normal for a gene whose call shown is PharmCAT's,
 the call may be wrong: its row in the Executive Summary says ⚠ "PyPGx found a structural
@@ -116,6 +117,27 @@ gene has a short note behind the Executive Summary. These notes appear on a whol
 report too. *G6PD* gets no note: PharmCAT lists no structural *G6PD* allele.
 An outside call neither tool made, such as one from `OUTSIDECALLSOVERRIDE`'s file, gets no
 note either.
+
+**Deletions in CYP2C19 and SLCO1B1.** PyPGx has no copy-number model for *CYP2C19* or
+*SLCO1B1*, so ZaroPGx checks them itself, from the read depth PyPGx measures on a GRCh38
+whole-genome alignment, normalised against the same control gene (*VDR*): the median copy
+number of each 5 kb across the gene, where a run of three or more stretches under 1.35
+copies, with a median of at most 1.2, is a deletion of one copy, and under 0.4 of both (a
+deletion under 15 kb is not called). A deletion is named by the exons it takes:
+*CYP2C19* \*36 (the whole gene) or \*37 (a partial deletion that includes exon 1), *SLCO1B1*
+\*48 (the whole gene; a deletion that size may take part of *SLCO1B3* too) or \*49 (part of
+it), all no function in CPIC's tables. With one copy deleted, the other copy's variants read
+homozygous: a *CYP2C19* \*1/\*37 sample, an intermediate metabolizer, reads \*1/\*1 from
+small variants. So when the check names a deletion under a homozygous call, the call takes
+it, \*1/\*37, and goes to PharmCAT as an outside call; the row says ⚠ "Deletion found from
+read depth", the note gives the call from small variants alone, and the alert asks for an
+independent test before acting on it. A deletion no star allele with a function names (a
+*CYP2C19* deletion that keeps exon 1, such as one of exons 2-5) or a heterozygous call over
+a deletion leaves PharmCAT's call, marked as one that cannot show it. Found normal, neither
+gene gets a note, and the alert says so once. On 1000 Genomes 30x genomes the check calls
+*CYP2C19* \*37 in HG00268, the exons 2-5 deletion in HG01771 and *SLCO1B1* \*48 in HG01531
+and HG03856 and \*49 in HG03436, and no deletion in 62 GeT-RM reference genomes, both at
+their own depth (about 30x) and downsampled to 15x, the lowest depth the check runs at.
 
 **PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
 shows them where PharmCAT's own report does, in PharmCAT's words (a link as its words and

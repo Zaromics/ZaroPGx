@@ -34,6 +34,17 @@ Your `.env` keeps its value. If it says `PYPGX_PHARMCAT_PREFERENCE=pharmcat`, ch
 docker compose up -d pypgx
 ```
 
+### CYP2C19 and SLCO1B1 deletions from read depth
+
+PyPGx has no copy-number model for CYP2C19 or SLCO1B1, so a GRCh38 whole genome's report
+said their copy number was not assessed, and a sample with one copy deleted was called from
+the other alone: CYP2C19 *1/*37, an Intermediate Metabolizer, read *1/*1, Normal. ZaroPGx
+now checks both genes for deletions from PyPGx's read depth. A named deletion (CYP2C19 *36
+or *37, SLCO1B1 *48 or *49) under a homozygous call goes into the call PharmCAT is given,
+and the report says so beside it; found normal, the alert says so once. The check runs in
+the PyPGx image, so it needs the new images (`docker compose pull`, then
+`docker compose up -d`). VCF, BCF and gVCF runs are unchanged.
+
 ## v0.3.2 → v0.4.0
 
 ### The image tag moves with the release

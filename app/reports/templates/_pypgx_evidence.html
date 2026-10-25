@@ -23,8 +23,9 @@
 <div class="call-note copy-number-note">⚠ {{ d.copy_number_not_assessed.call_note }}</div>
 {%- endif %}
 {%- endif %}
-{#- PyPGx's copy-number call in words; its code is in the evidence panel. #}
-{%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' %}
+{#- PyPGx's copy-number call in words; its code is in the evidence panel. The
+    deletion check's (CYP2C19, SLCO1B1) is in the note above, in full. #}
+{%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' and d.pypgx.copy_number_by != 'deletion_check' %}
 <div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }}</div>
 {%- endif %}
 {#- PyPGx's AlternativePhase: the alleles it finds with every variant it saw on

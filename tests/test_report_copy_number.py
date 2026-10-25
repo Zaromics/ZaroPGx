@@ -750,10 +750,13 @@ def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
     assert "⚠" not in text and "not assessed" not in text
 
 
-def test_the_measured_genes_are_those_pypgx_has_a_model_for():
-    from app.reports.copy_number import MEASURED_NORMAL, PYPGX_NO_MODEL
+def test_every_listed_gene_can_be_measured():
+    """PyPGx models CYP2B6 and CYP4F2; ZaroPGx's deletion check measures the two it
+    has no model for, CYP2C19 and SLCO1B1."""
+    from app.reports.copy_number import CHECKED, MEASURED_NORMAL, PYPGX_NO_MODEL
 
-    assert set(MEASURED_NORMAL) == set(PHARMCAT_MISSED) - PYPGX_NO_MODEL
+    assert set(MEASURED_NORMAL) == set(PHARMCAT_MISSED)
+    assert set(CHECKED) == PYPGX_NO_MODEL
 
 
 def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
@@ -798,7 +801,8 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
     assert "call-note" not in cell[: cell.index("</tr>")]
     row = page[page.index('id="summary-CYP4F2"') :]
     assert "see the notes" not in row[: row.index("</tr>")]
-    # PyPGx has no copy-number model for CYP2C19 or SLCO1B1: still not assessed.
+    # A run without the deletion check (an older pypgx image, or the check failed):
+    # CYP2C19 and SLCO1B1 still not assessed, and said so.
     for gene in ("CYP2C19", "SLCO1B1"):
         row = page[page.index(f'id="summary-{gene}"') :]
         assert "⚠ Copy number not assessed: see the notes" in row[: row.index("</tr>")]
@@ -809,7 +813,10 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
         "duplication) and CYP4F2 (no whole-gene deletion)." in alerts
     )
     assert "No tool here calls CYP2B6 *30, a hybrid with CYP2B7." in alerts
-    assert "No tool here measures copy number for CYP2C19 or SLCO1B1." in alerts
+    assert (
+        "ZaroPGx's deletion check, which measures CYP2C19 and SLCO1B1 from the read "
+        "depth PyPGx uses, gave no result in this run." in alerts
+    )
     # The alert does not tell how to get what this run measured.
     assert "unless PYPGX_PHARMCAT_PREFERENCE is pharmcat" not in body
     # The measurement is said once in the alert, and the notes do not copy it.
@@ -843,10 +850,11 @@ def test_pharmcats_alert():
         "CYP2B6, CYP2C19 and SLCO1B1."
     )
     assert "(not *30)" in text
-    # auto, the default, has PyPGx measure it from reads; only pharmcat does not.
-    assert (
-        "and CYP4F2 from a GRCh38 whole-genome BAM or CRAM, unless "
-        "PYPGX_PHARMCAT_PREFERENCE is pharmcat;" in text
+    # auto, the default, has them measured from reads; only pharmcat does not.
+    assert text.endswith(
+        "From a GRCh38 whole-genome BAM or CRAM, unless PYPGX_PHARMCAT_PREFERENCE is "
+        "pharmcat, PyPGx measures copy number for CYP2B6 (not *30) and CYP4F2, and "
+        "ZaroPGx checks CYP2C19 and SLCO1B1 for deletions from the same read depth."
     )
     assert pharmcat_copy_number_alert([]) is None
     assert pharmcat_copy_number_alert([{"gene": "G6PD"}]) is None
@@ -1073,3 +1081,112 @@ def test_a_structural_allele_pypgx_found_beside_pharmcat_s_call_is_flagged(
     entry = cn.listed_alleles_entry(row, {})
     assert entry["marker"] == cn.STAR30_MARKER and entry["warn"] is False, entry
     assert cn.listed_alleles_entry({"gene": "CYP4F2", "diplotype": "*1/*1"}, {}) is None
+
+
+# --------------------------------------------------------------------------
+# CYP2C19's and SLCO1B1's deletions, checked from read depth
+# --------------------------------------------------------------------------
+
+STAR37 = "CYP2C19 *37: one copy of exons 1-5 deleted"
+EXONS_2_5 = (
+    "a deletion of one copy of exons 2-5, which is no star allele CPIC assigns a "
+    "function (it keeps exon 1, so it is not *37; Krebs et al. 2026 proposed *42 for "
+    "a deletion of exons 2-5)"
+)
+
+
+def _checked(diplotype, code, found=(), snv=None):
+    """A gene the sidecar's deletion check measured (docker/pypgx's
+    apply_deletion_check)."""
+    result = _result(diplotype, code)
+    result["details"]["copy_number_by"] = "deletion_check"
+    result["details"]["deletion_check"] = {
+        "status": "measured",
+        "deletions": [{"description": text} for text in found],
+    }
+    if snv:
+        result["details"]["snv_diplotype"] = snv
+    return result
+
+
+def test_a_deletion_in_the_call_is_said_beside_it_and_in_the_alert():
+    """HG00268's CYP2C19: *1/*37 went to PharmCAT as an outside call; from small
+    variants alone it read *1/*1, Normal Metabolizer."""
+    rows = [
+        _pypgx_row("CYP2C19", "*1/*37"),
+        {"gene": "SLCO1B1", "diplotype": "*1/*15", "call_source": "MATCHER"},
+    ]
+    pypgx = {
+        "results": {
+            "CYP2C19": _checked("*1/*37", "PartialDel1", [STAR37], snv="*1/*1"),
+            "SLCO1B1": _checked("*1/*15", "Normal"),
+        }
+    }
+    annotate_pharmcat_copy_number(rows, pypgx)
+    entry = rows[0]["copy_number_not_assessed"]
+    assert entry["kind"] == "deletion" and entry["warn"] is True
+    assert entry["marker"] == "Deletion found from read depth"
+    assert entry["call_note"] == "Deletion found from read depth (see Alerts)"
+    assert entry["note"] == (
+        f"Read depth shows {STAR37}. The call includes it (from small variants "
+        "alone, *1/*1). Confirm it with an independent test. See Alerts and Warnings."
+    )
+    # Measured normal: nothing beside the call.
+    assert "copy_number_not_assessed" not in rows[1]
+    assert measured_normal_genes(rows, pypgx) == ["SLCO1B1"]
+    text = _clean(pharmcat_copy_number_alert(rows, pypgx))
+    assert text.startswith(
+        f"⚠️ Deletion found: CYP2C19. Read depth shows {STAR37}. PharmCAT was given "
+        "the call with it, *1/*37; from small variants alone it reads *1/*1."
+    )
+    assert "Confirm a deletion with an independent test before acting on it." in text
+    assert (
+        "Read depth showed no deletion in SLCO1B1 (*48, *49), which ZaroPGx checks "
+        "from the same depth and control gene, PyPGx having no copy-number model for "
+        "it." in text
+    )
+    assert "not assessed" not in text and "PyPGx found" not in text
+
+
+def test_a_deletion_the_call_shown_cannot_show():
+    """HG01771's CYP2C19: a deletion of exons 2-5, which no star allele with a
+    function names, so PharmCAT keeps its call from small variants, and the report
+    says it may be wrong."""
+    rows = [{"gene": "CYP2C19", "diplotype": "*1/*1", "call_source": "MATCHER"}]
+    pypgx = {"results": {"CYP2C19": _checked("*1/*1", "PartialDel1", [EXONS_2_5])}}
+    annotate_pharmcat_copy_number(rows, pypgx)
+    entry = rows[0]["copy_number_not_assessed"]
+    assert entry["kind"] == "found_deletion" and entry["warn"] is True
+    assert entry["call_note"] == (
+        "Deletion found from read depth, which this call cannot show (see Alerts)"
+    )
+    assert entry["note"].startswith(f"Read depth shows {EXONS_2_5}, which this call")
+    text = _clean(pharmcat_copy_number_alert(rows, pypgx))
+    assert (
+        "The call shown, from small variants, cannot show it: the call and its "
+        "phenotype may be wrong." in text
+    )
+    assert "PharmCAT was given" not in text
+
+
+def test_checked_genes_measured_normal_say_so_once(monkeypatch, tmp_path):
+    """A whole genome under auto with the check: CYP2C19 and SLCO1B1 are no longer
+    "not assessed", and the alert says once that no deletion was found."""
+    pypgx = _wgs_run()
+    pypgx["results"]["CYP2B6"] = _result("*1/*6", "Normal", cnv_model=True)
+    pypgx["results"]["CYP4F2"] = _result("*1/*3", "Normal", cnv_model=True)
+    pypgx["results"]["CYP2C19"] = _checked("*1/*2", "Normal")
+    pypgx["results"]["SLCO1B1"] = _checked("*1/*15", "Normal")
+    result = _report(monkeypatch, tmp_path, pypgx, file_type="cram")
+    page = (tmp_path / result["html_path"].split("/")[-1]).read_text()
+    body = unescape(_clean(page.split("</style>")[-1]))
+    for gene in ("CYP2C19", "SLCO1B1"):
+        row = page[page.index(f'id="summary-{gene}"') :]
+        assert "see the notes" not in row[: row.index("</tr>")]
+    alerts = body[: body.index("Executive Summary")]
+    assert "not assessed" not in alerts
+    assert (
+        "Read depth showed no deletion in CYP2C19 (*36, *37) or SLCO1B1 (*48, *49)"
+        in alerts
+    )
+    assert body.count("Read depth showed no deletion in") == 1
