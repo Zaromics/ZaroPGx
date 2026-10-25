@@ -18,6 +18,7 @@ The service automatically detects and processes all available output formats,
 providing both file URLs and content in the API response.
 """
 
+import asyncio
 import os
 import json
 import logging
@@ -339,6 +340,45 @@ def home():
         "workflow_monitoring": "enabled"
     }
 
+# What `pharmcat_pipeline --version` and `java -version` said, once they both
+# answered. /health used to run both on every call -- a Python start and a JVM
+# start, a second or more each -- and it is polled every few seconds (Docker's
+# healthcheck, the app's services status). Neither changes while the container
+# runs, so they are asked until they answer, then remembered.
+_tool_versions: Dict[str, str] = {}
+
+
+def tool_versions() -> Dict[str, str]:
+    """{"pharmcat": ..., "java": ...}; empty until both commands have answered."""
+    if _tool_versions:
+        return _tool_versions
+    try:
+        pharmcat = subprocess.run(
+            ["pharmcat_pipeline", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        java = subprocess.run(
+            ["java", "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=10,
+        )
+    except Exception as e:
+        logger.warning(f"PharmCAT version check failed: {str(e)}")
+        return {}
+    if pharmcat.returncode != 0 or java.returncode != 0:
+        logger.warning(
+            f"PharmCAT version check failed: pharmcat_pipeline exit {pharmcat.returncode}, "
+            f"java exit {java.returncode}"
+        )
+        return {}
+    _tool_versions.update(pharmcat=pharmcat.stdout.strip(), java=java.stdout)
+    return _tool_versions
+
+
 # Health check endpoint
 @app.get("/health")
 def health_check():
@@ -348,30 +388,18 @@ def health_check():
     # Check if the JAR file exists
     jar_exists = os.path.exists(PHARMCAT_JAR)
     
-    # Test if pharmcat_pipeline command is working
-    pharmcat_working = False
-    pharmcat_version = "Unknown"
-    try:
-        result = subprocess.run(
-            ["pharmcat_pipeline", "--version"], 
-            capture_output=True, 
-            text=True, 
-            timeout=10
-        )
-        if result.returncode == 0:
-            pharmcat_working = True
-            pharmcat_version = result.stdout.strip()
-    except Exception as e:
-        logger.warning(f"PharmCAT version check failed: {str(e)}")
+    # Whether pharmcat_pipeline works: asked once, then remembered (tool_versions)
+    versions = tool_versions()
+    pharmcat_working = bool(versions)
     
     return {
         "status": "ok" if jar_exists and pharmcat_working else "degraded",
         "service": "pharmcat",
-        "java_version": subprocess.check_output(["java", "-version"], stderr=subprocess.STDOUT).decode(),
+        "java_version": versions.get("java", "Unknown"),
         "pharmcat_jar_exists": jar_exists,
         "pharmcat_jar_path": PHARMCAT_JAR,
         "pharmcat_working": pharmcat_working,
-        "pharmcat_version": pharmcat_version,
+        "pharmcat_version": versions.get("pharmcat", "Unknown"),
         "data_dir_exists": os.path.exists(DATA_DIR),
         "data_dir_contents": os.listdir(DATA_DIR)
     }
@@ -469,17 +497,17 @@ async def process_genotype(
                 if file.filename.endswith('.vcf.gz'):
                     # For compressed VCF files, keep the original extension
                     vcf_path = os.path.join(temp_dir, f"{base_name}.vcf.gz")
-                    shutil.copy2(file_path, vcf_path)
+                    await asyncio.to_thread(shutil.copy2, file_path, vcf_path)
                     logger.info(f"Copied compressed VCF file to temp directory: {vcf_path}")
                 elif file.filename.endswith('.vcf.bgz'):
                     # For compressed VCF files, keep the original extension
                     vcf_path = os.path.join(temp_dir, f"{base_name}.vcf.bgz")
-                    shutil.copy2(file_path, vcf_path)
+                    await asyncio.to_thread(shutil.copy2, file_path, vcf_path)
                     logger.info(f"Copied compressed VCF file to temp directory: {vcf_path}")
                 else:
                     # For uncompressed VCF files, use .vcf extension
                     vcf_path = os.path.join(temp_dir, f"{base_name}.vcf")
-                    shutil.copy2(file_path, vcf_path)
+                    await asyncio.to_thread(shutil.copy2, file_path, vcf_path)
                     logger.info(f"Copied VCF file to temp directory: {vcf_path}")
                 
                 # Handle outside TSV file.
@@ -533,7 +561,7 @@ async def process_genotype(
                     logger.info("No outside calls file provided")
                 
                 # Extract actual sample ID from VCF file for PharmCAT -s parameter
-                vcf_sample_id = extract_sample_id_from_vcf(vcf_path)
+                vcf_sample_id = await asyncio.to_thread(extract_sample_id_from_vcf, vcf_path)
                 if vcf_sample_id:
                     logger.info(f"Extracted VCF sample ID for PharmCAT: {vcf_sample_id}")
                 else:
@@ -785,13 +813,20 @@ async def process_genotype(
                                 except Exception:
                                     pass
 
-                    # Execute with streaming depending on workflow context
+                    # Execute with streaming depending on workflow context. In a
+                    # thread: run here, on the event loop, the read loop held it for
+                    # the whole PharmCAT run, and every request with it -- /health
+                    # timed out, and a /cancel for this very job could not get in
+                    # to stop it. (docker/pypgx/pypgx_wrapper.py did the same with
+                    # its waits; see process_gene_batch_parallel.)
                     if job_id:
-                        stdout_length, stderr_length, return_code = _run_and_stream(
+                        stdout_length, stderr_length, return_code = await asyncio.to_thread(
+                            _run_and_stream,
                             pharmcat_cmd, env, temp_dir, workflow_identifier=job_id, timeout_seconds=300, tee_file_path=tee_log_path
                         )
                     else:
-                        stdout_length, stderr_length, return_code = _run_and_stream(
+                        stdout_length, stderr_length, return_code = await asyncio.to_thread(
+                            _run_and_stream,
                             pharmcat_cmd, env, temp_dir, workflow_identifier=None, timeout_seconds=300, tee_file_path=tee_log_path
                         )
 
