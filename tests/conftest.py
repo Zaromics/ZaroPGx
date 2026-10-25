@@ -13,6 +13,8 @@ os.environ.setdefault(
     "postgresql+psycopg://pytest:pytest@localhost:5432/pytest",
 )
 os.environ.setdefault("DB_PASSWORD", "pytest-db-password")
+# genome-downloader retries a failed download after these waits; tests retry at once.
+os.environ.setdefault("DOWNLOAD_RETRY_DELAYS", "0,0")
 
 import contextlib
 

@@ -16,6 +16,7 @@ import json
 import shutil
 import subprocess
 import requests
+from requests.exceptions import HTTPError, RequestException
 from tqdm import tqdm
 import uvicorn
 from pathlib import Path
@@ -411,6 +412,30 @@ _download_lock = threading.Lock()
 # the run with in_progress stuck at true.
 REQUEST_TIMEOUT = (30, 300)
 
+# Seconds to wait before each further attempt at a download that failed in a way
+# that can pass: the connection dropped or timed out, the server answered 5xx, 408
+# or 429, or the body failed its SHA-256 (a transfer corrupted on the way). EBI's
+# servers drop long transfers now and then, and one such failure left the item in
+# error until someone restarted the service. A 4xx such as 404 is not retried: the
+# URL is wrong (a renamed release asset), and waiting will not change that.
+RETRY_DELAYS = tuple(
+    int(x) for x in os.environ.get("DOWNLOAD_RETRY_DELAYS", "30,120").split(",") if x.strip()
+)
+
+
+class ChecksumMismatch(ValueError):
+    """A download whose body does not match its pinned SHA-256."""
+
+
+def worth_retrying(error):
+    """Whether a failed download can succeed if tried again (see RETRY_DELAYS)."""
+    if isinstance(error, ChecksumMismatch):
+        return True
+    if isinstance(error, HTTPError):
+        code = getattr(error.response, "status_code", None)
+        return code is None or code >= 500 or code in (408, 429)
+    return isinstance(error, (RequestException, ConnectionError, TimeoutError))
+
 
 def verify_staged_pins():
     """At startup, check every pinned file that stays where it was downloaded (the
@@ -455,14 +480,74 @@ def verify_staged_pins():
     return removed
 
 
+def staged_output(genome):
+    """The file a finished item leaves: its index for a FASTA, the file itself for
+    a VCF, BED or chain."""
+    if genome.get("is_vcf") or genome.get("is_bed") or genome.get("is_chain"):
+        return genome["fasta_path"]
+    return genome["fasta_path"] + ".fai"
+
+
+def backfill_missing():
+    """At startup, on an install whose .download_complete says it is done: an item a
+    later release added (PharmCAT's regions BED in 0.4.0) was never fetched there,
+    since the run that would fetch it is skipped once the flag exists. Any item
+    whose staged output is missing takes the flag away, so the run that follows
+    fetches just what is missing (it skips what is staged). It is scheduled at once
+    only with DOWNLOAD_ON_STARTUP on; otherwise POST /start-download starts it, as
+    /status (pending, not completed) says. Returns the names."""
+    if not os.path.exists(DOWNLOAD_COMPLETE_FLAG):
+        return []
+    missing = [g["name"] for g in GENOMES if not os.path.exists(staged_output(g))]
+    if missing:
+        print(f"Not staged on this install, to fetch: {', '.join(missing)}")
+        for name in missing:
+            download_status["genomes"][name].update(status="pending", progress=0)
+        os.remove(DOWNLOAD_COMPLETE_FLAG)
+        download_status["completed"] = False
+        try:
+            save_status()
+        except OSError as e:
+            print(f"Could not save {STATUS_FILE}: {e}")
+    return missing
+
+
 def download_file(url, dest_path, genome_name, sha256=None, what=None):
-    """Download a file with progress tracking.
+    """Download a file with progress tracking; True once it is in place.
 
     With sha256, the download is hashed as it streams and checked before it is
     moved into place; one that does not match is discarded: no file at dest_path
-    is better than a wrong one. The genome's status then says why (`what` names
-    the file there).
+    is better than a wrong one. A failure that can pass is tried again after each
+    of RETRY_DELAYS; the genome's status says so meanwhile, and says why it failed
+    once it has (`what` names the file there).
     """
+    attempts = len(RETRY_DELAYS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            _download_once(url, dest_path, genome_name, sha256=sha256, what=what)
+            download_status["genomes"][genome_name].pop("error", None)
+            return True
+        except Exception as e:
+            print(f"Error downloading {url} (attempt {attempt} of {attempts}): {e}")
+            entry = download_status["genomes"][genome_name]
+            entry.pop("sha256_verified", None)
+            if attempt < attempts and worth_retrying(e):
+                delay = RETRY_DELAYS[attempt - 1]
+                entry["status"] = "retrying"
+                entry["error"] = f"attempt {attempt} of {attempts} failed, trying again in {delay} s: {e}"
+                save_status()
+                time.sleep(delay)
+                continue
+            entry["status"] = "error"
+            tried = f" (tried {attempt} times)" if attempt > 1 else ""
+            entry["error"] = f"{e}{tried}"
+            save_status()
+            return False
+
+
+def _download_once(url, dest_path, genome_name, sha256=None, what=None):
+    """One attempt at download_file's download; raises on any failure, leaving
+    nothing at dest_path or in a .part file."""
     # Into place only once the body has arrived in full. Written straight to
     # dest_path, a download cut off by a restart left a truncated file there, and
     # the next run's exists() check took it for a finished one. A unique name per
@@ -527,7 +612,7 @@ def download_file(url, dest_path, genome_name, sha256=None, what=None):
             actual = digest.hexdigest()
             if actual != sha256:
                 where = urlparse(url)
-                raise ValueError(
+                raise ChecksumMismatch(
                     f"SHA-256 mismatch for {url}: expected {sha256}, got {actual}. "
                     f"The download was discarded; {what or genome_name} was not "
                     f"installed. Restart genome-downloader to retry; if it repeats, "
@@ -539,16 +624,10 @@ def download_file(url, dest_path, genome_name, sha256=None, what=None):
                 f"{hash_seconds:.2f} s of hashing"
             )
         os.replace(part_path, dest_path)
-        return True
-    except Exception as e:
-        print(f"Error downloading {url}: {str(e)}")
+    except Exception:
         if part_path and os.path.exists(part_path):
             os.remove(part_path)
-        download_status["genomes"][genome_name]["status"] = "error"
-        download_status["genomes"][genome_name].pop("sha256_verified", None)
-        download_status["genomes"][genome_name]["error"] = str(e)
-        save_status()
-        return False
+        raise
 
 def extract_file(file_path, output_path, genome_name):
     """Extract gzipped file"""
@@ -1009,6 +1088,12 @@ if __name__ == "__main__":
         # Never keep the service from starting: gatk-api and pypgx wait on its health.
         print(f"Startup check of pinned files failed: {e}")
         repinned = False
+    # And an item a later release added, never fetched here: the flag goes, so the
+    # run below (or a POST /start-download, with DOWNLOAD_ON_STARTUP=false) fetches it.
+    try:
+        backfill_missing()
+    except OSError as e:
+        print(f"Startup check for files to backfill failed: {e}")
 
     # Schedule downloads to start after the server has fully initialized
     if repinned or os.environ.get('DOWNLOAD_ON_STARTUP', 'true').lower() == 'true':
