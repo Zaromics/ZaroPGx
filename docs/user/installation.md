@@ -50,6 +50,11 @@ clones the repository into `./ZaroPGx`, checks out the release tag it names, and
 3. creates `data/` and gives the services that need it write access;
 4. pulls the images and starts the stack.
 
+On an install that is running, `start-docker.sh` and `start-docker.ps1` first ask the app
+whether a job is running or an upload is still arriving, and stop there if one is, since a
+restart would fail it: run them again when it has finished, or with `--force` (`-Force`)
+to restart anyway. An update with `bootstrap.sh --update` does the same.
+
 Installing Docker may need you to log out and in again, and installing WSL a reboot. Run
 the same command again afterwards. You can read the scripts first:
 [bootstrap.sh](https://github.com/Zaromics/ZaroPGx/blob/main/bootstrap.sh),

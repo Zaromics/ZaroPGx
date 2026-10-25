@@ -7,9 +7,11 @@ RELEASE_VERSION="0.4.0"
 
 # Parse command line arguments
 AUTO_LOCAL=false
+FORCE=false
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --auto-local) AUTO_LOCAL=true ;;
+        --force) FORCE=true ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -330,10 +332,41 @@ require_published_image_arch() {
     exit 1
 }
 
+# Stopping the stack fails a job that is running and an upload still arriving. If the
+# app is up, ask it what it is doing (scripts/stack_activity.py, run inside its
+# container) and stop here if anything is; --force restarts anyway.
+check_stack_idle() {
+    docker compose ps --status running --services 2>/dev/null | grep -qx app || return 0
+    local activity uploads jobs
+    activity="$(docker compose exec -T app python /app/scripts/stack_activity.py 2>/dev/null | tail -1)"
+    read -r uploads jobs <<< "$activity"
+    if [[ -z "$jobs" ]]; then
+        echo "⚠️  Could not ask ZaroPGx whether a job or upload is running."
+        [[ "$FORCE" == true ]] && return 0
+        echo "   Make sure none is, then run ./start-docker.sh --force."
+        exit 1
+    fi
+    if [[ "$uploads" == "?" ]]; then
+        echo "⚠️  The running version cannot say whether an upload is arriving; make sure none is."
+        uploads=0
+    fi
+    if [[ "$jobs" != 0 || "$uploads" != 0 ]]; then
+        echo "⏸️  ZaroPGx is busy: ${jobs} job(s) running, ${uploads} upload(s) arriving."
+        if [[ "$FORCE" == true ]]; then
+            echo "   --force: restarting anyway; they will fail."
+            return 0
+        fi
+        echo "   Restarting now would fail them. Run ./start-docker.sh again when they finish,"
+        echo "   or ./start-docker.sh --force to restart anyway."
+        exit 1
+    fi
+}
+
 # Start containers
 echo "🐳 Starting ZaroPGx Docker Compose containers..."
 require_compose_v2
 require_published_image_arch
+check_stack_idle
 if ! docker compose down --remove-orphans; then
     echo "❌ docker compose down failed."
     exit 1

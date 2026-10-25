@@ -55,7 +55,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.api import db as app_db
-from app.api.db import get_db
+from app.api.db import active_job_count, get_db
+from app.api.middleware.activity import UploadActivityMiddleware, uploads_in_flight
 from app.api.middleware.auth_gate import (
     AuthGateMiddleware,
     check_password,
@@ -386,6 +387,8 @@ async def ensure_docs_built_on_start() -> None:
 # Front-door auth gate (outermost). Default mode is open — a no-op for existing
 # installs. See app.api.middleware.auth_gate for allowlist and cookie policy.
 app.add_middleware(AuthGateMiddleware)
+# Counts uploads in flight for /internal/activity (app.api.middleware.activity).
+app.add_middleware(UploadActivityMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
@@ -793,6 +796,20 @@ async def api_redoc():
 
 
 # Make the health check endpoint simple and dependency-free
+@app.get("/internal/activity", include_in_schema=False)
+def internal_activity(request: Request, db: Session = Depends(get_db)):
+    """Uploads in flight and jobs not yet finished, for start-docker.sh and
+    start-docker.ps1 to ask before they stop the stack (scripts/stack_activity.py,
+    run inside this container). Only for a request from inside the container: to
+    anyone else, as to a request through a proxy, the path does not exist."""
+    if not request.client or request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return {
+        "uploads_in_flight": uploads_in_flight(),
+        "jobs_active": active_job_count(db),
+    }
+
+
 @app.get("/health")
 async def health_check():
     logger.info("Health check called")

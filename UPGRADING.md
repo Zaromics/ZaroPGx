@@ -26,6 +26,14 @@ Java heap could grow to a quarter of the host's memory. It is now 2 GB, which a 
 and whole-genome pushes fit with room to spare; `HAPI_JAVA_HEAP` in `.env` changes it.
 `docker compose up -d fhir-server` applies it.
 
+### Updates wait for running jobs and uploads
+
+`start-docker.sh` and `start-docker.ps1`, which `--update` ends with, no longer stop a
+stack that is busy: they ask the app whether a job is running or an upload is still
+arriving and stop there if one is. `--force` (`-Force`) restarts anyway. An app from before
+this release can report its jobs but not its uploads, so on this update the script says to
+make sure no upload is arriving.
+
 ### PyPGx measures CYP2B6 and CYP4F2 copy number from reads
 
 `PYPGX_PHARMCAT_PREFERENCE` now defaults to `auto` (it was `pharmcat`). On a BAM, CRAM, SAM
