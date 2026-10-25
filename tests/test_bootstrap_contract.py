@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-RELEASE = "0.4.0"
+RELEASE = "0.4.1"
 ZAROPGX_SERVICES = {
     "app",
     "genome-downloader",

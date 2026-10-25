@@ -3,7 +3,7 @@
 # Works in WSL and when run with bash from PowerShell
 # For native PowerShell support, use start-docker.ps1 instead
 
-RELEASE_VERSION="0.4.0"
+RELEASE_VERSION="0.4.1"
 
 # Parse command line arguments
 AUTO_LOCAL=false

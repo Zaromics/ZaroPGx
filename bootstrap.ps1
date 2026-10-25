@@ -16,7 +16,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = "https://github.com/Zaromics/ZaroPGx.git",
-    [string]$ReleaseVersion = "0.4.0",
+    [string]$ReleaseVersion = "0.4.1",
     [string]$Branch = "",
     [string]$TargetDir = "ZaroPGx",
     [switch]$Update,
@@ -264,7 +264,7 @@ function Install-Dependencies {
         # Build arguments to pass to elevated process
         $arguments = @()
         if ($RepoUrl -ne "https://github.com/Zaromics/ZaroPGx.git") { $arguments += "-RepoUrl `"$RepoUrl`"" }
-        if ($ReleaseVersion -ne "0.4.0") { $arguments += "-ReleaseVersion `"$ReleaseVersion`"" }
+        if ($ReleaseVersion -ne "0.4.1") { $arguments += "-ReleaseVersion `"$ReleaseVersion`"" }
         if ($Branch -ne "v$ReleaseVersion") { $arguments += "-Branch `"$Branch`"" }
         if ($TargetDir -ne "ZaroPGx") { $arguments += "-TargetDir `"$TargetDir`"" }
         if ($Update) { $arguments += "-Update" }

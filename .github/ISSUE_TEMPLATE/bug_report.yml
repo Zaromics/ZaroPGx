@@ -13,7 +13,7 @@ body:
     attributes:
       label: ZaroPGx version or image tag
       description: "`ZAROPGX_TAG` in `.env`, the release you installed, or the commit for a source checkout (`git rev-parse --short HEAD`)."
-      placeholder: "0.4.0"
+      placeholder: "0.4.1"
     validations:
       required: true
 

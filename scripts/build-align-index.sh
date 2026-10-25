@@ -32,7 +32,7 @@ set -euo pipefail
 OUT_DIR="${1:-${ZAROPGX_ALIGN_REFERENCE:-./reference/pypgx}}"
 SOURCE_FASTA="${2:-./reference/hg38/Homo_sapiens_assembly38.fasta}"
 TARGET="${OUT_DIR}/pypgx_grch38.fasta"
-IMAGE="${ZAROPGX_ALIGN_IMAGE:-zaromicsresearch/zaropgx-gatk-api:0.4.0}"
+IMAGE="${ZAROPGX_ALIGN_IMAGE:-zaromicsresearch/zaropgx-gatk-api:0.4.1}"
 DOCKER="${DOCKER:-docker}"
 
 if [ ! -f "$SOURCE_FASTA" ]; then

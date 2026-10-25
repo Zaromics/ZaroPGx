@@ -17,7 +17,7 @@ pins its own release and updates to nothing newer.
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
-## v0.4.0 → next
+## v0.4.0 → v0.4.1
 
 ### The FHIR server's heap is set
 
