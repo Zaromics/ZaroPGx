@@ -136,6 +136,7 @@ If your work is a part of ZaroPGx and you wish to add or amend text recognizing 
 - [SAMtools, BCFtools and HTSlib](https://www.htslib.org): PharmCAT's VCF preprocessing; file conversion and variant calling where the input needs them.
   - Danecek P, Bonfield JK, Liddle J, et al. Twelve years of SAMtools and BCFtools. *GigaScience*. 2021;10(2):giab008. doi:[10.1093/gigascience/giab008](https://doi.org/10.1093/gigascience/giab008)
   - Bonfield JK, Marshall J, Danecek P, et al. HTSlib: C library for reading/writing high-throughput sequencing data. *GigaScience*. 2021;10(2):giab007. doi:[10.1093/gigascience/giab007](https://doi.org/10.1093/gigascience/giab007)
+  - Danecek P, McCarthy SA. BCFtools/csq: haplotype-aware variant consequences. *Bioinformatics*. 2017;33(13):2037–2039. doi:[10.1093/bioinformatics/btx100](https://doi.org/10.1093/bioinformatics/btx100)
 - [pysam](https://github.com/pysam-developers/pysam): Reads the input files for ZaroPGx and PyPGx.
 - [GATK](https://gatk.broadinstitute.org): gVCF genotyping, liftover, read alignment and re-alignment of the CYP2D6 and UGT2B loci.
   - Van der Auwera GA, O'Connor BD. Genomics in the Cloud: Using Docker, GATK, and WDL in Terra. 1st ed. O'Reilly Media; 2020.
@@ -201,6 +202,17 @@ If your work is a part of ZaroPGx and you wish to add or amend text recognizing 
   - Church DM, Schneider VA, Graves T, et al. Modernizing Reference Genome Assemblies. *PLOS Biology*. 2011;9(7):e1001091. doi:[10.1371/journal.pbio.1001091](https://doi.org/10.1371/journal.pbio.1001091)
 - [UCSC hg19ToHg38 chain](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/): Lifts the input from GRCh37 to GRCh38.
   - Hinrichs AS, Karolchik D, Baertsch R, et al. The UCSC Genome Browser Database: update 2006. *Nucleic Acids Research*. 2006;34(Database issue):D590–D598. doi:[10.1093/nar/gkj144](https://doi.org/10.1093/nar/gkj144)
+- [Ensembl and MANE](https://www.ensembl.org): The transcripts a variant no allele definition lists is read on.
+  - Yates AD, Austine-Orimoloye O, Azov AG, et al. Ensembl 2026. *Nucleic Acids Research*. 2026;54(D1):D1053–D1060. doi:[10.1093/nar/gkaf1239](https://doi.org/10.1093/nar/gkaf1239)
+  - Morales J, Pujar S, Loveland JE, et al. A joint NCBI and EMBL-EBI transcript set for clinical genomics and research. *Nature*. 2022;604(7905):310–315. doi:[10.1038/s41586-022-04558-8](https://doi.org/10.1038/s41586-022-04558-8)
+- [AlphaMissense](https://github.com/google-deepmind/alphamissense): Scores the missense variants no allele definition lists.
+  - Cheng J, Novati G, Pan J, et al. Accurate proteome-wide missense variant effect prediction with AlphaMissense. *Science*. 2023;381(6664):eadg7492. doi:[10.1126/science.adg7492](https://doi.org/10.1126/science.adg7492)
+- [gnomAD](https://gnomad.broadinstitute.org): How common each variant no allele definition lists is.
+  - Chen S, Francioli LC, Goodrich JK, et al. A genomic mutational constraint map using variation in 76,156 human genomes. *Nature*. 2024;625(7993):92–100. doi:[10.1038/s41586-023-06045-0](https://doi.org/10.1038/s41586-023-06045-0)
+- [ClinVar](https://www.ncbi.nlm.nih.gov/clinvar/): Classifications of the variants no allele definition lists.
+  - Landrum MJ, Lee JM, Benson M, et al. ClinVar: improving access to variant interpretations and supporting evidence. *Nucleic Acids Research*. 2018;46(D1):D1062–D1067. doi:[10.1093/nar/gkx1153](https://doi.org/10.1093/nar/gkx1153)
+- [GIAB genomic stratifications](https://www.nist.gov/programs-projects/genome-bottle): Marks segmental duplications and low-mappability regions, where a variant no allele definition lists is less sure.
+  - Dwarshuis N, Kalra D, McDaniel J, et al. The GIAB genomic stratifications resource for human reference genomes. *Nature Communications*. 2024;15(1):9029. doi:[10.1038/s41467-024-53260-y](https://doi.org/10.1038/s41467-024-53260-y)
 - [1000 Genomes Project 30x panel](https://www.internationalgenome.org): The haplotypes Beagle phases against.
   - Byrska-Bishop M, Evani US, Zhao X, et al. High-coverage whole-genome sequencing of the expanded 1000 Genomes Project cohort including 602 trios. *Cell*. 2022;185(18):3426–3440.e19. doi:[10.1016/j.cell.2022.08.004](https://doi.org/10.1016/j.cell.2022.08.004)
   - 1000 Genomes Project Consortium; Auton A, Brooks LD, Durbin RM, et al. A global reference for human genetic variation. *Nature*. 2015;526(7571):68–74. doi:[10.1038/nature15393](https://doi.org/10.1038/nature15393)

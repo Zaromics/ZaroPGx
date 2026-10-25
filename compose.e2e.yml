@@ -26,6 +26,9 @@ services:
       # cache's 3.2 GB download and 5.3 GB on the runner's disk. (A host running
       # the reference lanes too, ZAROPGX_E2E_REFERENCE=1, stages ./reference first.)
       - REF_CACHE_ENABLED=false
+      # Nor the unlisted-variant check's annotation (1 GB fetched): its reports say
+      # the check did not run.
+      - ANNOTATION_ENABLED=false
   pharmcat:
     ports: !reset []
     # Its reference cache: the named volume by default, filled from Zenodo at first

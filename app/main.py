@@ -451,43 +451,11 @@ else:
     )
 
 
-# Simple wrapper page for API reference with a Back button
+# The home page linked a wrapper page that framed the API explorer until v0.4.0;
+# keep old links working.
 @app.get("/api-reference", include_in_schema=False)
-async def api_reference() -> HTMLResponse:
-    html = """
-<!DOCTYPE html>
-<html lang=\"en\">
-<head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>ZaroPGx API Reference</title>
-  <style>
-    body, html { margin: 0; padding: 0; height: 100%; }
-    .topbar { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid #e5e7eb; }
-    .topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
-    .btn { display: inline-block; padding: 8px 12px; border-radius: 8px; text-decoration: none; font-size: 14px; }
-    .btn-primary { background: #0d6efd; color: #fff; }
-    .btn-primary:hover { background: #0b5ed7; }
-    .frame { width: 100%; height: calc(100vh - 48px); border: 0; }
-  </style>
-  <link rel="icon" type="image/png" href="/static/favicon.png">
-  <link rel="shortcut icon" href="/static/favicon.png">
-  <link rel="apple-touch-icon" href="/static/favicon.png">
-  <meta http-equiv=\"Content-Security-Policy\" content=\"frame-ancestors 'self';\" />
-  <meta http-equiv=\"X-Frame-Options\" content=\"SAMEORIGIN\" />
-  <meta http-equiv=\"Referrer-Policy\" content=\"no-referrer\" />
-  <meta http-equiv=\"Permissions-Policy\" content=\"interest-cohort=()\" />
-</head>
-<body>
-  <div class=\"topbar\">
-    <a class=\"btn btn-primary\" href=\"/\">Back to ZaroPGx</a>
-    <h1>API Reference</h1>
-  </div>
-  <iframe class=\"frame\" src=\"/api/docs\" title=\"Swagger UI\" loading=\"lazy\"></iframe>
-</body>
-</html>
-        """
-    return HTMLResponse(content=html)
+async def api_reference_moved() -> RedirectResponse:
+    return RedirectResponse(url=API_DOCS_URL, status_code=301)
 
 
 _LOGIN_PAGE = """<!DOCTYPE html>

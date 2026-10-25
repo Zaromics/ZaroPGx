@@ -33,8 +33,10 @@ def test_the_api_explorer_is_under_api(client):
     assert client.get("/api").json()["docs"] == "/api/docs"
 
 
-def test_the_api_reference_page_embeds_the_moved_explorer(client):
-    assert 'src="/api/docs"' in client.get("/api-reference").text
+def test_the_old_api_reference_page_redirects_to_the_explorer(client):
+    resp = client.get("/api-reference", follow_redirects=False)
+    assert resp.status_code == 301
+    assert resp.headers["location"] == "/api/docs"
 
 
 @pytest.mark.parametrize(
@@ -56,7 +58,9 @@ def test_the_home_page_links_the_documentation_at_docs():
 
     html = Path("app/templates/index.html").read_text(encoding="utf-8")
     assert 'href="/docs/"' in html
+    assert 'href="/api/docs"' in html
     assert "/documentation" not in html
+    assert "/api-reference" not in html
 
 
 @pytest.mark.parametrize(

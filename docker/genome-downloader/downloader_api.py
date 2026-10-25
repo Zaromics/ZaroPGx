@@ -13,11 +13,18 @@ from urllib.parse import urlparse
 import os
 import time
 import json
+import shutil
 import subprocess
 import requests
 from requests.exceptions import HTTPError, RequestException
 from tqdm import tqdm
 import uvicorn
+from pathlib import Path
+import sys
+
+# Beside this file, wherever it is imported from (the tests load it by path).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import annotation_bundle  # noqa: E402
 
 app = FastAPI(title="Genome Downloader API", version="0.4.0", description="REST API wrapper around genome downloader for the ZaroPGx pipeline")
 
@@ -172,6 +179,39 @@ REF_CACHE_DIR = "/reference/ref_cache"
 # cost disk: compose.e2e.yml (CI runs the VCF lane alone). Without the cache a CRAM
 # still decodes against the staged FASTA when its MD5s match it.
 REF_CACHE_ENABLED = os.environ.get("REF_CACHE_ENABLED", "true").lower() == "true"
+
+# The unlisted-variant check's annotation (annotation_bundle.py): about 1 GB fetched,
+# 3 MB kept. Off where no report needs it (compose.e2e.yml); a run then reports
+# that the check did not run. The sources go once the bundle is built.
+ANNOTATION_ENABLED = os.environ.get("ANNOTATION_ENABLED", "true").lower() == "true"
+ANNOTATION_DIR = os.path.join(REFERENCE_DIR, "annotation")
+ANNOTATION_CACHE = os.path.join(REFERENCE_DIR, "annotation-cache")
+
+
+def annotation_pending():
+    return ANNOTATION_ENABLED and annotation_bundle.current(Path(ANNOTATION_DIR)) is None
+
+
+def build_annotation():
+    """Build the annotation bundle unless this version is in place. A failure is
+    recorded, not fatal: the check says it did not run, and nothing else needs it."""
+    entry = download_status.setdefault("annotation", {})
+    entry.pop("error", None)
+    if not annotation_pending():
+        entry["status"] = "ready" if ANNOTATION_ENABLED else "disabled"
+        save_status()
+        return
+    entry["status"] = "building"
+    save_status()
+    try:
+        manifest = annotation_bundle.build(Path(ANNOTATION_DIR), Path(ANNOTATION_CACHE))
+        shutil.rmtree(ANNOTATION_CACHE, ignore_errors=True)
+        entry.update(status="ready", version=manifest["bundle_version"])
+        print(f"Annotation bundle built: {manifest['counts']}")
+    except Exception as e:
+        print(f"Error building the annotation bundle: {e}")
+        entry.update(status="error", error=str(e))
+    save_status()
 
 # The GRCh38 builds whose sequences go into the reference cache, so a CRAM written
 # against any of them decodes exactly. Measured against 30x NA12878's CRAM and the
@@ -948,6 +988,8 @@ def finish_download(success):
     try:
         if success and REF_CACHE_ENABLED:
             success = populate_reference_cache()
+        if success:
+            build_annotation()
     finally:
         download_status["in_progress"] = False
         download_status["completed"] = success
@@ -963,24 +1005,32 @@ def schedule_download(delay_seconds=5):
     
     # Check if downloads were already completed
     if os.path.exists(DOWNLOAD_COMPLETE_FLAG):
-        if REF_CACHE_ENABLED and ref_cache_pending():
-            # Genomes staged before the reference cache existed: add just the cache.
-            print("Reference genomes already downloaded; building the CRAM reference cache.")
+        cache = REF_CACHE_ENABLED and ref_cache_pending()
+        annotation = annotation_pending()
+        if cache or annotation:
+            # Genomes staged before the reference cache or the annotation existed:
+            # add just what is missing.
+            print("Reference genomes already downloaded; building "
+                  + " and ".join(n for n, todo in (("the CRAM reference cache", cache),
+                                                   ("the annotation", annotation)) if todo) + ".")
 
-            def cache_only():
+            def missing_only():
                 if not _download_lock.acquire(blocking=False):
                     print("A download run is already in progress; not starting another.")
                     return
                 download_status["in_progress"] = True
                 save_status()
                 try:
-                    download_status["completed"] = populate_reference_cache()
+                    done = populate_reference_cache() if cache else True
+                    download_status["completed"] = done
+                    if annotation:
+                        build_annotation()
                 finally:
                     download_status["in_progress"] = False
                     save_status()
                     _download_lock.release()
 
-            threading.Thread(target=cache_only).start()
+            threading.Thread(target=missing_only).start()
             return
         print("Reference genomes already downloaded.")
         download_status["completed"] = True

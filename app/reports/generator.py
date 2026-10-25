@@ -68,6 +68,7 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
+from app.reports import unlisted
 from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
@@ -76,6 +77,7 @@ from app.reports.alt_locus import (
     annotate_alt_locus,
     realigned_alt_loci,
 )
+from app.reports.copy_number import NAMED as NAMED_COPY_NUMBER
 from app.reports.copy_number import (
     annotate_copy_number,
     annotate_pharmcat_copy_number,
@@ -565,12 +567,14 @@ def credit_run_for_job(
     file_type: Optional[str],
     pharmcat_data_version: Optional[str] = None,
     kroki: bool = True,
+    unlisted_checked: bool = False,
 ) -> CreditRun:
     """The facts about this job that decide what its report credits.
 
     ``records`` are its step rows (job_workflow.load_job_step_records); none means
     they could not be read, and the report then credits everything that could
-    have run, rather than leave out something that did.
+    have run, rather than leave out something that did. ``unlisted_checked``: the
+    check for variants no allele definition lists ran (unlisted_variants.json).
     """
     completed = (
         frozenset(r["name"] for r in records if r.get("status") == "completed")
@@ -589,6 +593,9 @@ def credit_run_for_job(
         and realigned_alt_loci(bam2vcf)
     ):
         completed = completed | {"alt_realignment"}
+    # Not a step either: Nextflow's UnlistedVariants, whose result says it ran.
+    if completed is not None and unlisted_checked:
+        completed = completed | {"unlisted_variants"}
     pypgx = next(
         (r.get("output") for r in records or () if r["name"] == "pypgx_analysis"),
         None,
@@ -1081,12 +1088,13 @@ def credit_mtdna_call(genes: List[Dict[str, Any]], report_dir: str) -> bool:
 
 
 def pypgx_record(
-    details: Dict[str, Any], diplotype: Optional[str] = None
+    details: Dict[str, Any], diplotype: Optional[str] = None, gene: Optional[str] = None
 ) -> Dict[str, Any]:
     """What PyPGx reported for a gene beyond its genotype (docker/pypgx's
     parse_pypgx_results): candidate alleles, alternative phasings, the copy-number
     call, the variants behind each allele, and its plots. ``diplotype``, PyPGx's
-    call, names a tandem in the copy-number summary."""
+    call, names a tandem in the copy-number summary; ``gene`` names a copy-number
+    state PyPGx's genotyper leaves unnamed (copy_number.NAMED: CYP2B6 Tandem1, *30)."""
     record: Dict[str, Any] = {}
     for key in (
         "haplotype1",
@@ -1099,9 +1107,12 @@ def pypgx_record(
             record[key] = details[key]
     if details.get("copy_number"):
         record["copy_number"] = details["copy_number"]
-        record["copy_number_summary"] = copy_number_summary(
-            details["copy_number"], diplotype
-        )
+        record["copy_number_summary"] = NAMED_COPY_NUMBER.get(
+            (str(gene or "").strip().upper(), str(details["copy_number"]).strip())
+        ) or copy_number_summary(details["copy_number"], diplotype)
+        # ZaroPGx's deletion check (CYP2C19, SLCO1B1, DPYD), not one of PyPGx's models.
+        if details.get("copy_number_by"):
+            record["copy_number_by"] = details["copy_number_by"]
     return record
 
 
@@ -2527,6 +2538,7 @@ _EXPORT_FILES = (
     ("{report_id}_pgx_pharmcat.json", "PharmCAT report", "JSON"),
     ("{report_id}_pgx_pharmcat.tsv", "PharmCAT report", "TSV"),
     ("{report_id}_pgx_pharmcat.html", "PharmCAT report", "HTML"),
+    ("unlisted_variants.json", "Variants outside the allele definitions", "JSON"),
     ("{report_id}_pgx_report.pdf", "This report", "PDF"),
 )
 
@@ -2558,6 +2570,7 @@ def create_interactive_html_report(
     downloads: Optional[List[Dict[str, str]]] = None,
     workflow_diagram: Optional[Dict[str, Any]] = None,
     pharmcat_notes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    unlisted_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -2644,6 +2657,10 @@ def create_interactive_html_report(
         # provenance facts above -- from a file this same report_dir already
         # holds, not from a value threaded in through the caller.
         mtdna_context = mtdna_report_context(report_dir, diplotypes)
+        # The variants no allele definition lists: the PDF's context, else read
+        # from the same directory (without PyPGx's word on the sample's sex).
+        if unlisted_context is None:
+            unlisted_context = unlisted.context(unlisted.read_result(report_dir))
 
         # Prepare the report data
         report_data = {
@@ -2657,6 +2674,7 @@ def create_interactive_html_report(
                 organize_gene_drug_recommendations(template_recommendations)
             ),
             "mtdna": mtdna_context,
+            "unlisted": unlisted_context,
             "pharmcat_notes": pharmcat_notes or {"general": [], "drugs": []},
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
@@ -4052,10 +4070,12 @@ def generate_report(
     # that ran (app/reports/credits.py). Built once for every output; `platform`
     # is its software, which the workflow diagram labels its steps with.
     workflow_records = load_job_step_records(db_session, job_id)
+    unlisted_result = unlisted.read_result(output_dir)
     credit_run = credit_run_for_job(
         workflow_records,
         load_job_file_type(db_session, job_id) or file_type,
         matcher_meta["data_version"],
+        unlisted_checked=(unlisted_result or {}).get("status") == "done",
     )
     credits = build_report_credits(credit_run)
     platform = platform_from_credits(credits)
@@ -4281,7 +4301,7 @@ def generate_report(
                         continue
                     gene_name = str(gene_key).strip()
                     details = gene_res.get("details") or {}
-                    record = pypgx_record(details, gene_res.get("diplotype"))
+                    record = pypgx_record(details, gene_res.get("diplotype"), gene_name)
                     if gene_name.upper() in existing_genes:
                         # A PharmCAT row whose call PyPGx supplied -- an outside
                         # call with PyPGx's diplotype, as for CYP2D6 -- is PyPGx's
@@ -4428,9 +4448,10 @@ def generate_report(
     )
     # Calls that cannot show a structural allele PharmCAT lists as undetectable
     # (CYP2B6 *29/*30, CYP2C19 *36/*37, CYP4F2 *16, SLCO1B1 *48/*49): PharmCAT's own
-    # calls, on every input, a whole genome too; PyPGx's CYP2C19 and SLCO1B1, which
-    # it has no copy-number model for; PyPGx's CYP2B6, which cannot be *30. A note
-    # beside each and one alert of their own. PharmCAT's report.json carries no such
+    # calls, on every input, a whole genome too, unless their copy number was
+    # measured; PyPGx's CYP2C19 and SLCO1B1 when ZaroPGx's deletion check did not
+    # measure them. DPYD likewise, for exon deletions, which no allele names
+    # (copy_number.UNLISTED_STRUCTURAL). A note beside each and one alert of their own. PharmCAT's report.json carries no such
     # message, so nothing here repeats one of PharmCAT's.
     annotate_pharmcat_copy_number(data.get("genes", []), pypgx_results)
     _noted = [
@@ -4464,6 +4485,26 @@ def generate_report(
         workflow_warnings = list(workflow_warnings) + [
             alert for alert in _copy_number_alerts if alert
         ]
+        template_data["workflow_warnings"] = workflow_warnings
+
+    # Variants no allele definition lists (app/reports/unlisted.py, from the run's
+    # unlisted_variants.json): the section, a note beside each flagged gene's call
+    # (and its FHIR genotype), and one alert. Same new-list rule. A result that does
+    # not read costs the section, not the report.
+    try:
+        unlisted_ctx = unlisted.context(unlisted_result, pypgx_results)
+    except Exception as e:
+        logger.warning("Unlisted variants not reported: %s", e, exc_info=True)
+        unlisted_ctx = {
+            "status": "failed",
+            "reason": "Its result could not be read.",
+            "flagged": {},
+        }
+    unlisted.annotate_genes(data.get("genes", []), unlisted_ctx)
+    template_data["unlisted"] = unlisted_ctx
+    _unlisted_alert = unlisted.alert(unlisted_ctx)
+    if _unlisted_alert:
+        workflow_warnings = list(workflow_warnings) + [_unlisted_alert]
         template_data["workflow_warnings"] = workflow_warnings
 
     # Determine per-sample workflow for dynamic diagram from explicit flags or inference
@@ -4631,6 +4672,8 @@ def generate_report(
                 # is load-bearing: a key set only on the first dict silently
                 # never reaches the page).
                 "mtdna": mtdna_report_context(report_dir, data.get("genes", [])),
+                # Variants no allele definition lists (app/reports/unlisted.py).
+                "unlisted": unlisted_ctx,
                 # PharmCAT's notes with no gene row or recommendation to sit on.
                 "pharmcat_notes": pharmcat_notes,
                 "disclaimer": get_disclaimer(),
@@ -4922,6 +4965,34 @@ def generate_report(
         report_paths.update(native_paths)
         data.update({NATIVE_REPORT_URL_KEYS[k]: v for k, v in native_paths.items()})
 
+        # The PharmCAT run id the upload path linked to this job.
+        pharmcat_run_id = lookup_pharmcat_run_id(db_session, job_id)
+        # Prepare patient info for FHIR export
+        fhir_patient_info = None
+        if patient_info:
+            fhir_patient_info = {
+                "id": patient_info.get("id", patient_id),
+                "name": patient_info.get("name"),
+                "gender": patient_info.get("gender"),
+                "birthDate": patient_info.get("birthDate"),
+            }
+        # What the FHIR bundle below is built from, kept beside the report so an
+        # export made later through the API carries the same calls, PyPGx's and the
+        # unlisted variants among them, not only PharmCAT's rows in the database
+        # (app/services/fhir/report_data.py). Written with FHIR export off too, so
+        # turning it on later still exports this report as it is.
+        if job_id:
+            from app.services.fhir import report_data
+
+            report_data.write(
+                report_dir,
+                str(job_id),
+                data,
+                run_id=pharmcat_run_id,
+                patient_id=patient_id,
+                patient_info=fhir_patient_info,
+            )
+
         # FHIR Export - Generate FHIR R4 compliant exports if enabled.
         # Resolved here, per report, not read out of an import-time snapshot.
         if fhir_export_enabled():
@@ -4934,8 +5005,6 @@ def generate_report(
                 if db_session:
                     fhir_service = FHIRExportService(db_session)
 
-                    # The PharmCAT run id the upload path linked to this job.
-                    pharmcat_run_id = lookup_pharmcat_run_id(db_session, job_id)
                     if pharmcat_run_id:
                         logger.info(
                             f"Found PharmCAT run_id in job metadata: {pharmcat_run_id}"
@@ -4945,16 +5014,6 @@ def generate_report(
                         logger.info(
                             "No explicit PharmCAT run_id found; using workflow data for FHIR export"
                         )
-
-                    # Prepare patient info for FHIR export
-                    fhir_patient_info = None
-                    if patient_info:
-                        fhir_patient_info = {
-                            "id": patient_info.get("id", patient_id),
-                            "name": patient_info.get("name"),
-                            "gender": patient_info.get("gender"),
-                            "birthDate": patient_info.get("birthDate"),
-                        }
 
                     # Generate both JSON and XML FHIR exports directly from normalized data
                     fhir_result = fhir_service.save_fhir_export(
@@ -5024,6 +5083,7 @@ def generate_report(
                 downloads=export_downloads(report_dir, report_id),
                 workflow_diagram=workflow_diagram,
                 pharmcat_notes=pharmcat_notes,
+                unlisted_context=unlisted_ctx,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 
