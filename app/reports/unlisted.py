@@ -101,7 +101,9 @@ def read_result(report_dir: str) -> Optional[Dict[str, Any]]:
 def sample_is_male(pypgx_results: Any) -> Optional[bool]:
     """What PyPGx's G6PD copy number says of the sample's sex (it reads chrX depth on a
     whole genome), or None where it did not say."""
-    results = pypgx_results.get("results") if isinstance(pypgx_results, Mapping) else None
+    results = (
+        pypgx_results.get("results") if isinstance(pypgx_results, Mapping) else None
+    )
     g6pd = results.get("G6PD") if isinstance(results, Mapping) else None
     details = g6pd.get("details") if isinstance(g6pd, Mapping) else None
     call = str((details or {}).get("copy_number") or "").strip().lower()
@@ -166,7 +168,9 @@ def _row(v: Mapping[str, Any], male: Optional[bool]) -> Dict[str, Any]:
     if v.get("low_confidence"):
         notes.append(f"in a {v['low_confidence']} region")
     genes = v.get("genes") or [v.get("gene")]
-    notes += [SIMILAR_SHORT[g.upper()] for g in genes if g and g.upper() in SIMILAR_SHORT]
+    notes += [
+        SIMILAR_SHORT[g.upper()] for g in genes if g and g.upper() in SIMILAR_SHORT
+    ]
     am = v.get("alphamissense") or {}
     # The tier's words alone; the score goes under them, with the consequence.
     effect = (v.get("label") or "").split(" (AlphaMissense")[0]
@@ -196,7 +200,12 @@ def _xy_artefact(v: Mapping[str, Any], male: Optional[bool]) -> bool:
     alleles where there is one copy, so a mapping artefact, not a variant."""
     pos = int(v.get("pos") or 0)
     par = pos <= 2781479 or 155701383 <= pos
-    return bool(male) and v.get("chrom") == "chrX" and not par and v.get("zygosity") == "heterozygous"
+    return (
+        bool(male)
+        and v.get("chrom") == "chrX"
+        and not par
+        and v.get("zygosity") == "heterozygous"
+    )
 
 
 def _names(items: Sequence[str]) -> str:
@@ -219,7 +228,9 @@ def _disease_note(genes: Sequence[str]) -> Optional[str]:
     )
 
 
-def context(result: Optional[Mapping[str, Any]], pypgx_results: Any = None) -> Dict[str, Any]:
+def context(
+    result: Optional[Mapping[str, Any]], pypgx_results: Any = None
+) -> Dict[str, Any]:
     """What the templates show: the section's status and rows, and the flagged genes."""
     if result is None:
         return {
@@ -242,7 +253,8 @@ def context(result: Optional[Mapping[str, Any]], pypgx_results: Any = None) -> D
     others = {
         "none": sum(1 for v in variants if v.get("tier") == "none"),
         "common": sum(1 for v in variants if v.get("tier") == "common"),
-        "low_quality": sum(1 for v in variants if v.get("tier") == "low_quality") + len(artefacts),
+        "low_quality": sum(1 for v in variants if v.get("tier") == "low_quality")
+        + len(artefacts),
     }
     flagged: Dict[str, List[Dict[str, Any]]] = {}
     for v in shown:
@@ -252,7 +264,9 @@ def context(result: Optional[Mapping[str, Any]], pypgx_results: Any = None) -> D
             if gene in (result.get("flagged_genes") or {}):
                 flagged.setdefault(gene, []).append(v)
     sources = (result.get("annotation") or {}).get("sources") or {}
-    tabled = list(dict.fromkeys(g for v in shown for g in (v.get("genes") or [v.get("gene")])))
+    tabled = list(
+        dict.fromkeys(g for v in shown for g in (v.get("genes") or [v.get("gene")]))
+    )
     return {
         "status": "done",
         "genes_checked": len(result.get("genes_checked") or []),
@@ -272,8 +286,10 @@ def _strongest(variants: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
     """The variant whose tier says most, ClinVar's word before a prediction's."""
     return min(
         variants,
-        key=lambda v: (SHOWN_TIERS.index(v.get("tier")) if v.get("tier") in SHOWN_TIERS else 99,
-                       not v.get("clinvar_basis")),
+        key=lambda v: (
+            SHOWN_TIERS.index(v.get("tier")) if v.get("tier") in SHOWN_TIERS else 99,
+            not v.get("clinvar_basis"),
+        ),
     )
 
 
@@ -295,7 +311,11 @@ def _effect(v: Mapping[str, Any]) -> str:
     elif tier == "B-low" and am is not None:
         # Low either way: a score under the cut-off, or one over it in a region
         # where the call is less sure.
-        why = f"in a {low} region" if low and am > 0.564 else "under its likely-pathogenic cut-off of 0.564"
+        why = (
+            f"in a {low} region"
+            if low and am > 0.564
+            else "under its likely-pathogenic cut-off of 0.564"
+        )
         text += f" (AlphaMissense {am:.2f}, {why})"
     elif tier == "A-low" and low:
         text = f"possibly causing loss of function (a low-confidence prediction: in a {low} region)"
@@ -312,8 +332,21 @@ def _effect_short(v: Mapping[str, Any]) -> str:
 
 def _fhir_variant(v: Mapping[str, Any]) -> Dict[str, Any]:
     """What the FHIR export's Variant observation states of it."""
-    keys = ("chrom", "pos", "ref", "alt", "gene", "zygosity", "hgvs_c", "hgvs_p",
-            "refseq", "depth", "alt_reads", "tier", "label")
+    keys = (
+        "chrom",
+        "pos",
+        "ref",
+        "alt",
+        "gene",
+        "zygosity",
+        "hgvs_c",
+        "hgvs_p",
+        "refseq",
+        "depth",
+        "alt_reads",
+        "tier",
+        "label",
+    )
     out = {k: v.get(k) for k in keys if v.get(k) not in (None, "")}
     out["effect"] = _effect(v)
     clinvar = v.get("clinvar") or {}
