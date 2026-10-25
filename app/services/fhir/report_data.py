@@ -114,4 +114,6 @@ def bundle_patient_id(record: Dict[str, Any]) -> Optional[str]:
     """The patient the report's own bundle named: its directory's, unless that is the
     job's own directory (save_fhir_export's rule)."""
     patient_id = record.get("patient_id")
-    return patient_id if patient_id and patient_id != record.get("workflow_id") else None
+    return (
+        patient_id if patient_id and patient_id != record.get("workflow_id") else None
+    )

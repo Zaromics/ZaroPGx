@@ -29,32 +29,72 @@ RUN_ID = "5d0c7a2e-1b3f-4c8d-9e6a-2f4b8c1d3e70"
 PATIENT = "patient-1"
 
 STOP = {
-    "chrom": "chr1", "pos": 97082449, "ref": "G", "alt": "A",
-    "gene": "DPYD", "genes": ["DPYD"], "transcript": "ENST0", "refseq": "NM_000110.4",
-    "consequence": "stop gained", "hgvs_c": "c.2788C>T", "hgvs_p": "p.Gln930Ter",
-    "zygosity": "heterozygous", "quality": [], "defined_position": False,
-    "gnomad": None, "alphamissense": None, "clinvar": None, "low_confidence": None,
-    "tier": "A", "label": "Predicted loss of function",
+    "chrom": "chr1",
+    "pos": 97082449,
+    "ref": "G",
+    "alt": "A",
+    "gene": "DPYD",
+    "genes": ["DPYD"],
+    "transcript": "ENST0",
+    "refseq": "NM_000110.4",
+    "consequence": "stop gained",
+    "hgvs_c": "c.2788C>T",
+    "hgvs_p": "p.Gln930Ter",
+    "zygosity": "heterozygous",
+    "quality": [],
+    "defined_position": False,
+    "gnomad": None,
+    "alphamissense": None,
+    "clinvar": None,
+    "low_confidence": None,
+    "tier": "A",
+    "label": "Predicted loss of function",
 }
 
 
 def _report_data():
     """The report's data as the FHIR export is given it: a PharmCAT call, a gene only
-    PyPGx calls, a call corrected for copy number, and a call an unlisted variant marks."""
+    PyPGx calls, a call corrected for copy number, and a call an unlisted variant marks.
+    """
     genes = [
-        {"gene": "CYP2C19", "diplotype": "*1/*2", "phenotype": "Intermediate Metabolizer"},
-        {"gene": "CYP1A2", "diplotype": "*1A/*1F", "phenotype": "N/A", "tool_source": "PyPGx"},
         {
-            "gene": "CYP2D6", "diplotype": "*1/*5", "phenotype": "Intermediate Metabolizer",
-            "activity_score": 1.0, "tool_source": "PyPGx",
+            "gene": "CYP2C19",
+            "diplotype": "*1/*2",
+            "phenotype": "Intermediate Metabolizer",
         },
-        {"gene": "DPYD", "diplotype": "Reference/Reference", "phenotype": "Normal Metabolizer"},
+        {
+            "gene": "CYP1A2",
+            "diplotype": "*1A/*1F",
+            "phenotype": "N/A",
+            "tool_source": "PyPGx",
+        },
+        {
+            "gene": "CYP2D6",
+            "diplotype": "*1/*5",
+            "phenotype": "Intermediate Metabolizer",
+            "activity_score": 1.0,
+            "tool_source": "PyPGx",
+        },
+        {
+            "gene": "DPYD",
+            "diplotype": "Reference/Reference",
+            "phenotype": "Normal Metabolizer",
+        },
     ]
-    unlisted.annotate_genes(genes, unlisted.context({
-        "status": "done", "genes_checked": ["DPYD"], "genes_without_transcript": [],
-        "variants_listed": 0, "variants": [STOP], "flagged_genes": {"DPYD": [0]},
-        "annotation": {"sources": {}},
-    }))
+    unlisted.annotate_genes(
+        genes,
+        unlisted.context(
+            {
+                "status": "done",
+                "genes_checked": ["DPYD"],
+                "genes_without_transcript": [],
+                "variants_listed": 0,
+                "variants": [STOP],
+                "flagged_genes": {"DPYD": [0]},
+                "annotation": {"sources": {}},
+            }
+        ),
+    )
     assert genes[3]["unlisted_flag"]
     return {"run_id": RUN_ID, "genes": genes, "drugRecommendations": []}
 
@@ -64,7 +104,9 @@ def _job(session):
     from app.services.job_service import JobService
 
     jobs = JobService(session)
-    job = jobs.create_job(JobCreate(workflow_type="genomic_analysis", name="fhir-source-probe"))
+    job = jobs.create_job(
+        JobCreate(workflow_type="genomic_analysis", name="fhir-source-probe")
+    )
     session.commit()
     assert jobs.link_pharmcat_run(job.id, RUN_ID)
     from app.api.db import Job
@@ -89,13 +131,21 @@ def _differences(a, b, path="bundle"):
 
 def _comparable(bundle):
     """The bundle without what differs between two exports of the same report: when
-    each was made, and the bundle's own id (new each time; its resources' ids are not)."""
+    each was made, and the bundle's own id (new each time; its resources' ids are not).
+    """
     bundle = copy.deepcopy(bundle)
     for key in ("id", "timestamp", "meta"):
         bundle.pop(key, None)
     for entry in bundle.get("entry", []):
         resource = entry["resource"]
-        for key in ("effectiveDateTime", "performedDateTime", "issued", "date", "authoredOn", "lastModified"):
+        for key in (
+            "effectiveDateTime",
+            "performedDateTime",
+            "issued",
+            "date",
+            "authoredOn",
+            "lastModified",
+        ):
             resource.pop(key, None)
         resource.get("meta", {}).pop("lastUpdated", None)
     return bundle
@@ -112,11 +162,13 @@ def reports(tmp_path, monkeypatch):
 def no_database_rows(monkeypatch):
     """PharmCAT's rows in the database are not what a later export should read."""
     monkeypatch.setattr(
-        PharmCATDataService, "get_pharmcat_data_by_run_id",
+        PharmCATDataService,
+        "get_pharmcat_data_by_run_id",
         lambda self, run_id: pytest.fail("exported from the database"),
     )
     monkeypatch.setattr(
-        PharmCATDataService, "get_pharmcat_data_for_workflow",
+        PharmCATDataService,
+        "get_pharmcat_data_for_workflow",
         lambda self, workflow_id: pytest.fail("exported from the database"),
     )
 
@@ -124,7 +176,10 @@ def no_database_rows(monkeypatch):
 def _report_time_bundle(db_session, job_id, data):
     """The bundle the generator writes for the job: save_fhir_export's call."""
     result = FHIRExportService(db_session).export_pgx_report(
-        run_id=RUN_ID, pharmcat_data=data, workflow_id=job_id, patient_id=PATIENT,
+        run_id=RUN_ID,
+        pharmcat_data=data,
+        workflow_id=job_id,
+        patient_id=PATIENT,
         patient_info={"id": PATIENT, "name": None, "gender": None, "birthDate": None},
     )
     assert result["success"], result
@@ -135,7 +190,11 @@ def _write(reports, job_id, data):
     job_dir = reports / PATIENT / job_id
     job_dir.mkdir(parents=True)
     path = report_data.write(
-        str(job_dir), job_id, data, run_id=RUN_ID, patient_id=PATIENT,
+        str(job_dir),
+        job_id,
+        data,
+        run_id=RUN_ID,
+        patient_id=PATIENT,
         patient_info={"id": PATIENT, "name": None, "gender": None, "birthDate": None},
     )
     assert path == str(job_dir / f"{job_id}_pgx_fhir_source.json")
@@ -143,7 +202,8 @@ def _write(reports, job_id, data):
 
 def _profiles(bundle, name):
     return [
-        e["resource"] for e in bundle["entry"]
+        e["resource"]
+        for e in bundle["entry"]
         if e["resource"].get("meta", {}).get("profile", [""])[0].endswith("/" + name)
     ]
 
@@ -166,45 +226,71 @@ def test_a_later_export_of_the_run_is_the_reports_own_bundle(
     # What the database lane left out is there.
     genotypes = {o["code"]["text"] for o in _profiles(later, "genotype")}
     assert {"CYP1A2 Genotype", "CYP2D6 Genotype", "DPYD Genotype"} <= genotypes
-    cyp2d6 = next(o for o in _profiles(later, "genotype") if o["code"]["text"] == "CYP2D6 Genotype")
+    cyp2d6 = next(
+        o
+        for o in _profiles(later, "genotype")
+        if o["code"]["text"] == "CYP2D6 Genotype"
+    )
     assert cyp2d6["valueCodeableConcept"]["text"] == "*1/*5"
     assert len(_profiles(later, "variant")) == 1
     assert _profiles(later, "diagnostic-implication")
 
 
-def test_the_posted_patient_still_names_the_patient(client, db_session, reports, no_database_rows):
+def test_the_posted_patient_still_names_the_patient(
+    client, db_session, reports, no_database_rows
+):
     job_id = _job(db_session)
     _write(reports, job_id, _report_data())
     response = client.post(
         f"/fhir/export/run/{RUN_ID}",
-        json={"patient_info": {"id": "posted-patient", "gender": "female"}, "output_format": "json"},
+        json={
+            "patient_info": {"id": "posted-patient", "gender": "female"},
+            "output_format": "json",
+        },
     )
     assert response.status_code == 200, response.text
-    patient = next(e["resource"] for e in response.json()["entry"] if e["resource"]["resourceType"] == "Patient")
+    patient = next(
+        e["resource"]
+        for e in response.json()["entry"]
+        if e["resource"]["resourceType"] == "Patient"
+    )
     assert patient["gender"] == "female"
     assert len(_profiles(response.json(), "variant")) == 1
 
 
-def test_saving_the_workflows_bundle_again_keeps_the_reports_data(db_session, reports, no_database_rows):
+def test_saving_the_workflows_bundle_again_keeps_the_reports_data(
+    db_session, reports, no_database_rows
+):
     job_id = _job(db_session)
     _write(reports, job_id, _report_data())
     result = FHIRExportService(db_session).save_fhir_export_for_workflow(
         workflow_id=job_id, patient_id=PATIENT, output_format="json"
     )
     assert result["success"], result
-    saved = json.loads((reports / PATIENT / job_id / f"{job_id}_pgx_fhir_report.json").read_text())
+    saved = json.loads(
+        (reports / PATIENT / job_id / f"{job_id}_pgx_fhir_report.json").read_text()
+    )
     assert len(_profiles(saved, "variant")) == 1
 
 
-def test_a_job_reported_before_is_exported_from_the_database(db_session, reports, monkeypatch):
+def test_a_job_reported_before_is_exported_from_the_database(
+    db_session, reports, monkeypatch
+):
     job_id = _job(db_session)  # no source file beside its report
-    from_database = {"run_id": RUN_ID, "genes": [{"gene": "CYP2C19", "diplotype": "*1/*2"}]}
+    from_database = {
+        "run_id": RUN_ID,
+        "genes": [{"gene": "CYP2C19", "diplotype": "*1/*2"}],
+    }
     monkeypatch.setattr(
-        PharmCATDataService, "get_pharmcat_data_by_run_id", lambda self, run_id: from_database
+        PharmCATDataService,
+        "get_pharmcat_data_by_run_id",
+        lambda self, run_id: from_database,
     )
     result = FHIRExportService(db_session).export_pgx_report(run_id=RUN_ID)
     assert result["success"], result
-    assert {o["code"]["text"] for o in _profiles(result["bundle"], "genotype")} == {"CYP2C19 Genotype"}
+    assert {o["code"]["text"] for o in _profiles(result["bundle"], "genotype")} == {
+        "CYP2C19 Genotype"
+    }
     assert job_id
 
 
@@ -213,10 +299,14 @@ def test_the_source_is_read_only_where_the_report_is_and_only_for_its_own_job(tm
     other = str(uuid.uuid4())
     job_dir = tmp_path / PATIENT / job_id
     job_dir.mkdir(parents=True)
-    report_data.write(str(job_dir), job_id, {"genes": []}, run_id=RUN_ID, patient_id=PATIENT)
+    report_data.write(
+        str(job_dir), job_id, {"genes": []}, run_id=RUN_ID, patient_id=PATIENT
+    )
 
     assert report_data.read(tmp_path, job_id, PATIENT)["workflow_id"] == job_id
-    assert report_data.read(tmp_path, job_id)["run_id"] == RUN_ID  # found under any patient
+    assert (
+        report_data.read(tmp_path, job_id)["run_id"] == RUN_ID
+    )  # found under any patient
     assert report_data.read(tmp_path, job_id, PATIENT, run_id="another-run") is None
     assert report_data.read(tmp_path, other, PATIENT) is None
     # An id from a URL is a job, never a pattern or a path.
@@ -231,10 +321,16 @@ def test_the_source_is_read_only_where_the_report_is_and_only_for_its_own_job(tm
 
 def test_the_patient_the_reports_bundle_named(tmp_path):
     job_id = str(uuid.uuid4())
-    assert report_data.bundle_patient_id({"workflow_id": job_id, "patient_id": PATIENT}) == PATIENT
+    assert (
+        report_data.bundle_patient_id({"workflow_id": job_id, "patient_id": PATIENT})
+        == PATIENT
+    )
     # A job with no patient keeps its reports in its own directory, and the bundle
     # names none (save_fhir_export's rule).
-    assert report_data.bundle_patient_id({"workflow_id": job_id, "patient_id": job_id}) is None
+    assert (
+        report_data.bundle_patient_id({"workflow_id": job_id, "patient_id": job_id})
+        is None
+    )
 
 
 def test_the_generator_keeps_it_with_fhir_export_off_too(monkeypatch, tmp_path):
@@ -244,27 +340,47 @@ def test_the_generator_keeps_it_with_fhir_export_off_too(monkeypatch, tmp_path):
 
     monkeypatch.setenv("FHIR_EXPORT_ENABLED", "false")
     for key in (
-        "write_pdf", "write_html", "write_interactive_html", "write_json", "write_tsv",
-        "write_workflow_svg", "write_workflow_png", "show_pharmcat_html_report",
-        "show_pharmcat_json_report", "show_pharmcat_tsv_report",
+        "write_pdf",
+        "write_html",
+        "write_interactive_html",
+        "write_json",
+        "write_tsv",
+        "write_workflow_svg",
+        "write_workflow_png",
+        "show_pharmcat_html_report",
+        "show_pharmcat_json_report",
+        "show_pharmcat_tsv_report",
     ):
         monkeypatch.setitem(generator.REPORT_CONFIG, key, False)
     monkeypatch.setattr(
-        generator, "load_job_step_records",
+        generator,
+        "load_job_step_records",
         lambda db_session, job_id: [
             {"name": "pypgx_analysis", "status": "completed", "output": {}},
             {"name": "pharmcat_analysis", "status": "completed", "output": {}},
         ],
     )
-    (tmp_path / "pypgx_result.json").write_text(json.dumps({
-        "success": True,
-        "results": {"CYP1A2": {"success": True, "diplotype": "*1A/*1F", "details": {}}},
-    }))
+    (tmp_path / "pypgx_result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "results": {
+                    "CYP1A2": {"success": True, "diplotype": "*1A/*1F", "details": {}}
+                },
+            }
+        )
+    )
     (tmp_path / "mtdna_result.json").write_text("{}")
     job_id = str(uuid.uuid4())
     result = generator.generate_report(
-        {"data": {"genes": [{"gene": "CYP2C19", "diplotype": "*1/*2", "call_source": "MATCHER"}],
-                  "drugRecommendations": []}},
+        {
+            "data": {
+                "genes": [
+                    {"gene": "CYP2C19", "diplotype": "*1/*2", "call_source": "MATCHER"}
+                ],
+                "drugRecommendations": [],
+            }
+        },
         str(tmp_path),
         {"id": PATIENT},
         job_id=job_id,
