@@ -4286,9 +4286,7 @@ def generate_report(
                         continue
                     gene_name = str(gene_key).strip()
                     details = gene_res.get("details") or {}
-                    record = pypgx_record(
-                        details, gene_res.get("diplotype"), gene_name
-                    )
+                    record = pypgx_record(details, gene_res.get("diplotype"), gene_name)
                     if gene_name.upper() in existing_genes:
                         # A PharmCAT row whose call PyPGx supplied -- an outside
                         # call with PyPGx's diplotype, as for CYP2D6 -- is PyPGx's

@@ -390,6 +390,8 @@ MEASURED_NORMAL: Dict[str, str] = {
     "CYP2C19": "no *36 or *37 deletion",
     "SLCO1B1": "no *48 or *49 deletion",
 }
+
+
 def _deletion_found_entry(
     gene: str, found: List[str], in_call: bool, snv_diplotype: Optional[str]
 ) -> Dict[str, Any]:
@@ -779,9 +781,7 @@ def pharmcat_copy_number_alert(
         paragraphs.append(_found_paragraph(found))
     if unassessed:
         paragraphs.append(
-            _not_assessed_paragraph(
-                unassessed, bool(measured or found or deletions)
-            )
+            _not_assessed_paragraph(unassessed, bool(measured or found or deletions))
         )
     tail = _measured_paragraph(measured)
     if tail:
