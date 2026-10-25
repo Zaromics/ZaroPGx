@@ -2165,23 +2165,34 @@
             headerDisplay.classList.remove('d-none');
 
             try {
-                // Create FormData with the selected file
-                const formData = new FormData();
-                formData.append('file', file);
-                // The index files by name only: enough to pair one with the file.
-                selected.filter(isIndex).forEach(f => formData.append('index_names', f.name));
+                // Only the file's start: a whole genome's BAM is tens of GB, and the
+                // header and the first records are all the preview reads. 16 MiB holds
+                // a whole-genome CRAM's header; while the server says the start ended
+                // before the header did, send four times more, up to the whole file.
+                let sliceBytes = 16 * 1024 * 1024;
+                let result;
+                for (;;) {
+                    const part = file.size > sliceBytes ? file.slice(0, sliceBytes) : file;
+                    const formData = new FormData();
+                    formData.append('file', part, file.name);
+                    formData.append('file_size', String(file.size));
+                    // The index files by name only: enough to pair one with the file.
+                    selected.filter(isIndex).forEach(f => formData.append('index_names', f.name));
 
-                // Make the request to the header inspection endpoint
-                const response = await fetch('/upload/inspect-header', {
-                    method: 'POST',
-                    body: formData
-                });
+                    // Make the request to the header inspection endpoint
+                    const response = await fetch('/upload/inspect-header', {
+                        method: 'POST',
+                        body: formData
+                    });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    result = await response.json();
+                    if (!(result.header_incomplete && part !== file)) break;
+                    sliceBytes *= 4;
                 }
-
-                const result = await response.json();
 
                 if (result.status === 'success') {
                     // Map new schema to expected format

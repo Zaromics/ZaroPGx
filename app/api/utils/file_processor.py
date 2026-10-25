@@ -803,9 +803,16 @@ class FileProcessor:
         # container path on the host.
         self.temp_dir = Path(temp_dir)
 
-    async def analyze_file(self, file_path: str) -> FileAnalysis:
+    async def analyze_file(
+        self, file_path: str, declared_size: Optional[int] = None
+    ) -> FileAnalysis:
         """
         Analyze a file to determine its type and characteristics.
+
+        ``declared_size``: the whole file's size, when ``file_path`` holds only its
+        start (the header preview sends no more than it needs to read). Every read
+        below is bounded to the file's beginning; the size is the one thing the
+        start of a file cannot tell, and the FASTQ size limit turns on it.
         """
         try:
             file_path = Path(file_path)
@@ -815,7 +822,9 @@ class FileProcessor:
             logger.info(f"Analyzing file: {file_path}")
 
             # Get basic file info
-            file_size = file_path.stat().st_size
+            file_size = (
+                declared_size if declared_size is not None else file_path.stat().st_size
+            )
             logger.info(f"File size: {file_size} bytes")
 
             # Detect compression status BEFORE detecting file type (shared util)
@@ -2639,7 +2648,10 @@ class FileProcessor:
             return {"success": False, "error": str(e)}
 
     async def process_upload(
-        self, file_path: str, original_wgs: Optional[str] = None
+        self,
+        file_path: str,
+        original_wgs: Optional[str] = None,
+        declared_size: Optional[int] = None,
     ) -> Dict:
         """
         Process an uploaded file and determine the appropriate workflow.
@@ -2647,6 +2659,8 @@ class FileProcessor:
         Args:
             file_path: Path to the uploaded file
             original_wgs: Optional path to original WGS file if user uploads both
+            declared_size: The whole file's size when file_path holds only its start
+                (see analyze_file)
 
         Returns:
             Dictionary with analysis results and workflow configuration
@@ -2669,7 +2683,7 @@ class FileProcessor:
 
             # Analyze the uploaded file
             logger.info("Analyzing uploaded file...")
-            analysis = await self.analyze_file(file_path)
+            analysis = await self.analyze_file(file_path, declared_size=declared_size)
 
             # Enforce exactly-one-sample policy for variant-call files. BCF is held to
             # it as well as VCF: the pipeline converts a BCF to a VCF and analyses that,

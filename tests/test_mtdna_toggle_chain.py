@@ -87,7 +87,7 @@ async def _process_with_toggle(tmp_path, monkeypatch, mtdna_enabled):
     processor = FileProcessor()
     processor.temp_dir = tmp_path
 
-    async def _fake_analyze_file(_path):
+    async def _fake_analyze_file(_path, declared_size=None):
         return _bam_analysis()
 
     monkeypatch.setattr(processor, "analyze_file", _fake_analyze_file)

@@ -61,6 +61,7 @@ from app.api.utils.file_processor import (
 from app.api.utils.header_inspector import (
     extract_raw_header_text,
     filter_header_to_canonical_contigs,
+    header_cut_short,
     inspect_header,
 )
 from app.genome.contig_names import (
@@ -2267,6 +2268,7 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
 async def inspect_file_header(
     file: UploadFile = File(...),
     index_names: Optional[List[str]] = Form(None),
+    file_size: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -2276,6 +2278,13 @@ async def inspect_file_header(
 
     ``index_names``: the index files chosen with it, by name. Only the names are
     needed, to pair one with the file and say so, as the upload does.
+
+    ``file_size``: the whole file's size, when ``file`` is only its start. The page
+    sends the first 16 MiB of a larger file, not all of it: a whole genome's BAM is
+    tens of GB, and every read here is bounded to the file's beginning (the header,
+    and the first records the gVCF and FASTQ checks look at). The size is taken from
+    this field, and ``header_incomplete`` says when the start sent ended before the
+    header did, so the page sends a longer start.
     """
     try:
         # Save uploaded file temporarily. The suffix carries the uploaded name because
@@ -2295,14 +2304,17 @@ async def inspect_file_header(
             # needs the complete file on disk (inspect_header and
             # process_upload below both read the saved copy, not a prefix), so
             # this bounds memory, not I/O volume.
-            file_size = 0
+            received = 0
             while chunk := await file.read(UPLOAD_CHUNK_BYTES):
                 temp_file.write(chunk)
-                file_size += len(chunk)
+                received += len(chunk)
             temp_file.close()
 
             # Inspect header
             header_info = inspect_header(temp_file.name)
+            partial = file_size is not None and file_size > received
+            if partial and isinstance(header_info.get("file_info"), dict):
+                header_info["file_info"]["size"] = file_size
 
             # Derive workflow analysis using the same backend logic (no Nextflow)
             # `refused` is the same verdict /upload/genomic-data would reach, so the
@@ -2329,7 +2341,7 @@ async def inspect_file_header(
             }
             try:
                 workflow_result = await file_processor.process_upload(
-                    str(temp_file.name)
+                    str(temp_file.name), declared_size=file_size if partial else None
                 )
                 if workflow_result.get("status") == "success":
                     wf = workflow_result.get("workflow", {})
@@ -2395,7 +2407,10 @@ async def inspect_file_header(
                 "status": "success",
                 "success": True,
                 "filename": file.filename,
-                "file_size": file_size,
+                "file_size": file_size if partial else received,
+                "bytes_inspected": received,
+                "header_incomplete": partial
+                and header_cut_short(temp_file.name, header_info),
                 "header_info": header_info,
                 "compat": {"workflow": compat_workflow},
             }
