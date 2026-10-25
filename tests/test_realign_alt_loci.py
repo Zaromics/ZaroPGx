@@ -25,6 +25,8 @@ import csv
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -62,6 +64,7 @@ NAMES = [
     "PHARMCAT_PILEUP_PAD",
     "realign_alt_loci",
     "alt_locus_mapq0",
+    "pysam_command",
 ]
 
 
@@ -80,6 +83,8 @@ def _load(names):
     assert not set(names) - found, f"missing: {sorted(set(names) - found)}"
     ns = {
         "os": os,
+        "sys": sys,
+        "subprocess": subprocess,
         "time": time,
         "shutil": shutil,
         "Path": Path,

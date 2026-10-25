@@ -116,8 +116,12 @@ def test_pypgx_uses_a_current_index_instead_of_indexing_again(
     (tmp_path / "ref.fasta.fai").write_text("chr22\t4\t7\t4\t5\n")
     monkeypatch.setattr(pypgx, "_reference_fasta_for_assembly", lambda assembly: fasta)
     indexed = []
-    monkeypatch.setitem(
-        sys.modules, "pysam", types.SimpleNamespace(index=indexed.append)
+    monkeypatch.setitem(sys.modules, "pysam", types.SimpleNamespace())
+    # Indexing runs pysam in a child process (pysam_command); record it there.
+    monkeypatch.setattr(
+        pypgx,
+        "pysam_command",
+        lambda command, *args: indexed.append(args[0]) if command == "index" else None,
     )
     monkeypatch.setattr(
         pypgx.subprocess,

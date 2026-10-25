@@ -164,6 +164,33 @@ def bgzip_to(src: str, dest: str) -> None:
         subprocess.run(["bgzip", "-c", str(src)], stdout=out_fh, check=True)
 
 
+def pysam_command(command: str, *args: str) -> None:
+    """Run one of pysam's samtools commands (sort, index, faidx) in a child process.
+
+    pysam runs them in this process, in C, holding the GIL for the whole command.
+    Measured in the 0.4.0 image, every other thread -- uvicorn's event loop among
+    them -- stopped for exactly as long as the call ran: a 600 MB sort, 55 s; indexing
+    a 30x genome takes minutes. /create-input-vcf already runs in a thread so the loop
+    stays free, but a GIL-holding call in that thread still froze /health (~30 s at a
+    time on real runs). There is no samtools binary in this image, so the child is this
+    Python with pysam; the arguments travel as argv, never through a shell.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, "-c",
+            "import sys, pysam; getattr(pysam, sys.argv[1])(*sys.argv[2:])",
+            command, *args,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        # The child's traceback ends with pysam's error: samtools' own words, or the
+        # missing file.
+        lines = (proc.stderr or "").strip().splitlines()
+        raise RuntimeError(f"pysam {command} failed: {lines[-1] if lines else proc.returncode}")
+
+
 def bgzip_in_place(path: str) -> None:
     """bgzip `path`, replacing it with `path`.gz."""
     subprocess.run(["bgzip", "-f", str(path)], check=True)
@@ -2498,9 +2525,10 @@ def write_patched_alignment(
                             new.is_qcfail = True
                         out.write(new)
                         counts["realigned"] += 1
-    pysam.sort("-o", out_path, unsorted)
+    # In a child process, as pysam's commands hold the GIL (pysam_command).
+    pysam_command("sort", "-o", out_path, unsorted)
     os.remove(unsorted)
-    pysam.index(out_path)
+    pysam_command("index", out_path)
     return counts
 
 
@@ -3041,7 +3069,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
     assumed (which produced "the following arguments are required: bams" and no output).
     It also drives bcftools mpileup under the hood, which needs a ``.fai`` next to the
     FASTA and a ``.bai`` next to each BAM; there is no standalone ``samtools`` on PATH in
-    this image, so index via pysam. Ensures the output is bgzipped and tabix-indexed.
+    this image, so index via pysam, in a child process (pysam_command). Ensures the output is bgzipped and tabix-indexed.
     """
     realign_dir = None
     try:
@@ -3055,7 +3083,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             }
         if not (fasta.parent / (fasta.name + ".fai")).exists():
             logger.info(f"Indexing reference FASTA (faidx): {fasta}")
-            pysam.faidx(str(fasta))
+            pysam_command("faidx", str(fasta))
         # A shared BAM arrives with its current index already beside it
         # (app/utils/shared_input.py); indexing a 30x genome again took 8 minutes.
         index = Path(f"{alignment_path}.bai")
@@ -3063,7 +3091,7 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
             logger.info(f"Using the existing index {index}")
         else:
             logger.info(f"Indexing alignment (bai): {alignment_path}")
-            pysam.index(str(alignment_path))
+            pysam_command("index", str(alignment_path))
 
         # Reads PyPGx never sees, on GRCh38's ALT contigs, are aligned again first; see
         # ALT_LOCI_GRCH38. Everything below reads `calls_from`: the upload, or the
