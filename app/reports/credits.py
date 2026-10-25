@@ -513,42 +513,90 @@ CSQ_2017 = Paper(
     doi="10.1093/bioinformatics/btx100",
 )
 ALPHAMISSENSE_2023 = Paper(
-    ("Cheng J", "Novati G", "Pan J", "Bycroft C", "Žemgulytė A", "Applebaum T", "Pritzel A"),
+    (
+        "Cheng J",
+        "Novati G",
+        "Pan J",
+        "Bycroft C",
+        "Žemgulytė A",
+        "Applebaum T",
+        "Pritzel A",
+    ),
     "Accurate proteome-wide missense variant effect prediction with AlphaMissense",
     "Science",
     "2023;381(6664):eadg7492",
     doi="10.1126/science.adg7492",
 )
 GNOMAD_2024 = Paper(
-    ("Chen S", "Francioli LC", "Goodrich JK", "Collins RL", "Kanai M", "Wang Q", "Alföldi J"),
+    (
+        "Chen S",
+        "Francioli LC",
+        "Goodrich JK",
+        "Collins RL",
+        "Kanai M",
+        "Wang Q",
+        "Alföldi J",
+    ),
     "A genomic mutational constraint map using variation in 76,156 human genomes",
     "Nature",
     "2024;625(7993):92–100",
     doi="10.1038/s41586-023-06045-0",
 )
 CLINVAR_2018 = Paper(
-    ("Landrum MJ", "Lee JM", "Benson M", "Brown GR", "Chao C", "Chitipiralla S", "Gu B"),
+    (
+        "Landrum MJ",
+        "Lee JM",
+        "Benson M",
+        "Brown GR",
+        "Chao C",
+        "Chitipiralla S",
+        "Gu B",
+    ),
     "ClinVar: improving access to variant interpretations and supporting evidence",
     NAR,
     "2018;46(D1):D1062–D1067",
     doi="10.1093/nar/gkx1153",
 )
 MANE_2022 = Paper(
-    ("Morales J", "Pujar S", "Loveland JE", "Astashyn A", "Bennett R", "Berry A", "Cox E"),
+    (
+        "Morales J",
+        "Pujar S",
+        "Loveland JE",
+        "Astashyn A",
+        "Bennett R",
+        "Berry A",
+        "Cox E",
+    ),
     "A joint NCBI and EMBL-EBI transcript set for clinical genomics and research",
     "Nature",
     "2022;604(7905):310–315",
     doi="10.1038/s41586-022-04558-8",
 )
 ENSEMBL_2026 = Paper(
-    ("Yates AD", "Austine-Orimoloye O", "Azov AG", "Barba M", "Barnes I", "Barrera-Enriquez VP", "Becker A"),
+    (
+        "Yates AD",
+        "Austine-Orimoloye O",
+        "Azov AG",
+        "Barba M",
+        "Barnes I",
+        "Barrera-Enriquez VP",
+        "Becker A",
+    ),
     "Ensembl 2026",
     NAR,
     "2026;54(D1):D1053–D1060",
     doi="10.1093/nar/gkaf1239",
 )
 GIAB_STRATIFICATIONS_2024 = Paper(
-    ("Dwarshuis N", "Kalra D", "McDaniel J", "Sanio P", "Alvarez Jerez P", "Jadhav B", "Huang W"),
+    (
+        "Dwarshuis N",
+        "Kalra D",
+        "McDaniel J",
+        "Sanio P",
+        "Alvarez Jerez P",
+        "Jadhav B",
+        "Huang W",
+    ),
     "The GIAB genomic stratifications resource for human reference genomes",
     "Nature Communications",
     "2024;15(1):9029",

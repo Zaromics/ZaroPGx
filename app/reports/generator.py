@@ -4489,7 +4489,11 @@ def generate_report(
         unlisted_ctx = unlisted.context(unlisted_result, pypgx_results)
     except Exception as e:
         logger.warning("Unlisted variants not reported: %s", e, exc_info=True)
-        unlisted_ctx = {"status": "failed", "reason": "Its result could not be read.", "flagged": {}}
+        unlisted_ctx = {
+            "status": "failed",
+            "reason": "Its result could not be read.",
+            "flagged": {},
+        }
     unlisted.annotate_genes(data.get("genes", []), unlisted_ctx)
     template_data["unlisted"] = unlisted_ctx
     _unlisted_alert = unlisted.alert(unlisted_ctx)

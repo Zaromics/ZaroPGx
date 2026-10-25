@@ -593,16 +593,23 @@ class FHIRExportService:
             # (app/reports/unlisted.py): a Variant, and a diagnostic implication
             # derived from it and the genotype, stating its significance.
             flag = gene_data.get("unlisted_flag")
-            for variant in (flag.get("variants") if isinstance(flag, dict) else None) or []:
+            for variant in (
+                flag.get("variants") if isinstance(flag, dict) else None
+            ) or []:
                 key = tuple(variant.get(k) for k in ("chrom", "pos", "ref", "alt"))
                 if None in key:
                     continue
                 if key not in variant_references:
                     variant_obs = self._create_variant_observation(
-                        variant, patient_ref, stable_id("variant", ":".join(map(str, key)))
+                        variant,
+                        patient_ref,
+                        stable_id("variant", ":".join(map(str, key))),
                     )
                     entries.append(
-                        {"fullUrl": f"urn:uuid:{variant_obs['id']}", "resource": variant_obs}
+                        {
+                            "fullUrl": f"urn:uuid:{variant_obs['id']}",
+                            "resource": variant_obs,
+                        }
                     )
                     variant_references[key] = {
                         "reference": f"urn:uuid:{variant_obs['id']}",
@@ -620,7 +627,10 @@ class FHIRExportService:
                     ),
                 )
                 entries.append(
-                    {"fullUrl": f"urn:uuid:{implication['id']}", "resource": implication}
+                    {
+                        "fullUrl": f"urn:uuid:{implication['id']}",
+                        "resource": implication,
+                    }
                 )
                 unlisted_references.append(
                     {
@@ -1003,7 +1013,10 @@ class FHIRExportService:
 
     def _variant_component(self, key: str, value: Dict[str, Any]) -> Dict[str, Any]:
         """A component coded by one of VARIANT_LOINC, with its value."""
-        return {"code": {"coding": [self._loinc_coding_of(terminology.VARIANT_LOINC[key])]}, **value}
+        return {
+            "code": {"coding": [self._loinc_coding_of(terminology.VARIANT_LOINC[key])]},
+            **value,
+        }
 
     @staticmethod
     def _loinc_coding_of(code: str) -> Dict[str, str]:
@@ -1041,10 +1054,14 @@ class FHIRExportService:
         ]
         chromosome = terminology.CHROMOSOME_ANSWERS.get(str(variant.get("chrom")))
         if chromosome:
-            components.append(self._variant_component("chromosome", self._loinc_answer(chromosome)))
+            components.append(
+                self._variant_component("chromosome", self._loinc_answer(chromosome))
+            )
         components += [
             self._variant_component("start_end", {"valueRange": span}),
-            self._variant_component("coordinate_system", self._loinc_answer(answers["one_based"])),
+            self._variant_component(
+                "coordinate_system", self._loinc_answer(answers["one_based"])
+            ),
             self._variant_component("ref_allele", {"valueString": ref}),
             self._variant_component("alt_allele", {"valueString": alt}),
         ]
@@ -1056,7 +1073,10 @@ class FHIRExportService:
                     {
                         "valueCodeableConcept": {
                             "coding": [
-                                {"system": terminology.HGVS, "code": f"{refseq}:{variant['hgvs_c']}"}
+                                {
+                                    "system": terminology.HGVS,
+                                    "code": f"{refseq}:{variant['hgvs_c']}",
+                                }
                             ]
                         }
                     },
@@ -1066,26 +1086,44 @@ class FHIRExportService:
             components.append(
                 self._variant_component(
                     "transcript",
-                    {"valueCodeableConcept": {"coding": [{"system": terminology.REFSEQ, "code": refseq}]}},
+                    {
+                        "valueCodeableConcept": {
+                            "coding": [{"system": terminology.REFSEQ, "code": refseq}]
+                        }
+                    },
                 )
             )
         # Text only: an HGVS p. name needs the protein's accession, which the check
         # does not have.
         if variant.get("hgvs_p"):
             components.append(
-                self._variant_component("protein_hgvs", {"valueCodeableConcept": {"text": variant["hgvs_p"]}})
+                self._variant_component(
+                    "protein_hgvs",
+                    {"valueCodeableConcept": {"text": variant["hgvs_p"]}},
+                )
             )
         state = answers.get(str(variant.get("zygosity") or "").lower())
         if state:
-            components.append(self._variant_component("allelic_state", self._loinc_answer(state)))
-        components.append(self._variant_component("source_class", self._loinc_answer(answers["germline"])))
+            components.append(
+                self._variant_component("allelic_state", self._loinc_answer(state))
+            )
+        components.append(
+            self._variant_component(
+                "source_class", self._loinc_answer(answers["germline"])
+            )
+        )
         if variant.get("clinvar_id"):
             components.append(
                 self._variant_component(
                     "variation_code",
                     {
                         "valueCodeableConcept": {
-                            "coding": [{"system": terminology.CLINVAR, "code": str(variant["clinvar_id"])}]
+                            "coding": [
+                                {
+                                    "system": terminology.CLINVAR,
+                                    "code": str(variant["clinvar_id"]),
+                                }
+                            ]
                         }
                     },
                 )
@@ -1095,7 +1133,14 @@ class FHIRExportService:
             components.append(
                 self._variant_component(
                     "allelic_read_depth",
-                    {"valueQuantity": {"value": alt_reads, "unit": "reads", "system": terminology.UCUM, "code": "1"}},
+                    {
+                        "valueQuantity": {
+                            "value": alt_reads,
+                            "unit": "reads",
+                            "system": terminology.UCUM,
+                            "code": "1",
+                        }
+                    },
                 )
             )
             if isinstance(depth, int) and depth > 0:
@@ -1125,7 +1170,9 @@ class FHIRExportService:
             },
             "subject": {"reference": patient_ref},
             "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
-            "valueCodeableConcept": {"coding": [self._loinc_coding_of(answers["present"])]},
+            "valueCodeableConcept": {
+                "coding": [self._loinc_coding_of(answers["present"])]
+            },
             "component": components,
             "note": [
                 {
@@ -1161,13 +1208,16 @@ class FHIRExportService:
         elif "pathogenic" in clinvar_says and "conflicting" not in clinvar_says:
             significance = answers["pathogenic"]
         components = [
-            self._variant_component("clinical_significance", self._loinc_answer(significance))
+            self._variant_component(
+                "clinical_significance", self._loinc_answer(significance)
+            )
         ]
         if significance != answers["uncertain"]:
             for condition in variant.get("clinvar_conditions") or []:
                 components.append(
                     self._variant_component(
-                        "predicted_phenotype", {"valueCodeableConcept": {"text": str(condition)}}
+                        "predicted_phenotype",
+                        {"valueCodeableConcept": {"text": str(condition)}},
                     )
                 )
         if significance == answers["uncertain"]:
