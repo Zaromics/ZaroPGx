@@ -2409,7 +2409,8 @@ async def inspect_file_header(
                 "filename": file.filename,
                 "file_size": file_size if partial else received,
                 "bytes_inspected": received,
-                "header_incomplete": partial and header_cut_short(temp_file.name, header_info),
+                "header_incomplete": partial
+                and header_cut_short(temp_file.name, header_info),
                 "header_info": header_info,
                 "compat": {"workflow": compat_workflow},
             }

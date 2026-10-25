@@ -42,7 +42,9 @@ def test_a_whole_genome_crams_start_reads_as_the_whole_file(client):
     assert start["header_info"]["file_info"]["size"] == len(whole)
     for key in ("sequences", "sample", "samples", "format_specific"):
         assert start["header_info"].get(key) == full["header_info"].get(key)
-    assert len(start["header_info"]["sequences"]) > 3000  # GRCh38 with ALTs, decoys, HLA
+    assert (
+        len(start["header_info"]["sequences"]) > 3000
+    )  # GRCh38 with ALTs, decoys, HLA
     assert (
         start["header_info"]["metadata"]["reference_genome"]
         == full["header_info"]["metadata"]["reference_genome"]
@@ -52,7 +54,9 @@ def test_a_whole_genome_crams_start_reads_as_the_whole_file(client):
 
 def test_a_start_that_ends_inside_the_header_asks_for_more(client):
     whole = DEMO_CRAM.read_bytes()
-    assert _inspect(client, DEMO_CRAM.name, whole[:65536], len(whole))["header_incomplete"]
+    assert _inspect(client, DEMO_CRAM.name, whole[:65536], len(whole))[
+        "header_incomplete"
+    ]
 
     sam = SAM.read_bytes()
     # A SAM cut inside its header reads without an error, with some of its @SQ lines.

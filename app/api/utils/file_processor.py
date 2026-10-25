@@ -822,7 +822,9 @@ class FileProcessor:
             logger.info(f"Analyzing file: {file_path}")
 
             # Get basic file info
-            file_size = declared_size if declared_size is not None else file_path.stat().st_size
+            file_size = (
+                declared_size if declared_size is not None else file_path.stat().st_size
+            )
             logger.info(f"File size: {file_size} bytes")
 
             # Detect compression status BEFORE detecting file type (shared util)
