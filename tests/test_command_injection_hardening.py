@@ -461,7 +461,11 @@ def _create_input_vcf_ns(recorder, tmp_path, monkeypatch):
 
     return _load_from_source(
         PYPGX_WRAPPER,
-        {"run_pypgx_create_input_vcf", "_reference_fasta_for_assembly", "pysam_command"},
+        {
+            "run_pypgx_create_input_vcf",
+            "_reference_fasta_for_assembly",
+            "pysam_command",
+        },
         _pypgx_namespace(
             recorder,
             sys=sys,
@@ -558,7 +562,9 @@ def test_create_input_vcf_passes_hostile_path_as_one_argv_element(
     assert index_calls, f"no pysam index call: {recorder.calls!r}"
     index_args, index_kwargs = index_calls[0]
     _assert_argv_is_safe(index_args, index_kwargs, PAYLOAD_MARKER)
-    assert index_args[:2] == [sys.executable, "-c"] and index_args[-1] == str(hostile_bam)
+    assert index_args[:2] == [sys.executable, "-c"] and index_args[-1] == str(
+        hostile_bam
+    )
 
 
 def test_create_input_vcf_has_a_single_argv_sink(tmp_path, monkeypatch):

@@ -76,7 +76,9 @@ def pypgx(tmp_path_factory):
         mp.setenv("PYPGX_PROGRESS_LOG", str(root / "pypgx_progress.log"))
         mp.setitem(sys.modules, "psutil", _fake_psutil())
         mp.setitem(sys.modules, "job_client", _fake_job_client())
-        spec = importlib.util.spec_from_file_location("zaropgx_pypgx_pysam_test", WRAPPER)
+        spec = importlib.util.spec_from_file_location(
+            "zaropgx_pypgx_pysam_test", WRAPPER
+        )
         module = importlib.util.module_from_spec(spec)
         mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
@@ -89,7 +91,10 @@ def pypgx(tmp_path_factory):
 
 
 def _unsorted_bam(path: Path, reads: int) -> Path:
-    header = {"HD": {"VN": "1.6", "SO": "unsorted"}, "SQ": [{"SN": "chr1", "LN": 10_000_000}]}
+    header = {
+        "HD": {"VN": "1.6", "SO": "unsorted"},
+        "SQ": [{"SN": "chr1", "LN": 10_000_000}],
+    }
     rnd = random.Random(1)
     quals = pysam.qualitystring_to_array("I" * 100)
     with pysam.AlignmentFile(str(path), "wb", header=header) as out:
@@ -137,9 +142,9 @@ def test_a_sort_in_the_child_leaves_the_other_threads_running(pypgx, tmp_path):
     duration, gap = _longest_gap_while(
         lambda: pypgx.pysam_command("sort", "-o", str(out), str(unsorted))
     )
-    assert gap < GAP_BUDGET_SECONDS, (
-        f"another thread was held for {gap:.2f}s of the {duration:.2f}s sort"
-    )
+    assert (
+        gap < GAP_BUDGET_SECONDS
+    ), f"another thread was held for {gap:.2f}s of the {duration:.2f}s sort"
     with pysam.AlignmentFile(str(out)) as bam:
         starts = [r.reference_start for r in bam.fetch(until_eof=True)]
     assert len(starts) == 600_000 and starts == sorted(starts)
@@ -168,5 +173,7 @@ def test_the_wrapper_calls_no_pysam_command_in_process():
     """Every samtools command goes through pysam_command; a direct pysam.sort/index/
     faidx/view call back in the wrapper would hold the GIL again."""
     source = WRAPPER.read_text(encoding="utf-8")
-    direct = re.findall(r"\bpysam\.(sort|index|faidx|view|merge|depth|idxstats)\(", source)
+    direct = re.findall(
+        r"\bpysam\.(sort|index|faidx|view|merge|depth|idxstats)\(", source
+    )
     assert direct == [], f"in-process pysam commands: {direct}"
