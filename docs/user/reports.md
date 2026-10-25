@@ -12,6 +12,7 @@ Each analysis writes its outputs to `data/reports/<patient_id>/<job_id>/`:
 | `<job_id>_pgx_report_interactive.html` | The same results, browsable, with charts |
 | `<job_id>_pgx_pharmcat.html`, `.json`, `.tsv` | PharmCAT's own reports |
 | `<job_id>_pgx_fhir_report.json`, `.xml` | The results as a FHIR R4 bundle |
+| `<job_id>_pgx_fhir_source.json` | What the FHIR bundle is built from, kept so a bundle made later through the API is the same; written with FHIR export off too |
 | `mtdna_result.json`, `mtdna_variants.vcf.gz`, `mtdna_report.html` | Mitochondrial haplogroup and MT-RNR1 call, the chrM variants, and (alignments only) mtDNA-Server 2's own report |
 | `pypgx_result.json` | PyPGx's calls, with its evidence |
 | `unlisted_variants.json` | The variants in the pharmacogenes that no allele definition lists, each with its consequence, frequency, AlphaMissense score, ClinVar classification and tier |
@@ -301,11 +302,13 @@ calls), so a VCF without their positions leaves them out of its report. The bund
 FHIR's `$validate`, October 2026); {doc}`../samples/README` lists the warnings that
 remain and why. Bundles written before then do not validate, and their XML is not
 readable as FHIR. The `/fhir` endpoints ({doc}`../developer/api-reference`) also
-generate, preview and save a bundle. `POST /fhir/save/workflow/{job_id}` and the
-endpoints that take a PharmCAT run id build it from PharmCAT's rows in the database:
-PharmCAT's genes only, without what the report step knew about the run, so a gene with
-no call is `unknown` there. Saving that way overwrites the job's bundle, and a push
-then sends it; regenerating the job's report writes the full bundle again.
+generate, preview and save a bundle. They build it from `<job_id>_pgx_fhir_source.json`,
+what the report step built the job's own bundle from, so it is the same bundle: PyPGx's
+genes, calls corrected for copy number and the variants no allele definition lists
+included. A job reported before ZaroPGx kept that file has none, and for it they fall
+back to PharmCAT's rows in the database: PharmCAT's genes only, so a gene with no call is
+`unknown` there. Saving that way overwrites the job's bundle, and a push then sends it;
+regenerating the job's report writes the full bundle and the file again.
 
 Writing the files sends nothing anywhere. To put a job's results on a FHIR server, ask for
 it: `POST /fhir/push/workflow/{job_id}` sends the job's bundle to `FHIR_SERVER_URL`, in

@@ -4965,6 +4965,34 @@ def generate_report(
         report_paths.update(native_paths)
         data.update({NATIVE_REPORT_URL_KEYS[k]: v for k, v in native_paths.items()})
 
+        # The PharmCAT run id the upload path linked to this job.
+        pharmcat_run_id = lookup_pharmcat_run_id(db_session, job_id)
+        # Prepare patient info for FHIR export
+        fhir_patient_info = None
+        if patient_info:
+            fhir_patient_info = {
+                "id": patient_info.get("id", patient_id),
+                "name": patient_info.get("name"),
+                "gender": patient_info.get("gender"),
+                "birthDate": patient_info.get("birthDate"),
+            }
+        # What the FHIR bundle below is built from, kept beside the report so an
+        # export made later through the API carries the same calls, PyPGx's and the
+        # unlisted variants among them, not only PharmCAT's rows in the database
+        # (app/services/fhir/report_data.py). Written with FHIR export off too, so
+        # turning it on later still exports this report as it is.
+        if job_id:
+            from app.services.fhir import report_data
+
+            report_data.write(
+                report_dir,
+                str(job_id),
+                data,
+                run_id=pharmcat_run_id,
+                patient_id=patient_id,
+                patient_info=fhir_patient_info,
+            )
+
         # FHIR Export - Generate FHIR R4 compliant exports if enabled.
         # Resolved here, per report, not read out of an import-time snapshot.
         if fhir_export_enabled():
@@ -4977,8 +5005,6 @@ def generate_report(
                 if db_session:
                     fhir_service = FHIRExportService(db_session)
 
-                    # The PharmCAT run id the upload path linked to this job.
-                    pharmcat_run_id = lookup_pharmcat_run_id(db_session, job_id)
                     if pharmcat_run_id:
                         logger.info(
                             f"Found PharmCAT run_id in job metadata: {pharmcat_run_id}"
@@ -4988,16 +5014,6 @@ def generate_report(
                         logger.info(
                             "No explicit PharmCAT run_id found; using workflow data for FHIR export"
                         )
-
-                    # Prepare patient info for FHIR export
-                    fhir_patient_info = None
-                    if patient_info:
-                        fhir_patient_info = {
-                            "id": patient_info.get("id", patient_id),
-                            "name": patient_info.get("name"),
-                            "gender": patient_info.get("gender"),
-                            "birthDate": patient_info.get("birthDate"),
-                        }
 
                     # Generate both JSON and XML FHIR exports directly from normalized data
                     fhir_result = fhir_service.save_fhir_export(
