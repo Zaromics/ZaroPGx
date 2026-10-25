@@ -34,6 +34,33 @@ Your `.env` keeps its value. If it says `PYPGX_PHARMCAT_PREFERENCE=pharmcat`, ch
 docker compose up -d pypgx
 ```
 
+### CYP2C19 and SLCO1B1 deletions from read depth
+
+PyPGx has no copy-number model for CYP2C19 or SLCO1B1, so a GRCh38 whole genome's report
+said their copy number was not assessed, and a sample with one copy deleted was called from
+the other alone: CYP2C19 *1/*37, an Intermediate Metabolizer, read *1/*1, Normal. ZaroPGx
+now checks both genes for deletions from PyPGx's read depth. A named deletion (CYP2C19 *36
+or *37, SLCO1B1 *48 or *49) under a homozygous call goes into the call PharmCAT is given,
+and the report says so beside it; found normal, the alert says so once. The check runs in
+the PyPGx image, so it needs the new images (`docker compose pull`, then
+`docker compose up -d`). VCF, BCF and gVCF runs are unchanged.
+
+### DPYD exon deletions from read depth
+
+CPIC's DPYD table lists no deletion, so a deletion of DPYD exons, found in patients with DPD
+deficiency, went unseen and the call read normal. The same check now measures DPYD from
+PyPGx's read depth; a deletion it finds is named by its exons in an alert asking for an
+independent test before fluoropyrimidine treatment. PharmCAT's call and phenotype are not
+changed. A VCF, BCF or gVCF report now also marks DPYD's call as one that cannot show such a
+deletion. Like the CYP2C19 and SLCO1B1 check, it needs the new images.
+
+### CYP2B6 *30 named
+
+PyPGx's CYP2B6 copy-number state Tandem1, which its own call leaves Indeterminate, is the
+*30 hybrid duplication. Beside PharmCAT's call the report now says PyPGx found it, and a
+normal CYP2B6 copy number no longer carries a "*30 not assessed" note. PharmCAT keeps its
+call.
+
 ### Reports list the variants no allele definition lists
 
 The genome downloader now builds the annotation this check reads, once, on its first

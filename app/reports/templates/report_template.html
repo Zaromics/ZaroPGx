@@ -383,8 +383,8 @@
             font-weight: normal;
             margin-top: 2px;
         }
-        /* ...plain, without the warning colour, where nothing was found and only
-           an allele no tool here calls is left (CYP2B6 *30). */
+        /* ...plain, without the warning colour, for a note that warns of nothing
+           (copy_number's entries with warn False). */
         .exec-summary-diplotype .copy-number-note.plain-note {
             color: #555;
         }
@@ -1307,8 +1307,8 @@
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {# The line under each such call in the summary: "⚠ Copy number not assessed",
-       "⚠ PyPGx found a structural allele", or, plain, "*30 not assessed" where
-       PyPGx measured CYP2B6's copy number (copy_number.listed_alleles_entry). #}
+       "⚠ PyPGx found a structural allele", or "⚠ Deletion found from read depth"
+       (copy_number.listed_alleles_entry). #}
     {% set copy_number_markers = {} %}
     {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call') %}{% set _ = copy_number_markers.update({d.gene: d.copy_number_not_assessed}) %}{% endfor %}
     {% set listed_rows = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|selectattr('copy_number_not_assessed.listed')|list %}
