@@ -124,7 +124,9 @@ def _table(name):
 
 # SV alleles in PyPGx's allele table that no copy-number state of its genotypers
 # yields (pypgx/api/genotype.py, PyPGx 0.27): no call can show them either way.
-NEVER_CALLED = {("CYP2B6", "*30"), ("CYP2D6", "*61"), ("CYP2D6", "*63")}
+# CYP2B6 *30 is its Tandem1 state, which its genotyper leaves unnamed and the report
+# names (copy_number.NAMED).
+NEVER_CALLED = {("CYP2D6", "*61"), ("CYP2D6", "*63")}
 
 
 def test_each_gene_names_the_sv_alleles_pypgx_calls():
@@ -664,23 +666,19 @@ def test_pharmcats_own_calls_are_noted():
 
 
 def test_pypgxs_calls_it_cannot_assess_are_noted():
-    """PyPGx's own CYP2C19 and SLCO1B1 (no copy-number model), and its CYP2B6
-    with copy number measured (no state yields *30)."""
+    """PyPGx's own CYP2C19 and SLCO1B1 without the deletion check (no copy-number
+    model); its CYP2B6 with copy number measured has nothing left to show, *30
+    being its Tandem1 state."""
     rows = [_pypgx_row("CYP2C19"), _pypgx_row("SLCO1B1"), _pypgx_row("CYP2B6")]
     annotate_pharmcat_copy_number(rows)
-    cyp2c19, slco1b1, cyp2b6 = (r["copy_number_not_assessed"] for r in rows)
+    cyp2c19, slco1b1, cyp2b6 = (r.get("copy_number_not_assessed") for r in rows)
     assert cyp2c19["kind"] == slco1b1["kind"] == "no_model"
     assert cyp2c19["warn"] is True
     assert cyp2c19["call_note"] == (
         "Copy number not assessed (no copy-number model): would miss deletions "
         "(*36, *37) (see Alerts)"
     )
-    assert cyp2b6["kind"] == "no_state"
-    assert cyp2b6["call_note"] == "*30 not assessed (see Alerts)"
-    # Its copy number was measured: no warning, and the summary does not say
-    # "Copy number not assessed".
-    assert cyp2b6["warn"] is False
-    assert cyp2b6["marker"] == "*30 not assessed"
+    assert cyp2b6 is None
     # PyPGx's CYP4F2 with copy number measured can show its deletion (*DEL).
     rows = [_pypgx_row("CYP4F2")]
     annotate_pharmcat_copy_number(rows)
@@ -712,7 +710,8 @@ def test_a_row_pypgx_noted_keeps_pypgxs_note():
 
 def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
     """PharmCAT's own call shown, PyPGx's copy number measured normal beside it:
-    no warning; CYP2B6 keeps a plain note for *30, CYP4F2 none at all."""
+    no note on either, *30 included (PyPGx's Tandem1 state), and the alert says
+    so once."""
     rows = [
         {
             "gene": "CYP2B6",
@@ -729,23 +728,14 @@ def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
         }
     }
     annotate_pharmcat_copy_number(rows, pypgx)
-    noted = rows[0]["copy_number_not_assessed"]
-    assert noted["kind"] == "measured" and noted["warn"] is False
-    assert "not assessed" not in noted["note"].split(";")[0]
-    assert noted["call_note"] == "*30 not assessed (see Alerts)"
-    assert noted["marker"] == "*30 not assessed"
-    assert noted["note"] == (
-        "PyPGx measured normal copy number (no *29 hybrid or duplication); no tool "
-        "here calls *30, a hybrid with CYP2B7. See Alerts and Warnings."
-    )
+    assert "copy_number_not_assessed" not in rows[0]
     assert "copy_number_not_assessed" not in rows[1]
     assert measured_normal_genes(rows, pypgx) == ["CYP2B6", "CYP4F2"]
     # Measured, so neither is named as not assessed, and each is said once.
     text = _clean(pharmcat_copy_number_alert(rows, pypgx))
     assert text == (
         "Structural alleles: PyPGx measured normal copy number for CYP2B6 (no *29 "
-        "hybrid or duplication) and CYP4F2 (no whole-gene deletion). No tool here "
-        "calls CYP2B6 *30, a hybrid with CYP2B7."
+        "or *30 hybrid, or duplication) and CYP4F2 (no whole-gene deletion)."
     )
     assert "⚠" not in text and "not assessed" not in text
 
@@ -784,23 +774,14 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
             "C",
             "*38/*38" if gene == "CYP2C19" else "*1/*1",
         )
-    # CYP2B6: a plain line for *30, which nothing here calls; no ⚠.
-    assert rows["CYP2B6"]["copy_number_not_assessed"]["warn"] is False
-    row = page[page.index('id="summary-CYP2B6"') :]
-    row = row[: row.index("</tr>")]
-    assert "*30 not assessed: see the notes" in row and "⚠" not in row
-    assert "plain-note" in row
+    # CYP2B6 and CYP4F2: measured normal, nothing left to say beside the call.
     results = page[page.index("<h2>Genetic Results</h2>") :]
-    cell = results[results.index("<td>CYP2B6</td>") :]
-    cell = cell[: cell.index("</tr>")]
-    assert "*30 not assessed (see Alerts)" in cell
-    assert "⚠" not in cell and "copy-number-note" not in cell
-    # CYP4F2: nothing left to say beside the call.
-    assert "copy_number_not_assessed" not in rows["CYP4F2"]
-    cell = results[results.index("<td>CYP4F2</td>") :]
-    assert "call-note" not in cell[: cell.index("</tr>")]
-    row = page[page.index('id="summary-CYP4F2"') :]
-    assert "see the notes" not in row[: row.index("</tr>")]
+    for gene in ("CYP2B6", "CYP4F2"):
+        assert "copy_number_not_assessed" not in rows[gene]
+        cell = results[results.index(f"<td>{gene}</td>") :]
+        assert "call-note" not in cell[: cell.index("</tr>")]
+        row = page[page.index(f'id="summary-{gene}"') :]
+        assert "see the notes" not in row[: row.index("</tr>")]
     # A run without the deletion check (an older pypgx image, or the check failed):
     # CYP2C19 and SLCO1B1 still not assessed, and said so.
     for gene in ("CYP2C19", "SLCO1B1"):
@@ -809,10 +790,10 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
     alerts = body[: body.index("Executive Summary")]
     assert "Structural alleles not assessed: CYP2C19 and SLCO1B1." in alerts
     assert (
-        "PyPGx measured normal copy number for CYP2B6 (no *29 hybrid or "
+        "PyPGx measured normal copy number for CYP2B6 (no *29 or *30 hybrid, or "
         "duplication) and CYP4F2 (no whole-gene deletion)." in alerts
     )
-    assert "No tool here calls CYP2B6 *30, a hybrid with CYP2B7." in alerts
+    assert "No tool here calls" not in alerts
     assert (
         "ZaroPGx's deletion check, which measures CYP2C19 and SLCO1B1 from the read "
         "depth PyPGx uses, gave no result in this run." in alerts
@@ -849,11 +830,10 @@ def test_pharmcats_alert():
         "undetectable from a VCF. A missed allele can change the phenotype of "
         "CYP2B6, CYP2C19 and SLCO1B1."
     )
-    assert "(not *30)" in text
     # auto, the default, has them measured from reads; only pharmcat does not.
     assert text.endswith(
         "From a GRCh38 whole-genome BAM or CRAM, unless PYPGX_PHARMCAT_PREFERENCE is "
-        "pharmcat, PyPGx measures copy number for CYP2B6 (not *30) and CYP4F2, and "
+        "pharmcat, PyPGx measures copy number for CYP2B6 and CYP4F2, and "
         "ZaroPGx checks CYP2C19 and SLCO1B1 for deletions from the same read depth."
     )
     assert pharmcat_copy_number_alert([]) is None
@@ -867,10 +847,8 @@ def test_pharmcats_alert():
         "no copy-number model for it. This call cannot show CYP2C19 *36 and *37 "
         "(partial or whole-gene deletions)"
     )
-    assert (
-        "PyPGx measured CYP2B6's copy number, but none of its copy-number states is "
-        "*30, a hybrid with CYP2B7, so its call cannot show it." in text
-    )
+    # PyPGx's CYP2B6 with copy number measured: nothing to say.
+    assert "CYP2B6" not in text
     assert "PYPGX_PHARMCAT_PREFERENCE" not in text
 
 
@@ -1077,9 +1055,19 @@ def test_a_structural_allele_pypgx_found_beside_pharmcat_s_call_is_flagged(
         "This call may be wrong, and so may the phenotype."
     )
     assert "Hybrid1" not in text
-    monkeypatch.setattr(cn, "pypgx_copy_number", lambda results, gene: "Normal")
+    # PyPGx's Tandem1, which its genotyper leaves unnamed, is *30.
+    monkeypatch.setattr(cn, "pypgx_copy_number", lambda results, gene: "Tandem1")
     entry = cn.listed_alleles_entry(row, {})
-    assert entry["marker"] == cn.STAR30_MARKER and entry["warn"] is False, entry
+    # Short under the call, in a narrow column; in full in the note and the alert.
+    assert entry["call_note"] == (
+        "PyPGx found *30, a hybrid duplication, which this call cannot show (see Alerts)"
+    )
+    assert entry["note"].startswith(
+        "PyPGx found the *30 hybrid duplication (CYP2B6 exons 1-4 joined to CYP2B7 "
+        "exons 5-9, beside an intact CYP2B6), which PharmCAT's call"
+    )
+    monkeypatch.setattr(cn, "pypgx_copy_number", lambda results, gene: "Normal")
+    assert cn.listed_alleles_entry(row, {}) is None
     assert cn.listed_alleles_entry({"gene": "CYP4F2", "diplotype": "*1/*1"}, {}) is None
 
 

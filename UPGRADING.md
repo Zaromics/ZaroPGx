@@ -45,6 +45,13 @@ and the report says so beside it; found normal, the alert says so once. The chec
 the PyPGx image, so it needs the new images (`docker compose pull`, then
 `docker compose up -d`). VCF, BCF and gVCF runs are unchanged.
 
+### CYP2B6 *30 named
+
+PyPGx's CYP2B6 copy-number state Tandem1, which its own call leaves Indeterminate, is the
+*30 hybrid duplication. Beside PharmCAT's call the report now says PyPGx found it, and a
+normal CYP2B6 copy number no longer carries a "*30 not assessed" note. PharmCAT keeps its
+call.
+
 ## v0.3.2 → v0.4.0
 
 ### The image tag moves with the release
