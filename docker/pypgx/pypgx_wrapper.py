@@ -37,6 +37,9 @@ from pydantic import BaseModel
 import sys
 sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
+# Beside this file in the image (/app), and wherever the tests load it from.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import unlisted_variants  # noqa: E402  # pyright: ignore[reportMissingImports]
 try:
     from shared_input import SharedInputRefused, link_shared_input  # pyright: ignore[reportMissingImports]
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path (tests)
@@ -711,7 +714,8 @@ def root():
             "GET /genes/{gene_name} - Get detailed gene information",
             "GET /gene-sets - Get available gene sets",
             "POST /genotype - Run genotyping analysis",
-            "POST /create-input-vcf - Create VCF from alignment file"
+            "POST /create-input-vcf - Create VCF from alignment file",
+            "POST /unlisted-variants - Variants no allele definition lists"
         ]
     }
 
@@ -4071,6 +4075,55 @@ def save_profile_plots(
         except OSError as exc:
             logger.warning(f"Could not save the {gene} {folder} plot: {exc}")
     return plots
+
+
+@app.post("/unlisted-variants")
+async def unlisted_variants_endpoint(
+    file: Optional[UploadFile] = File(None),
+    shared_input: Optional[str] = Form(None),
+    reference_genome: str = Form("hg38"),
+    job_id: Optional[str] = Form(None),
+):
+    """The variants in the pharmacogenes that no allele definition lists, for the VCF
+    /genotype reads (unlisted_variants.py). A well-formed request is answered 200
+    whatever the check finds or fails at: it never stops a run, and its "status" says
+    whether it ran ("done"), could not ("not_run", with the reason the report gives)
+    or failed ("failed")."""
+    if reference_genome not in ("hg38", "GRCh38"):
+        # main.nf hands this the VCF PyPGx reads, lifted to GRCh38 where it was not.
+        return {"status": "not_run", "reason": "The check reads GRCh38 coordinates only."}
+    if (file is None) == (shared_input is None):
+        raise HTTPException(status_code=400, detail="Send the VCF as file, or its shared path as shared_input -- one of them.")
+    job_dir = job_work_dir(job_id, str(uuid.uuid4()))
+    os.makedirs(job_dir, exist_ok=True)
+    filename = file.filename if file is not None else os.path.basename(shared_input)
+    vcf_path = job_dir / safe_upload_name(filename, ".vcf")
+    try:
+        if shared_input is not None:
+            try:
+                link_shared_input(shared_input, vcf_path)
+            except SharedInputRefused as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        else:
+            with open(vcf_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
+        # In a thread: bcftools reads a whole-genome VCF for a minute.
+        return await asyncio.to_thread(
+            unlisted_variants.check,
+            vcf_path,
+            _reference_fasta_for_assembly("GRCh38"),
+            job_dir / "unlisted",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unlisted-variant check failed")
+        return {"status": "failed", "reason": f"The check failed: {exc}"[:500]}
+    finally:
+        # The VCF (a link, for a shared input) and the check's files: nothing here
+        # is a result, which goes back in the response.
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 
 @app.post("/cancel")

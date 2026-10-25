@@ -477,6 +477,8 @@ class FHIRExportService:
         - Observation (Therapeutic Implication) for each gene's phenotype
         - Observation (Therapeutic Implication) for each drug
         - Task (Medication Recommendation) for each recommendation
+        - Observation (Variant) and Observation (Diagnostic Implication) for each
+          variant no allele definition lists that marks a gene's call
         - Patient
 
         Args:
@@ -506,6 +508,10 @@ class FHIRExportService:
         phenotype_citations = []
         implication_references = []
         task_references = []
+        # The variants no allele definition lists, each once (one in exons two
+        # genes share marks both), and the implications that tie them to a genotype.
+        variant_references: Dict[tuple, Dict[str, str]] = {}
+        unlisted_references = []
         # How often each name has come up, so a gene or drug listed twice still
         # gets an id of its own.
         seen: Dict[tuple, int] = {}
@@ -549,6 +555,56 @@ class FHIRExportService:
                 "display": f"{gene_data.get('gene', 'Unknown')} {self._genotype_text(gene_data)}",
             }
             observation_references.append(genotype_ref)
+
+            # A variant no allele definition lists that marks this call
+            # (app/reports/unlisted.py): a Variant, and a diagnostic implication
+            # derived from it and the genotype, stating its significance.
+            flag = gene_data.get("unlisted_flag")
+            for variant in (
+                flag.get("variants") if isinstance(flag, dict) else None
+            ) or []:
+                key = tuple(variant.get(k) for k in ("chrom", "pos", "ref", "alt"))
+                if None in key:
+                    continue
+                if key not in variant_references:
+                    variant_obs = self._create_variant_observation(
+                        variant,
+                        patient_ref,
+                        stable_id("variant", ":".join(map(str, key))),
+                    )
+                    entries.append(
+                        {
+                            "fullUrl": f"urn:uuid:{variant_obs['id']}",
+                            "resource": variant_obs,
+                        }
+                    )
+                    variant_references[key] = {
+                        "reference": f"urn:uuid:{variant_obs['id']}",
+                        "display": self._variant_display(variant),
+                    }
+                implication = self._create_unlisted_implication(
+                    gene_data.get("gene") or "Unknown",
+                    variant,
+                    variant_references[key],
+                    genotype_ref,
+                    patient_ref,
+                    stable_id(
+                        "diagnostic-implication",
+                        f"{gene_data.get('gene')}:{':'.join(map(str, key))}",
+                    ),
+                )
+                entries.append(
+                    {
+                        "fullUrl": f"urn:uuid:{implication['id']}",
+                        "resource": implication,
+                    }
+                )
+                unlisted_references.append(
+                    {
+                        "reference": f"urn:uuid:{implication['id']}",
+                        "display": f"{gene_data.get('gene')} {self._variant_display(variant)}: significance",
+                    }
+                )
 
             # The phenotype, as the IG states one: a therapeutic implication of
             # the genotype (see _create_phenotype_implication).
@@ -649,7 +705,11 @@ class FHIRExportService:
 
         # Create DiagnosticReport (main Genomic Report)
         all_result_refs = (
-            observation_references + phenotype_references + implication_references
+            observation_references
+            + phenotype_references
+            + implication_references
+            + list(variant_references.values())
+            + unlisted_references
         )
         diagnostic_report = self._create_diagnostic_report(
             pharmcat_data=pharmcat_data,
@@ -844,6 +904,12 @@ class FHIRExportService:
                 }
             ]
 
+        # A variant no allele definition lists, predicted to stop or damage the
+        # protein (app/reports/unlisted.py): the genotype does not account for it.
+        flag = gene_data.get("unlisted_flag")
+        if isinstance(flag, dict) and flag.get("fhir_note"):
+            observation.setdefault("note", []).append({"text": flag["fhir_note"]})
+
         # No phenotype here: the genotype profile has no place for one, and the
         # IG states it as a therapeutic implication of the genotype
         # (_create_phenotype_implication). It was a text component.
@@ -904,6 +970,252 @@ class FHIRExportService:
             )
 
         return observation
+
+    @staticmethod
+    def _variant_display(variant: Dict[str, Any]) -> str:
+        """c. on its transcript where known, else the genomic change."""
+        if variant.get("hgvs_c") and variant.get("refseq"):
+            return f"{variant['refseq']}:{variant['hgvs_c']}"
+        return f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+
+    def _variant_component(self, key: str, value: Dict[str, Any]) -> Dict[str, Any]:
+        """A component coded by one of VARIANT_LOINC, with its value."""
+        return {
+            "code": {"coding": [self._loinc_coding_of(terminology.VARIANT_LOINC[key])]},
+            **value,
+        }
+
+    @staticmethod
+    def _loinc_coding_of(code: str) -> Dict[str, str]:
+        """A LOINC code's coding, with its official display (LOINC_DISPLAYS)."""
+        return {
+            "system": terminology.LOINC,
+            "code": code,
+            "display": terminology.LOINC_DISPLAYS[code],
+        }
+
+    def _loinc_answer(self, code: str) -> Dict[str, Any]:
+        """A LOINC answer as a component's value."""
+        return {"valueCodeableConcept": {"coding": [self._loinc_coding_of(code)]}}
+
+    def _create_variant_observation(
+        self, variant: Dict[str, Any], patient_ref: str, resource_id: str
+    ) -> Dict[str, Any]:
+        """A variant no allele definition lists, as the IG's Variant profile states one:
+        where it is (GRCh38, 1-based), its alleles, its HGVS names, the sample's
+        allelic state and read support, and ClinVar's id where ClinVar has it. Its
+        significance is a diagnostic implication's (_create_unlisted_implication)."""
+        answers = terminology.VARIANT_ANSWERS
+        gene_symbol = _text(variant.get("gene")) or "Unknown"
+        ref, alt = str(variant.get("ref")), str(variant.get("alt"))
+        pos = int(variant.get("pos"))
+        span = {"low": {"value": pos}}
+        if len(ref) > 1:
+            span["high"] = {"value": pos + len(ref) - 1}
+        components = [
+            {
+                "code": {"coding": [self._loinc_coding("gene_studied")]},
+                "valueCodeableConcept": self._gene_concept(gene_symbol),
+            },
+            self._variant_component("assembly", self._loinc_answer(answers["GRCh38"])),
+        ]
+        chromosome = terminology.CHROMOSOME_ANSWERS.get(str(variant.get("chrom")))
+        if chromosome:
+            components.append(
+                self._variant_component("chromosome", self._loinc_answer(chromosome))
+            )
+        components += [
+            self._variant_component("start_end", {"valueRange": span}),
+            self._variant_component(
+                "coordinate_system", self._loinc_answer(answers["one_based"])
+            ),
+            self._variant_component("ref_allele", {"valueString": ref}),
+            self._variant_component("alt_allele", {"valueString": alt}),
+        ]
+        refseq = _text(variant.get("refseq"))
+        if refseq and variant.get("hgvs_c"):
+            components.append(
+                self._variant_component(
+                    "coding_hgvs",
+                    {
+                        "valueCodeableConcept": {
+                            "coding": [
+                                {
+                                    "system": terminology.HGVS,
+                                    "code": f"{refseq}:{variant['hgvs_c']}",
+                                }
+                            ]
+                        }
+                    },
+                )
+            )
+        if refseq:
+            components.append(
+                self._variant_component(
+                    "transcript",
+                    {
+                        "valueCodeableConcept": {
+                            "coding": [{"system": terminology.REFSEQ, "code": refseq}]
+                        }
+                    },
+                )
+            )
+        # Text only: an HGVS p. name needs the protein's accession, which the check
+        # does not have.
+        if variant.get("hgvs_p"):
+            components.append(
+                self._variant_component(
+                    "protein_hgvs",
+                    {"valueCodeableConcept": {"text": variant["hgvs_p"]}},
+                )
+            )
+        state = answers.get(str(variant.get("zygosity") or "").lower())
+        if state:
+            components.append(
+                self._variant_component("allelic_state", self._loinc_answer(state))
+            )
+        components.append(
+            self._variant_component(
+                "source_class", self._loinc_answer(answers["germline"])
+            )
+        )
+        if variant.get("clinvar_id"):
+            components.append(
+                self._variant_component(
+                    "variation_code",
+                    {
+                        "valueCodeableConcept": {
+                            "coding": [
+                                {
+                                    "system": terminology.CLINVAR,
+                                    "code": str(variant["clinvar_id"]),
+                                }
+                            ]
+                        }
+                    },
+                )
+            )
+        alt_reads, depth = variant.get("alt_reads"), variant.get("depth")
+        if isinstance(alt_reads, int):
+            components.append(
+                self._variant_component(
+                    "allelic_read_depth",
+                    {
+                        "valueQuantity": {
+                            "value": alt_reads,
+                            "unit": "reads",
+                            "system": terminology.UCUM,
+                            "code": "1",
+                        }
+                    },
+                )
+            )
+            if isinstance(depth, int) and depth > 0:
+                components.append(
+                    self._variant_component(
+                        "allelic_frequency",
+                        {
+                            "valueQuantity": {
+                                "value": round(alt_reads / depth, 3),
+                                "unit": "relative frequency",
+                                "system": terminology.UCUM,
+                                "code": "1",
+                            }
+                        },
+                    )
+                )
+        return {
+            "resourceType": "Observation",
+            "id": resource_id,
+            "meta": {"profile": [terminology.PROFILE_VARIANT]},
+            "identifier": [self._resource_identifier(resource_id)],
+            "status": "final",
+            "category": self._genomic_observation_category(),
+            "code": {
+                "coding": [self._loinc_coding_of(terminology.VARIANT_LOINC["variant"])],
+                "text": f"{gene_symbol} variant",
+            },
+            "subject": {"reference": patient_ref},
+            "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
+            "valueCodeableConcept": {
+                "coding": [self._loinc_coding_of(answers["present"])]
+            },
+            "component": components,
+            "note": [
+                {
+                    "text": (
+                        "No PharmCAT or PyPGx allele definition lists this variant. "
+                        f"{str(variant.get('effect') or '').capitalize()} (not validated "
+                        "for clinical use)."
+                    ).replace(" ()", "")
+                }
+            ],
+        }
+
+    def _create_unlisted_implication(
+        self,
+        gene_symbol: str,
+        variant: Dict[str, Any],
+        variant_ref: Dict[str, str],
+        genotype_ref: Dict[str, str],
+        patient_ref: str,
+        resource_id: str,
+    ) -> Dict[str, Any]:
+        """What the variant means for the gene's call, as the IG's diagnostic
+        implication: derived from the variant and the genotype that does not account
+        for it, and of uncertain significance, which is what a variant no definition
+        lists is. Where ClinVar classifies it, with a star, for the gene's drug
+        response, its classification instead, and the conditions it names: coded
+        uncertain, the export would contradict ClinVar."""
+        answers = terminology.VARIANT_ANSWERS
+        significance = answers["uncertain"]
+        clinvar_says = str(variant.get("clinvar_significance") or "").lower()
+        if "likely pathogenic" in clinvar_says or "likely_pathogenic" in clinvar_says:
+            significance = answers["likely_pathogenic"]
+        elif "pathogenic" in clinvar_says and "conflicting" not in clinvar_says:
+            significance = answers["pathogenic"]
+        components = [
+            self._variant_component(
+                "clinical_significance", self._loinc_answer(significance)
+            )
+        ]
+        if significance != answers["uncertain"]:
+            for condition in variant.get("clinvar_conditions") or []:
+                components.append(
+                    self._variant_component(
+                        "predicted_phenotype",
+                        {"valueCodeableConcept": {"text": str(condition)}},
+                    )
+                )
+        if significance == answers["uncertain"]:
+            says = "No allele definition lists it, so its significance is uncertain"
+        else:
+            conditions = "; ".join(map(str, variant.get("clinvar_conditions") or []))
+            says = (
+                f"ClinVar classifies it {variant.get('clinvar_significance')}"
+                f"{f' ({conditions})' if conditions else ''}, and no allele definition lists it"
+            )
+        components.append(
+            {
+                "code": {"coding": [self._tbd_coding("conclusion-string")]},
+                "valueString": (
+                    f"{gene_symbol} {self._variant_display(variant)}: {variant.get('effect')}. "
+                    f"{says}; the {gene_symbol} genotype and its phenotype do not account for it."
+                ),
+            }
+        )
+        return {
+            "resourceType": "Observation",
+            "id": resource_id,
+            "meta": {"profile": [terminology.PROFILE_DIAGNOSTIC_IMPLICATION]},
+            "identifier": [self._resource_identifier(resource_id)],
+            "status": "final",
+            "category": self._genomic_observation_category(),
+            "code": {"coding": [self._tbd_coding("diagnostic-implication")]},
+            "subject": {"reference": patient_ref},
+            "derivedFrom": [dict(variant_ref), dict(genotype_ref)],
+            "component": components,
+        }
 
     @staticmethod
     def _uncalled_reason(gene_data: Dict[str, Any]) -> Optional[str]:

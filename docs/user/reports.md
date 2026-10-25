@@ -14,6 +14,7 @@ Each analysis writes its outputs to `data/reports/<patient_id>/<job_id>/`:
 | `<job_id>_pgx_fhir_report.json`, `.xml` | The results as a FHIR R4 bundle |
 | `mtdna_result.json`, `mtdna_variants.vcf.gz`, `mtdna_report.html` | Mitochondrial haplogroup and MT-RNR1 call, the chrM variants, and (alignments only) mtDNA-Server 2's own report |
 | `pypgx_result.json` | PyPGx's calls, with its evidence |
+| `unlisted_variants.json` | The variants in the pharmacogenes that no allele definition lists, each with its consequence, frequency, AlphaMissense score, ClinVar classification and tier |
 | `report.html`, `timeline.html`, `trace.txt` | Nextflow's record of the run |
 
 Lanes that convert or genotype the input also keep the intermediate VCF (for example
@@ -184,6 +185,37 @@ recommendations rest on if no star allele is called, when one is; and, when Aler
 Warnings lists the positions PharmCAT had no genotype for, its own notes on those
 positions. A report rebuilt from a report.json alone has no such alert, and shows them.
 None appears on the Executive Summary.
+
+**Variants Outside the Allele Definitions.** PharmCAT and PyPGx call a gene from the
+variants their allele definitions name, and nothing else: a rare variant that stops the
+protein, if no definition lists it, leaves the gene reported as normal. Every run also
+reads every other variant in the coding exons, and splice sites, of 52 genes: every gene
+PharmCAT has allele definitions for (IFNL3 aside, which it types by one variant outside
+its exons), and the drug-metabolising enzymes and transporters PyPGx types. PharmCAT's
+genes include CFTR, RYR1, CACNA1S, F2 and F5, where a variant can also bear on a disease
+(cystic fibrosis, malignant hyperthermia and some myopathies, thrombophilia or a bleeding
+disorder); the section says so when it lists one. A variant that passes the quality
+checks, is under 1% in every gnomAD genetic ancestry group and may change the protein is
+listed here with its consequence on the gene's MANE Select transcript, its frequency and
+ClinVar's classification, and in a tier: predicted loss of function (a stop, a frameshift,
+a splice site, a lost start, or ClinVar pathogenic for the gene's drug response), possible
+loss of function (the same, with less confidence), predicted damaging (AlphaMissense above
+0.564), possibly damaging (AlphaMissense 0.152 to 0.564), or effect uncertain (an in-frame
+change, a lost stop, a splice-region change, a missense AlphaMissense has no score for).
+Each one marks its gene's call, beside it and in the Executive Summary's notes, in its
+tier's words. In CYP2D6, CYP2A6, GSTM1 and UGT2B17 the mark adds that the variant may be a
+near-identical neighbouring gene's, whose reads can align there. Common variants, those
+with no predicted effect and calls that fail the quality checks are only counted;
+`unlisted_variants.json` has them all. Nothing changes a call or a phenotype: the effect
+is a prediction, and whether the variant is on the same chromosome copy as an allele in
+the call is not known. In the FHIR export each marking variant is a Variant observation
+with a diagnostic implication that ties it to the gene's genotype, coded "Uncertain
+significance", or ClinVar's classification where ClinVar has one for the gene's drug
+response. The check reads only the annotation the genome downloader builds once
+(`ANNOTATION_ENABLED`, {doc}`configuration`): nothing about the sample leaves the machine.
+Its sources are pinned, ClinVar to a dated release, and refreshed with each ZaroPGx
+release, so a sample gives the same section on every run of one version. Without the
+annotation, this section says the check did not run.
 
 **Mitochondrial DNA**, when that step ran: the haplogroup and its quality, and the MT-RNR1
 call with its phenotype (aminoglycoside-induced hearing loss), or why it was not called.

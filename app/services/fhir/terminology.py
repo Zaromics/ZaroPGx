@@ -30,6 +30,11 @@ SNOMED_CT = "http://snomed.info/sct"
 # code, sent before, is in no value set and no terminology server knows it.
 HGNC = "http://www.genenames.org"
 UCUM = "http://unitsofmeasure.org"
+# The IG's systems for a variant's names (its examples, 3.0.0): HGVS expressions,
+# RefSeq accessions and ClinVar's variation ids.
+HGVS = "http://varnomen.hgvs.org"
+REFSEQ = "http://www.ncbi.nlm.nih.gov/refseq"
+CLINVAR = "http://www.ncbi.nlm.nih.gov/clinvar"
 
 OBSERVATION_CATEGORY = "http://terminology.hl7.org/CodeSystem/observation-category"
 DIAGNOSTIC_SERVICE_SECTION = "http://terminology.hl7.org/CodeSystem/v2-0074"
@@ -43,6 +48,7 @@ GENOMICS_TBD_CODES = "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/tbd-c
 # The IG's displays for the tbd codes ZaroPGx sends.
 GENOMICS_TBD_DISPLAYS = {
     "therapeutic-implication": "Therapeutic Implication",
+    "diagnostic-implication": "Diagnostic Implication",
     "conclusion-string": "Conclusion Text",
 }
 
@@ -94,6 +100,10 @@ PROFILE_GENOTYPE = (
     "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genotype"
 )
 PROFILE_THERAPEUTIC_IMPLICATION = "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/therapeutic-implication"
+PROFILE_VARIANT = (
+    "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/variant"
+)
+PROFILE_DIAGNOSTIC_IMPLICATION = "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/diagnostic-implication"
 PROFILE_MEDICATION_RECOMMENDATION = "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/medication-recommendation"
 
 # ---------------------------------------------------------------------------
@@ -123,6 +133,68 @@ LOINC_CODES = {
     "pgx_report": "51969-4",
     "haplotype": "84414-2",
     "gene_studied": "48018-6",
+}
+
+# The variant profile's components and the diagnostic implication's clinical
+# significance, for a variant no allele definition lists (app/reports/unlisted.py).
+VARIANT_LOINC = {
+    "variant": "69548-6",
+    "assembly": "62374-4",
+    "chromosome": "48000-4",
+    "start_end": "81254-5",
+    "coordinate_system": "92822-6",
+    "ref_allele": "69547-8",
+    "alt_allele": "69551-0",
+    "coding_hgvs": "48004-6",
+    "transcript": "51958-7",
+    "protein_hgvs": "48005-3",
+    "allelic_state": "53034-5",
+    "source_class": "48002-0",
+    "variation_code": "81252-9",
+    "allelic_read_depth": "82121-5",
+    "allelic_frequency": "81258-6",
+    "clinical_significance": "53037-8",
+    "predicted_phenotype": "81259-4",
+}
+# Their answers: present, GRCh38, 1-based, germline, the allelic states, the clinical
+# significances (LL4034-6), and the chromosomes (LL2938-0).
+VARIANT_ANSWERS = {
+    "present": "LA9633-4",
+    "GRCh38": "LA26806-2",
+    "one_based": "LA30102-0",
+    "germline": "LA6683-2",
+    "heterozygous": "LA6706-1",
+    "homozygous": "LA6705-3",
+    "hemizygous": "LA6707-9",
+    "pathogenic": "LA6668-3",
+    "likely_pathogenic": "LA26332-9",
+    "uncertain": "LA26333-7",
+}
+CHROMOSOME_ANSWERS = {
+    "chr1": "LA21254-0",
+    "chr2": "LA21255-7",
+    "chr3": "LA21256-5",
+    "chr4": "LA21257-3",
+    "chr5": "LA21258-1",
+    "chr6": "LA21259-9",
+    "chr7": "LA21260-7",
+    "chr8": "LA21261-5",
+    "chr9": "LA21262-3",
+    "chr10": "LA21263-1",
+    "chr11": "LA21264-9",
+    "chr12": "LA21265-6",
+    "chr13": "LA21266-4",
+    "chr14": "LA21267-2",
+    "chr15": "LA21268-0",
+    "chr16": "LA21269-8",
+    "chr17": "LA21270-6",
+    "chr18": "LA21271-4",
+    "chr19": "LA21272-2",
+    "chr20": "LA21273-0",
+    "chr21": "LA21274-8",
+    "chr22": "LA21275-5",
+    "chrX": "LA21276-3",
+    "chrY": "LA21277-1",
 }
 
 # LOINC's activity-score codes, one per gene; a gene without one gets a text code.
@@ -158,6 +230,59 @@ LOINC_DISPLAYS = {
     "LA6677-4": "Responsive",
     "LA19541-4": "High risk",
     "LA19542-2": "Low risk",
+    # The variant's (VARIANT_LOINC, VARIANT_ANSWERS, CHROMOSOME_ANSWERS); tx.fhir.org,
+    # LOINC 2.82, 2026-10-24.
+    "69548-6": "Genetic variant assessment",
+    "62374-4": "Human reference sequence assembly version",
+    "48000-4": "Chromosome [Identifier] in Blood or Tissue by Molecular genetics method",
+    "81254-5": "Genomic allele start-end",
+    "92822-6": "Genomic coordinate system [Type]",
+    "69547-8": "Genomic ref allele [ID]",
+    "69551-0": "Genomic alt allele [ID]",
+    "48004-6": "DNA change (c.HGVS)",
+    "51958-7": "Transcript reference sequence [ID]",
+    "48005-3": "Amino acid change (pHGVS)",
+    "53034-5": "Allelic state",
+    "48002-0": "Genomic source class [Type]",
+    "81252-9": "Discrete genetic variant",
+    "82121-5": "Allelic read depth",
+    "81258-6": "Sample variant allelic frequency [NFr]",
+    "53037-8": "Genetic variation clinical significance [Imp]",
+    "81259-4": "Associated phenotype",
+    "LA9633-4": "Present",
+    "LA26806-2": "GRCh38",
+    "LA30102-0": "1-based character counting",
+    "LA6683-2": "Germline",
+    "LA6706-1": "Heterozygous",
+    "LA6705-3": "Homozygous",
+    "LA6707-9": "Hemizygous",
+    "LA6668-3": "Pathogenic",
+    "LA26332-9": "Likely pathogenic",
+    "LA26333-7": "Uncertain significance",
+    "LA21254-0": "Chromosome 1",
+    "LA21255-7": "Chromosome 2",
+    "LA21256-5": "Chromosome 3",
+    "LA21257-3": "Chromosome 4",
+    "LA21258-1": "Chromosome 5",
+    "LA21259-9": "Chromosome 6",
+    "LA21260-7": "Chromosome 7",
+    "LA21261-5": "Chromosome 8",
+    "LA21262-3": "Chromosome 9",
+    "LA21263-1": "Chromosome 10",
+    "LA21264-9": "Chromosome 11",
+    "LA21265-6": "Chromosome 12",
+    "LA21266-4": "Chromosome 13",
+    "LA21267-2": "Chromosome 14",
+    "LA21268-0": "Chromosome 15",
+    "LA21269-8": "Chromosome 16",
+    "LA21270-6": "Chromosome 17",
+    "LA21271-4": "Chromosome 18",
+    "LA21272-2": "Chromosome 19",
+    "LA21273-0": "Chromosome 20",
+    "LA21274-8": "Chromosome 21",
+    "LA21275-5": "Chromosome 22",
+    "LA21276-3": "Chromosome X",
+    "LA21277-1": "Chromosome Y",
 }
 
 # The phenotypes ZaroPGx reports, by the answer of the IG's

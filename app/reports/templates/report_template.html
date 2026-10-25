@@ -138,6 +138,23 @@
         .mtdna-table col.c-label { width: 32%; }
         .mtdna-table col.c-value { width: 68%; }
 
+        /* Variants Outside the Allele Definitions: Gene as wide as Genetic
+           Results' (CYP2C19 whole); Variant takes an HGVS c. and p. name with the
+           genomic change under it; Zygosity fits "heterozygous" unbroken; the
+           last holds gnomAD's frequency, ClinVar's classification and the
+           condition it names (DPYD's runs to "Dihydropyrimidine dehydrogenase
+           deficiency"). Sums to 100. */
+        .unlisted-table { table-layout: fixed; width: 100%; }
+        .unlisted-table col.c-gene      { width: 13%; }
+        .unlisted-table col.c-variant   { width: 27%; }
+        .unlisted-table col.c-zygosity  { width: 18%; }
+        .unlisted-table col.c-effect    { width: 17%; }
+        .unlisted-table col.c-evidence  { width: 25%; }
+        .unlisted-table td, .unlisted-table th { overflow-wrap: break-word; vertical-align: top; }
+        .unlisted-table tr { page-break-inside: avoid; break-inside: avoid; }
+        .unlisted-table tr.unlisted-tier-a td:nth-child(4),
+        .unlisted-table tr.unlisted-tier-b td:nth-child(4) { color: #8a4b00; font-weight: bold; }
+
         /* Long diplotype strings ("rs2231142 reference (G)/...") have no spaces
            to break at, and under table-layout:fixed an unbreakable word overflows
            its cell rather than widening it. */
@@ -356,7 +373,8 @@
             margin-top: 2px;
         }
         .alt-locus-note,
-        .copy-number-note {
+        .copy-number-note,
+        .unlisted-note {
             color: #8a4b00;
         }
         /* The Executive Summary row's pointer to its note overleaf. */
@@ -443,6 +461,7 @@
             text-align: left;
             font-weight: bold;
             overflow-wrap: normal; /* allow wrapping if needed */
+            white-space: nowrap; /* "CYP2C19 ⚠" on one line: the mark wrapped under it */
         }
         .exec-summary-diplotype {
             text-align: center;
@@ -1200,6 +1219,7 @@
 {% import "_pypgx_evidence.html" as pypgx %}
 {% import "_unresolved_calls.html" as unresolved %}
 {% import "_pharmcat_messages.html" as pcmsg %}
+{% import "_unlisted_variants.html" as unlisted_variants %}
     <div class="header">
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -1294,6 +1314,8 @@
     {% set listed_rows = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|selectattr('copy_number_not_assessed.listed')|list %}
     {# A call with positions read as reference (positions_note): the same marker. #}
     {% set positions_genes = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {# A call that does not account for a variant no definition lists (unlisted_flag). #}
+    {% set unlisted_genes = diplotypes|selectattr('unlisted_flag')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
         {{ pypgx.na_legend(called) }}
         {% if called|selectattr('phenotype', 'equalto', 'Possibly Wild Type')|list %}
@@ -1307,6 +1329,9 @@
         {% endfor %}
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
+        {% endfor %}
+        {% for d in diplotypes|selectattr('unlisted_flag')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.unlisted_flag.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') if not d.copy_number_not_assessed.listed %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
@@ -1347,7 +1372,7 @@
                     {% for r in rows %}
                     <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
-                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% endif %}</td>
+                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}{% set m = copy_number_markers[r.gene] %}{% if m.warn is sameas false %}<div class="copy-number-note plain-note">{{ m.marker }}: see the notes</div>{% else %}<div class="copy-number-note">⚠ {{ m.marker or 'Copy number not assessed' }}: see the notes</div>{% endif %}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
@@ -1505,6 +1530,8 @@
         </div>
         {% endif %}
     </div>
+
+    {{ unlisted_variants.section(unlisted) }}
 
     {# Rendered only when this run actually called mtDNA -- generator.py's
        mtdna_report_context() returns {"used": False} for any job that never

@@ -107,6 +107,9 @@ services:
       # The CRAM reference cache (/reference/ref_cache, REF_PATH below): 3.2 GB
       # fetched, 5.3 GB kept. Off only where no CRAM is read (compose.e2e.yml).
       - REF_CACHE_ENABLED=${REF_CACHE_ENABLED:-true}
+      # The annotation the check for variants no allele definition lists reads
+      # (/reference/annotation): about 1 GB fetched, 3 MB kept.
+      - ANNOTATION_ENABLED=${ANNOTATION_ENABLED:-true}
       # Same pin as the pharmcat service below, and it has to stay the same: this
       # service fetches pharmcat_positions.vcf, which gatk-api's /gvcf-to-vcf uses as
       # its interval list, and that file is version-specific. A mismatch emits a gVCF

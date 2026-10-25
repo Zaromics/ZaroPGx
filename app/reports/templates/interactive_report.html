@@ -151,8 +151,13 @@
             color: #555;
             margin-top: 2px;
         }
+        .unlisted-table { table-layout: fixed; width: 100%; }
+        .unlisted-table td, .unlisted-table th { overflow-wrap: break-word; vertical-align: top; }
+        .unlisted-table tr.unlisted-tier-a td:nth-child(4),
+        .unlisted-table tr.unlisted-tier-b td:nth-child(4) { color: #8a4b00; font-weight: bold; }
         .alt-locus-note,
-        .copy-number-note {
+        .copy-number-note,
+        .unlisted-note {
             color: #8a4b00;
         }
         .pypgx-evidence details { margin: 6px 0; }
@@ -881,6 +886,7 @@
 {% import "_pypgx_evidence.html" as pypgx %}
 {% import "_unresolved_calls.html" as unresolved %}
 {% import "_pharmcat_messages.html" as pcmsg %}
+{% import "_unlisted_variants.html" as unlisted_variants %}
     <header>
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -1056,6 +1062,8 @@
                 {{ pypgx.evidence_panel(diplotypes) }}
 
                 {{ pypgx.call_key(diplotypes) }}
+
+                {{ unlisted_variants.section(unlisted, 3) }}
                 
                 <div id="geneInfoSection"></div>
             </div>

@@ -24,8 +24,8 @@ nextflow.enable.dsl=2
   call while keeping the server's message, which the caller echoes to stderr. -sS
   replaces the old `2>service.log` redirect, which was swallowing curl's own diagnostic
   into a work-dir file nobody reads; on stderr it reaches .command.err and therefore
-  Nextflow's error report. Two call sites are deliberately exempt and say so inline:
-  PyPGxGenotypeAll and PharmCATRun.
+  Nextflow's error report. Three call sites are deliberately exempt and say so inline:
+  PyPGxGenotypeAll, PharmCATRun and UnlistedVariants.
 
   A 4xx is the service refusing this input (a CRAM compressed against another FASTA,
   a file too large, a malformed VCF), and the same input is refused again. Those calls
@@ -859,6 +859,42 @@ process PharmCATRun {
     '''
 }
 
+// The variants in the pharmacogenes that no allele definition lists (docker/pypgx's
+// unlisted_variants.py): the report lists them, and flags a gene where one is
+// predicted to stop or damage the protein. It reads the VCF PyPGx genotypes, so every
+// input type is checked the same way, and the annotation the genome downloader built.
+//
+// Never fails the run. DELIBERATELY EXEMPT from the --fail-with-body rule in the
+// header for that reason: whatever goes wrong, the JSON says why ("failed" or
+// "not_run"), and the report says the check was not done.
+process UnlistedVariants {
+    tag "unlisted_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path vcf
+    val patient_id
+    val reference
+    val outdir
+
+    output:
+    path "unlisted_variants.json"
+
+    shell:
+    '''
+    set -uo pipefail
+    input-args file shared_input "!{vcf}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -sS -X POST -F reference_genome=!{reference} "${IN[@]}" )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} )
+    fi
+    if ! curl -f "${CURL_ARGS[@]}" -o unlisted_variants.json http://pypgx:5000/unlisted-variants; then
+      echo '{"status": "failed", "reason": "The PyPGx service did not answer the check."}' > unlisted_variants.json
+    fi
+    '''
+}
+
 workflow {
     main:
     assert params.input : 'Missing --input path'
@@ -1125,6 +1161,9 @@ workflow {
         : (params.input_type == 'gvcf' ? GVCFToVCF.out.pharmcat_vcf : vcf_ch)
     pharmcat_absent_ch = Channel.value(explicit_calls ? 'false' : params.pharmcat_absent_to_ref)
     pharmcat_unspecified_ch = Channel.value(explicit_calls ? 'false' : params.pharmcat_unspecified_to_ref)
+
+    // Whether PyPGx runs or not: its allele definitions are read either way.
+    UnlistedVariants(vcf_ch, patient_id_ch, reference_ch, outdir_ch)
 
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {
