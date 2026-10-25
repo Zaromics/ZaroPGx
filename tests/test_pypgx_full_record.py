@@ -207,29 +207,32 @@ def test_profile_plots_go_into_the_job_report_folder(pypgx_api, tmp_path, monkey
 
 
 @pytest.mark.parametrize(
-    "code, summary",
+    "code, diplotype, summary",
     [
-        ("Normal", "normal copy number"),
-        ("WholeDel1", "whole-gene deletion on one chromosome"),
-        ("WholeDel1Hom", "whole-gene deletion on both chromosomes"),
-        ("WholeDup1", "whole-gene duplication on one chromosome"),
-        ("WholeMultip1", "whole-gene multiplication (two or more extra copies)"),
-        ("Tandem1A", "tandem arrangement (see diplotype)"),
-        ("Hybrid2Hom", "hybrid gene on both chromosomes"),
-        ("ParalogWholeDel1", "whole deletion of the paralog"),
-        ("PartialDel1", "partial-gene deletion on one chromosome"),
-        ("NoncodingDel1Hom", "deletion of non-coding sequence on both chromosomes"),
-        ("Unknown2", "unclassified copy-number pattern"),
-        ("Male", "one X chromosome"),
-        (
-            "WholeDel1+Tandem1A",
-            "whole-gene deletion on one chromosome + tandem arrangement (see diplotype)",
-        ),
-        ("", None),
+        ("Normal", None, "normal copy number"),
+        ("WholeDel1", "*0/*B", "one copy deleted"),
+        ("WholeDel1Hom", "*2/*2", "both copies deleted"),
+        ("WholeDup1", None, "one copy duplicated"),
+        ("WholeMultip1", None, "two or more extra copies"),
+        # The tandem named from PyPGx's call, however PharmCAT spaces it.
+        ("Tandem1A", "*3/*68+*4", "tandem *68+*4"),
+        ("Tandem1A", "*3/*68 + *4", "tandem *68+*4"),
+        ("Tandem1B", "*1/*68x2+*4", "tandem *68x2+*4"),
+        ("Tandem1A", None, "a tandem arrangement"),
+        ("Hybrid2Hom", None, "a hybrid gene on both chromosomes"),
+        ("ParalogWholeDel1", None, "the paralog deleted"),
+        ("PartialDel1", None, "part of one copy deleted"),
+        ("NoncodingDel1Hom", None, "a non-coding deletion on both chromosomes"),
+        ("Unknown2", None, "an unclassified copy-number pattern"),
+        ("Male", None, "one X chromosome"),
+        ("WholeDel1+Tandem1A", "*5/*68+*4", "one copy deleted and tandem *68+*4"),
+        ("WholeDel1+WholeDel2", "*0/*0", "both copies deleted"),
+        ("WholeDel1+PartialDel3", "*2/*S3", "one copy deleted and part of the other"),
+        ("", None, None),
     ],
 )
-def test_copy_number_summary(code, summary):
-    assert copy_number_summary(code) == summary
+def test_copy_number_summary(code, diplotype, summary):
+    assert copy_number_summary(code, diplotype) == summary
 
 
 # ---------------------------------------------------------------------------
@@ -349,20 +352,25 @@ def test_the_gene_table_carries_pypgx_s_record(monkeypatch, tmp_path, lane):
 
     gstm1 = _gene_row(page, "GSTM1")
     assert gstm1[2] == "N/A"  # no phenotype rule: N/A, not "Unknown"
-    assert "Copy number: whole-gene deletion on one chromosome (WholeDel1)" in gstm1[1]
+    # In words, without PyPGx's code (the evidence panel has it).
+    assert gstm1[1] == "*0/*B Copy number: one copy deleted"
     assert _gene_row(page, "CYP2B6")[2] == "Intermediate Metabolizer"  # PyPGx's own
     # PharmCAT's no-phenotype genes read the same as PyPGx's, in both views (it
     # was a blank in one and "Unknown" in the other).
     assert _gene_row(page, "VKORC1")[2] == "N/A"
     # A reference call keeps its wild-type label rather than N/A.
     assert _gene_row(page, "UGT2B17")[2] == "Possibly Wild Type"
-    assert "would also find *3" in _gene_row(page, "ABCB1")[1]
+    assert (
+        _gene_row(page, "ABCB1")[1]
+        == "*1/*2 *3 if these variants lie on one chromosome"
+    )
     assert "defines no phenotype for it" in page
 
     # PharmCAT's CYP2D6 row is PyPGx's call: PyPGx's evidence and Call letter,
     # PharmCAT's phenotype.
     cyp2d6 = _gene_row(page, "CYP2D6")
-    assert "Tandem1A" in cyp2d6[1] and cyp2d6[2] == "Poor Metabolizer"
+    assert "Copy number: tandem *68+*4" in cyp2d6[1]
+    assert "Tandem1A" not in cyp2d6[1] and cyp2d6[2] == "Poor Metabolizer"
     assert rows["CYP2D6"]["called_by"] == "P"
 
 
@@ -481,7 +489,7 @@ def test_an_outside_call_pypgx_did_not_make_gets_none_of_it(monkeypatch, tmp_pat
     rows, page = _render(monkeypatch, tmp_path, [other], "write_html")
     assert "pypgx" not in rows["CYP2D6"]
     assert rows["CYP2D6"]["called_by"] == "X"
-    assert "Tandem1A" not in _gene_row(page, "CYP2D6")[1]
+    assert "Copy number" not in _gene_row(page, "CYP2D6")[1]
 
 
 # ---------------------------------------------------------------------------

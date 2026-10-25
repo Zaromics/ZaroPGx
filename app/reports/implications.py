@@ -168,7 +168,7 @@ _OTHER = {
     "unfavorable response": f"PyPGx's response category for this genotype; {RECS}",
     # The report's own labels (generator.wild_type_phenotype, NO_PHENOTYPE_STANDARD),
     # which say what the legends under the Executive Summary and table say.
-    "likely wild type": "Reference genotype: no variant found at the positions tested",
+    "likely wild type": "No variant found at the positions tested",
     "possibly wild type": "Reference genotype where the file has data",
     "n/a": "No phenotype defined for this gene",
     "unknown": f"No phenotype was reported for this call; {RECS}",
@@ -293,3 +293,24 @@ def row_implication(row: Any) -> str:
         _field(row, "gene"),
         bool(_field(row, "diplotype_candidates")),
     )
+
+
+# The gene tables' line for an N/A phenotype. "No phenotype defined for this gene"
+# filled the Implications column of 40 rows on a whole genome's report, under a
+# legend that says what N/A means; a dash says there is no implication to give.
+NO_IMPLICATION = "\u2013"
+
+
+def table_implication(row: Any) -> str:
+    """The Implications cell of a gene-table row (a filter: ``d|table_implication``):
+    row_implication, but a dash for a call the tool defines no phenotype for. The
+    interactive report's gene cards, which have no legend beside them, keep
+    row_implication's words."""
+    if (
+        re.sub(r"\s+", " ", str(_field(row, "phenotype") or "")).strip().lower()
+        == "n/a"
+    ):
+        diplotype = str(_field(row, "diplotype") or "").strip().lower()
+        if diplotype and not diplotype.startswith("unknown"):
+            return NO_IMPLICATION
+    return row_implication(row)

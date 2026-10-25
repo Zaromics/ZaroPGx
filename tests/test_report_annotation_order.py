@@ -25,6 +25,7 @@ from app.pharmcat.report_json import (
     guideline_source_name,
     guideline_source_rank,
 )
+from app.reports.evidence import NO_RECOMMENDATION_TEXT
 from app.services.pharmcat_data_service import PharmCATDataService
 
 EXAMPLE = (
@@ -43,7 +44,7 @@ def _pharmcat_order(report):
                         (
                             section,
                             annotation.get("drugRecommendation")
-                            or "See report for details",
+                            or NO_RECOMMENDATION_TEXT,
                         )
                     )
     return order

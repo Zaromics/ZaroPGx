@@ -29,6 +29,7 @@ from app.pharmcat.report_json import (
 )
 from app.reports.actionable import actionable_findings
 from app.reports.evidence import (
+    NO_RECOMMENDATION_TEXT,
     change_genes,
     classify_evidence,
     prescribing_changes,
@@ -637,7 +638,7 @@ class PharmCATDataService:
                 "recommendation": (
                     recommendation_text
                     if recommendation_text
-                    else "See report for details"
+                    else NO_RECOMMENDATION_TEXT
                 ),
                 "classification": evidence_level,  # This is what the templates check
                 "evidence_rank": tier.rank,

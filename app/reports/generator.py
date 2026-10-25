@@ -57,6 +57,8 @@ from app.mtdna.mt_rnr1 import (
 )
 from app.pharmcat.pharmcat_client import normalize_pharmcat_results
 from app.pharmcat.pharmcat_messages import (
+    STRAND_FOOTNOTE,
+    WHEN_NOT_CALLED,
     drug_messages,
     gene_message_lines,
     gene_messages,
@@ -79,14 +81,13 @@ from app.reports.copy_number import (
     annotate_pharmcat_copy_number,
     copy_number_alert,
     genes_without_copy_number,
-    listed_alleles_note,
     pharmcat_copy_number_alert,
     positions_summary_note,
     why_not_assessed,
 )
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
-from app.reports.implications import row_implication
+from app.reports.implications import row_implication, table_implication
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
@@ -912,44 +913,52 @@ def defines_no_phenotype(row: Dict[str, Any]) -> bool:
 
 
 # PyPGx's copy-number codes (pypgx/api/data/cnv-table.csv), by family, longest
-# prefix first. The code itself is always shown beside the description: PyPGx
-# documents what each numbered variant is, gene by gene.
+# prefix first, in plain words: what the event does to the gene's copies. A code's
+# number tells apart breakpoints PyPGx documents gene by gene; the words are the
+# same for each, and the code stays in the interactive report's evidence panel.
 _COPY_NUMBER_FAMILIES = (
-    ("ParalogPartialDel", "partial deletion of the paralog"),
-    ("ParalogWholeDel", "whole deletion of the paralog"),
-    ("ParalogWholeDup", "duplication of the paralog"),
-    ("NoncodingDel", "deletion of non-coding sequence"),
-    ("NoncodingDup", "duplication of non-coding sequence"),
-    ("WholeMultip", "whole-gene multiplication (two or more extra copies)"),
-    ("WholeDup", "whole-gene duplication"),
-    ("WholeDel", "whole-gene deletion"),
-    ("PartialDel", "partial-gene deletion"),
-    ("PartialDup", "partial-gene duplication"),
-    ("Hybrid", "hybrid gene"),
-    ("Tandem", "tandem arrangement (see diplotype)"),
-    ("Unknown", "unclassified copy-number pattern"),
+    ("ParalogPartialDel", "part of the paralog deleted"),
+    ("ParalogWholeDel", "the paralog deleted"),
+    ("ParalogWholeDup", "the paralog duplicated"),
+    ("NoncodingDel", "a non-coding deletion"),
+    ("NoncodingDup", "a non-coding duplication"),
+    ("WholeMultip", "two or more extra copies"),
+    ("WholeDup", "one copy duplicated"),
+    ("WholeDel", "one copy deleted"),
+    ("PartialDel", "part of one copy deleted"),
+    ("PartialDup", "part of one copy duplicated"),
+    ("Hybrid", "a hybrid gene"),
+    ("Tandem", "a tandem arrangement"),
+    ("Unknown", "an unclassified copy-number pattern"),
 )
-# Families whose event sits on one chromosome unless the code ends in "Hom".
-_ONE_CHROMOSOME_FAMILIES = frozenset(
-    {
-        "NoncodingDel",
-        "NoncodingDup",
-        "WholeDup",
-        "WholeDel",
-        "PartialDel",
-        "PartialDup",
-        "Hybrid",
-    }
-)
+# The same event on both chromosomes: the code ends in "Hom".
+_ON_BOTH_CHROMOSOMES = {
+    "ParalogPartialDel": "part of both paralogs deleted",
+    "ParalogWholeDel": "both paralogs deleted",
+    "NoncodingDel": "a non-coding deletion on both chromosomes",
+    "NoncodingDup": "a non-coding duplication on both chromosomes",
+    "WholeDup": "both copies duplicated",
+    "WholeDel": "both copies deleted",
+    "PartialDel": "part of both copies deleted",
+    "PartialDup": "part of both copies duplicated",
+    "Hybrid": "a hybrid gene on both chromosomes",
+}
 # G6PD is on chromosome X: there PyPGx's copy-number call is the X count.
 _X_CHROMOSOME_CALLS = {"Female": "two X chromosomes", "Male": "one X chromosome"}
+# A tandem's alleles as the diplotype names them: CYP2D6 Tandem1A is "*68+*4".
+_TANDEM_ALLELE = re.compile(r"\*[^/\s+]+(?:\s*\+\s*\*[^/\s+]+)+")
 
 
-def copy_number_summary(code: Optional[str]) -> Optional[str]:
-    """A plain description of a PyPGx copy-number code, or None for none."""
+def copy_number_summary(
+    code: Optional[str], diplotype: Optional[str] = None
+) -> Optional[str]:
+    """A PyPGx copy-number code in plain words, or None for none: "one copy
+    deleted", "both copies deleted", "tandem *68+*4" (the tandem named from the
+    diplotype, where it shows one)."""
     text = str(code or "").strip()
     if not text:
         return None
+    tandem = _TANDEM_ALLELE.search(str(diplotype or ""))
     parts = []
     for part in text.split("+"):
         if part == "Normal":
@@ -960,14 +969,20 @@ def copy_number_summary(code: Optional[str]) -> Optional[str]:
             continue
         family = next((f for f in _COPY_NUMBER_FAMILIES if part.startswith(f[0])), None)
         if family is None:
-            parts.append("structural variant")
-        elif part.endswith("Hom"):
-            parts.append(f"{family[1]} on both chromosomes")
-        elif family[0] in _ONE_CHROMOSOME_FAMILIES:
-            parts.append(f"{family[1]} on one chromosome")
+            parts.append("a structural variant")
+        elif family[0] == "Tandem" and tandem:
+            parts.append("tandem " + re.sub(r"\s+", "", tandem.group(0)))
+        elif part.endswith("Hom") and family[0] in _ON_BOTH_CHROMOSOMES:
+            parts.append(_ON_BOTH_CHROMOSOMES[family[0]])
         else:
             parts.append(family[1])
-    return " + ".join(parts)
+    # Two deletions, one on each chromosome (GSTM1 WholeDel1+WholeDel2), or a
+    # whole and a partial one (UGT2B17 WholeDel1+PartialDel3).
+    if parts == ["one copy deleted", "one copy deleted"]:
+        return "both copies deleted"
+    if parts == ["one copy deleted", "part of one copy deleted"]:
+        return "one copy deleted and part of the other"
+    return " and ".join(parts)
 
 
 def _same_diplotype(a: Any, b: Any) -> bool:
@@ -1065,10 +1080,13 @@ def credit_mtdna_call(genes: List[Dict[str, Any]], report_dir: str) -> bool:
     return False
 
 
-def pypgx_record(details: Dict[str, Any]) -> Dict[str, Any]:
+def pypgx_record(
+    details: Dict[str, Any], diplotype: Optional[str] = None
+) -> Dict[str, Any]:
     """What PyPGx reported for a gene beyond its genotype (docker/pypgx's
     parse_pypgx_results): candidate alleles, alternative phasings, the copy-number
-    call, the variants behind each allele, and its plots."""
+    call, the variants behind each allele, and its plots. ``diplotype``, PyPGx's
+    call, names a tandem in the copy-number summary."""
     record: Dict[str, Any] = {}
     for key in (
         "haplotype1",
@@ -1081,7 +1099,9 @@ def pypgx_record(details: Dict[str, Any]) -> Dict[str, Any]:
             record[key] = details[key]
     if details.get("copy_number"):
         record["copy_number"] = details["copy_number"]
-        record["copy_number_summary"] = copy_number_summary(details["copy_number"])
+        record["copy_number_summary"] = copy_number_summary(
+            details["copy_number"], diplotype
+        )
     return record
 
 
@@ -1219,15 +1239,39 @@ def attach_pharmcat_messages(
 
     ``positions_stated``: the report's positions alert was produced, so PharmCAT's
     missing-positions notes are left out. Returns what has no row to sit on:
-    ``general``, the report's top-level messages, and ``drugs``, the notes on drugs
+    ``general``, the report's top-level messages; ``drugs``, the notes on drugs
     with no recommendation for this sample (PharmCAT's own report still gives such
     a drug its section, its messages at the head), each note once with the drugs
-    it is on."""
-    extra: Dict[str, List[Dict[str, Any]]] = {"general": [], "drugs": []}
+    it is on; and ``strand``, the genes PharmCAT footnotes as on the negative
+    strand, said once (pharmcat_messages.STRAND_FOOTNOTE)."""
+    extra: Dict[str, Any] = {"general": [], "drugs": [], "strand": []}
     if not report:
         return extra
-    by_gene = gene_messages(report, positions_stated)
-    by_drug = drug_messages(report, positions_stated)
+    called = {
+        str(row.get("gene") or "").strip().upper()
+        for row in genes or []
+        if isinstance(row, dict) and gene_was_called(row.get("diplotype"))
+    }
+
+    def kept(entries):
+        """Each gene's strand footnote is said once for all of them (``strand``),
+        and a note for an uncalled gene only while it has none."""
+        out = []
+        for entry in entries or []:
+            strand = STRAND_FOOTNOTE.match(entry.get("rule") or "")
+            if strand:
+                gene = strand.group(1).upper()
+                if gene not in extra["strand"]:
+                    extra["strand"].append(gene)
+                continue
+            if WHEN_NOT_CALLED.get(entry.get("rule")) in called:
+                continue
+            out.append(entry)
+        return out
+
+    by_gene = {g: kept(e) for g, e in gene_messages(report, positions_stated).items()}
+    by_drug = {d: kept(e) for d, e in drug_messages(report, positions_stated).items()}
+    extra["strand"].sort()
     for row in genes or []:
         if isinstance(row, dict):
             entries = by_gene.get(str(row.get("gene") or "").strip().upper())
@@ -1591,12 +1635,12 @@ def register_report_template_helpers(environment) -> None:
     environment.filters["literature_references"] = format_literature_references
     environment.filters["ref_numbers"] = ref_numbers
     environment.filters["implication"] = row_implication
+    environment.filters["table_implication"] = table_implication
     environment.filters["called_by_text"] = called_by_text
     environment.tests["a_call"] = gene_was_called
     environment.tests["in_summary_panel"] = in_summary_panel
     environment.globals["summary_rows"] = summary_rows
     environment.globals["inline_script"] = inline_script
-    environment.globals["listed_alleles_note"] = listed_alleles_note
     environment.globals["positions_summary_note"] = positions_summary_note
 
 
@@ -1792,27 +1836,29 @@ _VARIANT_ONLY_INPUT_TYPES = frozenset({"vcf", "bcf"})
 POSITION_STATUS_FILE = os.path.join("pharmcat", "pharmcat_position_status.tsv")
 
 # Why a position PharmCAT lists as missing was not genotyped for it, from the
-# alignment's per-position statuses: {bucket: (label, meaning)}, in the order the
-# alert gives them. A status the file holds but the alert does not name (a 0/0
-# record PharmCAT discarded would be "reference") is "other"; a position missing
-# from the file is "unlisted", so each line's reasons add up to its count.
+# alignment's per-position statuses: {bucket: (words, meaning)}, in the order the
+# alert gives them, each line saying "3 of 20 positions not read, 2 more read but
+# not called". A status the file holds but the alert does not name (a 0/0 record
+# PharmCAT discarded would be "reference") is "other"; a position missing from the
+# file is "unlisted", so each line's counts add up to its missing positions.
 _MISSING_REASONS = {
     "no_reads": (
-        "no reads",
+        "not read",
         "no read of mapping quality 1 or more reached the position",
     ),
     "uncertain": (
-        "uncertain",
-        "reads did, but did not settle the genotype (see Methodology)",
+        "read but not called",
+        "too few reads, or reads for another allele without a confident call (see "
+        "Methodology)",
     ),
     "variant": (
-        "variant",
+        "with a variant PharmCAT did not take",
         "the reads showed a non-reference allele that PharmCAT did not take at its "
         "position (a call starting at another position, or a record it discarded)",
     ),
     "other": (
-        "other",
-        "another status, given per position in pharmcat_position_status.tsv",
+        "with another status",
+        "given per position in pharmcat_position_status.tsv",
     ),
     "unlisted": (
         "not in this run's position list",
@@ -1931,7 +1977,7 @@ def partial_coverage_alert(
     if variant_only:
         verb, intro = "not in the VCF", "The VCF has no genotype at"
     elif kind in ALIGNMENT_INPUT_TYPES:
-        verb, intro = "not read", "The alignment gave no genotype at"
+        verb, intro = "without a genotype", "The alignment gave no genotype at"
     else:
         verb, intro = "without a genotype", "The data gave no genotype at"
     # Read statuses describe an alignment's reads; a VCF's missing positions are
@@ -1973,12 +2019,18 @@ def partial_coverage_alert(
                     else:
                         bucket = status if status in _NAMED_STATUSES else "other"
                     tally[bucket] = tally.get(bucket, 0) + 1
-                reasons = [
-                    f"{label} {tally[key]}"
-                    for key, (label, _) in _MISSING_REASONS.items()
-                    if key in tally
-                ]
-                text += f" ({', '.join(reasons)})"
+                # "3 of 20 positions not read, 2 more read but not called": the
+                # first reason takes the gene's count of positions, the rest "more".
+                reasons = []
+                for key, (words, _) in _MISSING_REASONS.items():
+                    if key not in tally:
+                        continue
+                    if reasons:
+                        reasons.append(f"{tally[key]} more {words}")
+                    else:
+                        first = f"{tally[key]} of {total}" if known else str(tally[key])
+                        reasons.append(f"{first} {noun} {words}")
+                text = ", ".join(reasons)
                 used.update(tally)
             parts.append(text)
         if not called:
@@ -2013,12 +2065,12 @@ def partial_coverage_alert(
     )
     # The reasons this alert gives, explained once; constants, so nothing to escape.
     legend = [
-        f"<em>{label}</em>: {meaning}"
-        for key, (label, meaning) in _MISSING_REASONS.items()
+        f"<em>{words[0].upper() + words[1:]}</em>: {meaning}."
+        for key, (words, meaning) in _MISSING_REASONS.items()
         if key in used
     ]
     if legend:
-        note += " In brackets, " + "; ".join(legend) + "."
+        note += " " + " ".join(legend)
     return note + "</p><ul>" + "".join(lines) + "</ul>"
 
 
@@ -4229,7 +4281,7 @@ def generate_report(
                         continue
                     gene_name = str(gene_key).strip()
                     details = gene_res.get("details") or {}
-                    record = pypgx_record(details)
+                    record = pypgx_record(details, gene_res.get("diplotype"))
                     if gene_name.upper() in existing_genes:
                         # A PharmCAT row whose call PyPGx supplied -- an outside
                         # call with PyPGx's diplotype, as for CYP2D6 -- is PyPGx's
@@ -4397,7 +4449,16 @@ def generate_report(
             ],
             copy_number_why,
         ),
-        pharmcat_copy_number_alert(_noted),
+        # Every called row: PyPGx's normal copy number for a gene with nothing
+        # left to note (CYP4F2) is said there too.
+        pharmcat_copy_number_alert(
+            [
+                row
+                for row in data.get("genes", [])
+                if isinstance(row, dict) and gene_was_called(row.get("diplotype"))
+            ],
+            pypgx_results,
+        ),
     ]
     if any(_copy_number_alerts):
         workflow_warnings = list(workflow_warnings) + [

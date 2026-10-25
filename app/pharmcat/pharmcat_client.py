@@ -20,7 +20,11 @@ from app.pharmcat.report_json import (
     iter_gene_blocks,
     iter_unannotated_gene_blocks,
 )
-from app.reports.evidence import change_genes, prescribing_changes
+from app.reports.evidence import (
+    NO_RECOMMENDATION_TEXT,
+    change_genes,
+    prescribing_changes,
+)
 from app.utils.outside_calls_override import get_override_file_path
 
 # Import pysam for VCF sample extraction
@@ -358,9 +362,7 @@ def normalize_pharmcat_results(response):
                                         elif "text" in annotation:
                                             recommendation_text = annotation["text"]
                                         else:
-                                            recommendation_text = (
-                                                "See report for details"
-                                            )
+                                            recommendation_text = NO_RECOMMENDATION_TEXT
 
                                         # Extract classification and strength of evidence
                                         # PharmCAT uses strengthOfEvidence for CPIC levels (A, B, C)
@@ -1162,7 +1164,7 @@ def extract_drug_recommendations_from_phenotype(phenotype_data):
                     "drugId": drug_rec.get("drugId", ""),
                     "guideline": drug_rec.get("guidelineName", ""),
                     "recommendation": drug_rec.get(
-                        "recommendationText", "See report for details"
+                        "recommendationText", NO_RECOMMENDATION_TEXT
                     ),
                     "classification": drug_rec.get("strengthOfEvidence")
                     or drug_rec.get("classification", ""),
@@ -1202,7 +1204,7 @@ def extract_drug_recommendations_from_phenotype(phenotype_data):
                             "drugId": drug_rec.get("drugId", ""),
                             "guideline": drug_rec.get("guidelineName", ""),
                             "recommendation": drug_rec.get(
-                                "recommendationText", "See report for details"
+                                "recommendationText", NO_RECOMMENDATION_TEXT
                             ),
                             "classification": drug_rec.get("strengthOfEvidence")
                             or drug_rec.get("classification", ""),

@@ -28,6 +28,7 @@ from app.reports.implications import (
     UNRESOLVED,
     phenotype_implication,
     row_implication,
+    table_implication,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -434,3 +435,80 @@ def test_a_shared_phenotype_line_reads_right_when_there_is_none_or_it_opens_with
 def test_pypgx_cftr_indeterminate_says_no_responsive_variant():
     line = phenotype_implication("Indeterminate", "CFTR")
     assert line.startswith("No ivacaftor-responsive variant detected"), line
+
+
+def test_the_tables_give_a_dash_where_no_phenotype_is_defined():
+    """ "No phenotype defined for this gene" filled 40 rows of the demo's table under
+    the legend that says what N/A means. The cards, with no legend, keep the words."""
+    na = {"gene": "ABCB1", "diplotype": "*1/*2", "phenotype": "N/A"}
+    assert table_implication(na) == "\u2013"
+    assert row_implication(na) == "No phenotype defined for this gene"
+    # Everything else as row_implication says it.
+    for row in (
+        {"gene": "ABCB1", "diplotype": "Unknown/Unknown", "phenotype": "N/A"},
+        {
+            "gene": "CYP2C9",
+            "diplotype": "*1/*2",
+            "phenotype": "Intermediate Metabolizer",
+        },
+        {
+            "gene": "APOE",
+            "diplotype": "Reference/Reference",
+            "phenotype": "Likely Wild Type",
+        },
+    ):
+        assert table_implication(row) == row_implication(row), row
+    assert (
+        row_implication(
+            {
+                "gene": "APOE",
+                "diplotype": "Reference/Reference",
+                "phenotype": "Likely Wild Type",
+            }
+        )
+        == "No variant found at the positions tested"
+    )
+
+
+def _render(rows):
+    return generator_module.env.get_template("report_template.html").render(
+        diplotypes=rows,
+        recommendations=[],
+        report_id="r",
+        report_date="2026-10-21",
+        disclaimer="",
+    )
+
+
+NA_LEGEND = "phenotype: the tool that called the gene"
+
+
+def test_the_na_legend_is_said_once():
+    """The demo gave it behind the Executive Summary and again under the gene
+    table. It goes where the first N/A is: the summary's notes when a gene there is
+    N/A, else under Genetic Results."""
+    outside = {
+        "gene": "ABCB1",
+        "diplotype": "*1/*2",
+        "phenotype": "N/A",
+        "tool_source": "PyPGx",
+        "pyPgxOnly": True,
+    }
+    vkorc1 = {
+        "gene": "VKORC1",
+        "diplotype": "rs9923231 reference (C)/rs9923231 variant (T)",
+        "phenotype": "N/A",
+        "call_source": "MATCHER",
+    }
+    page = _render([outside, vkorc1])
+    assert page.count(NA_LEGEND) == 1
+    notes = page[
+        page.index('id="exec-summary-notes"') : page.index("<h2>Genetic Results")
+    ]
+    assert NA_LEGEND in notes
+    page = _render([outside])
+    assert page.count(NA_LEGEND) == 1
+    assert page.index(NA_LEGEND) > page.index("<h2>Genetic Results")
+    # The table's cell for an N/A call is a dash.
+    rows = _implications(page[page.index('class="gene-table"') :])
+    assert rows["ABCB1"] == "\u2013"

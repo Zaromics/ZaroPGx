@@ -16,23 +16,28 @@
 {%- endmacro %}
 
 {#- Every row with messages, called or not: PharmCAT gives an uncalled RYR1 (data,
-    but no call) its malignant hyperthermia warning. -#}
-{% macro gene_notes(rows, general=[]) -%}
+    but no call) its malignant hyperthermia warning. One line a gene, its notes in
+    PharmCAT's order. PharmCAT's strand footnote, the same words for each gene on
+    the negative strand, is said once after them (``strand``). -#}
+{% macro gene_notes(rows, general=[], strand=[]) -%}
 {%- set with_messages = rows|selectattr('pharmcat_messages')|list %}
-{%- if with_messages or general %}
+{%- if with_messages or general or strand %}
 <div class="pharmcat-messages">
     <h4>PharmCAT's notes on these calls</h4>
+    {%- if with_messages or general %}
     <p class="header-note">In PharmCAT's words, from its report.</p>
     <ul class="pharmcat-message-list">
     {%- for m in general %}
         <li>{{ source(m) }} {{ message_body(m) }}</li>
     {%- endfor %}
     {%- for d in with_messages %}
-        {%- for m in d.pharmcat_messages %}
-        <li><strong>{{ d.gene }}</strong>{% if d.diplotype is not a_call %} (not called){% endif %}: {{ message_body(m) }}</li>
-        {%- endfor %}
+        <li><strong>{{ d.gene }}</strong>{% if d.diplotype is not a_call %} (not called){% endif %}: {% for m in d.pharmcat_messages %}{{ message_body(m) }}{% if not loop.last %} {% endif %}{% endfor %}</li>
     {%- endfor %}
     </ul>
+    {%- endif %}
+    {%- if strand %}
+    <p class="header-note">{{ strand[0] if strand|length == 1 else strand[:-1]|join(', ') ~ ' and ' ~ strand[-1] }} {{ 'is' if strand|length == 1 else 'are' }} on the negative strand: as PharmCAT notes, {{ 'its genotype is' if strand|length == 1 else 'their genotypes are' }} given here on the positive strand, complemented from the gene's bases.</p>
+    {%- endif %}
 </div>
 {%- endif %}
 {%- endmacro %}

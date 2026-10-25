@@ -14,15 +14,23 @@
 <div class="call-note alt-locus-note">⚠ {{ d.alt_locus.call_note }}</div>
 {%- endif %}
 {#- A call on a gene with SV-defined alleles made without copy number
-    (app/reports/copy_number.py): what it cannot show. #}
+    (app/reports/copy_number.py): what it cannot show, marked. A call whose copy
+    number PyPGx measured is not: its note (CYP2B6 *30) is plain. #}
 {%- if d.copy_number_not_assessed and d.diplotype is a_call %}
+{%- if d.copy_number_not_assessed.warn is sameas false %}
+<div class="call-note">{{ d.copy_number_not_assessed.call_note }}</div>
+{%- else %}
 <div class="call-note copy-number-note">⚠ {{ d.copy_number_not_assessed.call_note }}</div>
 {%- endif %}
-{%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' %}
-<div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }} ({{ d.pypgx.copy_number|code_breaks }})</div>
 {%- endif %}
+{#- PyPGx's copy-number call in words; its code is in the evidence panel. #}
+{%- if d.pypgx and d.pypgx.copy_number and d.pypgx.copy_number != 'Normal' %}
+<div class="call-note">Copy number: {{ d.pypgx.copy_number_summary }}</div>
+{%- endif %}
+{#- PyPGx's AlternativePhase: the alleles it finds with every variant it saw on
+    one chromosome, beyond those of its call. #}
 {%- if d.pypgx and d.pypgx.alternative_phase %}
-<div class="call-note">Phase-dependent: with these variants on one chromosome PyPGx would also find {{ d.pypgx.alternative_phase|join(', ') }}</div>
+<div class="call-note">{{ d.pypgx.alternative_phase|join(', ') }} if these variants lie on one chromosome</div>
 {%- endif %}
 {#- How many of the positions behind PyPGx's call it read as the reference with
     nothing in the file to say so (generator: positions_note). #}
@@ -34,6 +42,19 @@
 {%- if d.no_call_note and d.diplotype is not a_call %}
 <div class="call-note">{{ d.no_call_note }}.</div>
 {%- endif %}
+{%- endmacro %}
+
+{#- The Call column's key: one line, the letters this report shows. Every row's
+    letter counts, called or not: an uncalled gene keeps the letter of the tool
+    that tried (provenance.called_by_text), and the PDF lists those genes, letter
+    and all, after the table. -#}
+{% macro call_key(rows) -%}
+{%- set letters = [] %}
+{%- for d in rows %}{% set _ = letters.append(d.called_by or '?') %}{% endfor %}
+{%- set keys = [('C', 'PharmCAT'), ('P', 'PyPGx'), ('O', 'OptiType'), ('M', 'mtDNA-Server 2'), ('X', 'outside call, tool not recorded'), ('–', 'no call, and no tool on record'), ('?', 'not recorded by this run')] %}
+<div class="tool-key">
+    <p><strong>Call:</strong> the tool that made the call{% if rows|rejectattr('diplotype', 'a_call')|list %}, or, for a gene without one, the tool that tried{% endif %}. {% for key, words in keys if key in letters %}<strong>{{ key }}</strong> {{ words }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>
+</div>
 {%- endmacro %}
 
 {% macro na_legend(rows, attribute='phenotype') -%}

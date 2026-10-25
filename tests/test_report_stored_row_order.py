@@ -27,6 +27,7 @@ from sqlalchemy import text
 from app.pharmcat import pharmcat_parser
 from app.pharmcat.pharmcat_parser import PharmCATParser
 from app.pharmcat.report_json import iter_gene_blocks
+from app.reports.evidence import NO_RECOMMENDATION_TEXT
 from app.services.pharmcat_data_service import PharmCATDataService
 from tests.test_report_unannotated_gene_calls import F2, F5
 
@@ -272,7 +273,7 @@ def test_each_drug_s_annotations_from_one_source_keep_pharmcat_s_order(db_sessio
                         (
                             section,
                             annotation.get("drugRecommendation")
-                            or "See report for details",
+                            or NO_RECOMMENDATION_TEXT,
                         )
                     )
     assert got == expected
