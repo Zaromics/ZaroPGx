@@ -419,3 +419,13 @@ def test_every_service_with_ref_path_mounts_the_reference_tree(compose):
             ), f"{name}: REF_PATH {entry} is not inside a mount of {cache_host}"
         checked.append(name)
     assert "zarohla" in checked
+
+
+def test_the_fhir_servers_heap_reaches_its_jvm(compose):
+    # hapiproject/hapi starts java in exec form, with no shell to expand JAVA_OPTS:
+    # the -Xmx2g once set that way was never applied, and the JVM took a quarter of
+    # the host's memory. The JVM reads JAVA_TOOL_OPTIONS itself.
+    env = compose["services"]["fhir-server"]["environment"]
+    settings = dict(e.split("=", 1) for e in env if "=" in e)
+    assert "JAVA_OPTS" not in settings
+    assert settings["JAVA_TOOL_OPTIONS"].startswith("-Xmx${HAPI_JAVA_HEAP:-2g}")

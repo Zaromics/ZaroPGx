@@ -38,6 +38,7 @@ Where a template ships a different value from the code's default, both are given
 |---|---|---|
 | `ZAROPGX_TAG` | the release | Tag of the `zaromicsresearch/zaropgx-*` images to pull. `latest` follows the newest |
 | `HAPI_FHIR_TAG` | `v8.12.0-2` | The HAPI FHIR image. A new version migrates its database schema on first start, one way: back up first |
+| `HAPI_JAVA_HEAP` | `2g` | The HAPI FHIR server's Java heap (`-Xmx`). 2 GB covers its first start, which installs the Genomics Reporting IG, and pushes of whole-genome bundles; raise it if its log shows `OutOfMemoryError` |
 | `PHARMCAT_VERSION` | `3.4.0` | The PharmCAT release built into the PharmCAT image |
 | `NETWORK_SUBNET` | `172.28.0.0/16` (`.env.local`: `172.20.0.0/16`) | The Compose network's subnet; change it if it collides with yours |
 | `JAVA_OPTS` | `-Xmx4g` | PharmCAT's JVM options |
