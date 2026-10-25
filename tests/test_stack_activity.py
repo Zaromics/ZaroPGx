@@ -50,7 +50,11 @@ def test_a_failed_upload_stops_counting():
 
     middleware = activity.UploadActivityMiddleware(endpoint)
     try:
-        asyncio.run(middleware({"type": "http", "method": "POST", "path": "/upload/demo"}, None, None))
+        asyncio.run(
+            middleware(
+                {"type": "http", "method": "POST", "path": "/upload/demo"}, None, None
+            )
+        )
     except RuntimeError:
         pass
     assert activity.uploads_in_flight() == 0
@@ -58,7 +62,10 @@ def test_a_failed_upload_stops_counting():
 
 def test_jobs_not_finished_are_counted(db_session):
     service = JobService(db_session)
-    jobs = [service.create_job(JobCreate(workflow_type="genomic_analysis", name=f"j{i}")) for i in range(3)]
+    jobs = [
+        service.create_job(JobCreate(workflow_type="genomic_analysis", name=f"j{i}"))
+        for i in range(3)
+    ]
     db_session.get(Job, jobs[0].id).status = JobStatus.COMPLETED
     db_session.get(Job, jobs[1].id).status = JobStatus.RUNNING
     db_session.flush()
@@ -66,12 +73,16 @@ def test_jobs_not_finished_are_counted(db_session):
     assert active_job_count(db_session) == 2  # one running, one pending
 
 
-def test_the_route_answers_inside_the_container_only(override_db_dependency, db_session):
+def test_the_route_answers_inside_the_container_only(
+    override_db_dependency, db_session
+):
     from app.main import app
 
     app.router.on_startup.clear()
     app.router.on_shutdown.clear()
-    JobService(db_session).create_job(JobCreate(workflow_type="genomic_analysis", name="busy"))
+    JobService(db_session).create_job(
+        JobCreate(workflow_type="genomic_analysis", name="busy")
+    )
     db_session.flush()
 
     with TestClient(app, client=("127.0.0.1", 50000)) as inside:
@@ -93,7 +104,10 @@ def test_the_route_is_open_at_the_gate_and_kept_out_of_the_api_docs(client):
 def test_both_start_scripts_ask_before_they_stop_the_stack():
     sh = (REPO / "start-docker.sh").read_text(encoding="utf-8")
     ps1 = (REPO / "start-docker.ps1").read_text(encoding="utf-8")
-    for script, down in ((sh, "docker compose down"), (ps1, 'Invoke-Docker "docker compose down')):
+    for script, down in (
+        (sh, "docker compose down"),
+        (ps1, 'Invoke-Docker "docker compose down'),
+    ):
         assert "scripts/stack_activity.py" in script
         assert script.index("stack_activity.py") < script.index(down)
     assert "check_stack_idle\nif ! docker compose down" in sh

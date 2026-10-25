@@ -836,7 +836,10 @@ def internal_activity(request: Request, db: Session = Depends(get_db)):
     anyone else, as to a request through a proxy, the path does not exist."""
     if not request.client or request.client.host not in ("127.0.0.1", "::1"):
         raise HTTPException(status_code=404, detail="Not Found")
-    return {"uploads_in_flight": uploads_in_flight(), "jobs_active": active_job_count(db)}
+    return {
+        "uploads_in_flight": uploads_in_flight(),
+        "jobs_active": active_job_count(db),
+    }
 
 
 @app.get("/health")
