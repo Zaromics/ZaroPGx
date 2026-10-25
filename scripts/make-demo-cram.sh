@@ -29,11 +29,14 @@
 # same genotype at every PharmCAT position (1,199 reference, 24 variant, 3 uncertain).
 #
 # Usage:
-#   scripts/make-demo-cram.sh [SOURCE] [OUT_DIR]
+#   scripts/make-demo-cram.sh [SOURCE] [OUT_DIR] [NAME] [LABEL]
 #
 # SOURCE is NA12878's CRAM or BAM, a URL or a local file; the default is the 1000
 # Genomes URL, which samtools reads by region, so only the blocks needed are fetched.
-# OUT_DIR defaults to ./app/static/demo; run it from the repository's root. Needs the
+# OUT_DIR defaults to ./app/static/demo; run it from the repository's root. NAME
+# (NA12878.pgx-demo) names the files written, and LABEL says in the header's @CO line
+# whose reads they are. scripts/getrm/cut.sh cuts GeT-RM's reference samples this way,
+# from their own 1000 Genomes CRAMs. Needs the
 # reference the genome downloader stages: its cache of the 1000 Genomes analysis set,
 # which decodes the source and encodes the result, and PharmCAT's position list.
 
@@ -41,7 +44,8 @@ set -euo pipefail
 
 SOURCE="${1:-https://ftp.sra.ebi.ac.uk/vol1/run/ERR323/ERR3239334/NA12878.final.cram}"
 OUT_DIR="${2:-./app/static/demo}"
-NAME="NA12878.pgx-demo"
+NAME="${3:-NA12878.pgx-demo}"
+LABEL="${4:-ZaroPGx demo: NA12878, 1000 Genomes 30x (NYGC, ERR3239334)}"
 REFERENCE="${ZAROPGX_REFERENCE:-./reference}"
 POSITIONS="${REFERENCE}/pharmcat/pharmcat_positions.vcf"
 IMAGE="${ZAROPGX_DEMO_IMAGE:-zaromicsresearch/zaropgx-gatk-api:0.4.0}"
@@ -121,6 +125,7 @@ $DOCKER run --rm ${MOUNTS[@]+"${MOUNTS[@]}"} -v "$ABS_REF":/reference:ro -v "$WO
   -e 'REF_PATH=/reference/ref_cache/%2s/%2s/%s' -w /work --entrypoint bash "$IMAGE" -c '
 set -euo pipefail
 SOURCE="$1"
+LABEL="$2"
 samtools view --no-PG -H "$SOURCE" > source_header.sam
 awk -F"\t" '\''$1 == "@SQ" {
   for (i = 2; i <= NF; i++) { if ($i ~ /^SN:/) sn = substr($i, 4); if ($i ~ /^LN:/) ln = substr($i, 4) }
@@ -135,14 +140,14 @@ samtools sort --no-PG -o sorted.bam merged.bam
 {
   # -s wrote "Sub-sampled fraction=0.1", which reads as if all of it were; the line below says what.
   samtools view --no-PG -H sorted.bam | grep -v "^@CO	Sub-sampled"
-  printf "@CO\tZaroPGx demo: NA12878, 1000 Genomes 30x (NYGC, ERR3239334), cut by scripts/make-demo-cram.sh to %s\n" \
+  printf "@CO\t%s, cut by scripts/make-demo-cram.sh to %s\n" "$LABEL" \
     "PyPGx and PharmCAT gene regions, depth windows, HLA class I, the HLA contigs and 1 in 10 chrM reads"
 } > header.sam
 samtools reheader --no-PG header.sam sorted.bam > final.bam
 samtools view --no-PG -C -o demo.cram final.bam
 samtools index demo.cram
 samtools view -c demo.cram
-' _ "$SOURCE_ARG"
+' _ "$SOURCE_ARG" "$LABEL"
 
 mv "${WORK}/regions.bed" "${ABS_OUT}/${NAME}.regions.bed"
 mv "${WORK}/demo.cram" "${ABS_OUT}/${NAME}.cram"
