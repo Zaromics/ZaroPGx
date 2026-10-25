@@ -33,17 +33,33 @@ WRAPPER = ROOT / "docker" / "pypgx" / "pypgx_wrapper.py"
 # PyPGx's GRCh38 regions and exons (lexicon/gene-table.csv), + strand both.
 CYP2C19_START = 94759680
 CYP2C19_EXONS = [
-    (94762680, 94762873), (94775057, 94775220), (94775389, 94775539),
-    (94780498, 94780659), (94781820, 94781997), (94820495, 94820637),
-    (94842836, 94843024), (94849916, 94850058), (94852732, 94855547),
+    (94762680, 94762873),
+    (94775057, 94775220),
+    (94775389, 94775539),
+    (94780498, 94780659),
+    (94781820, 94781997),
+    (94820495, 94820637),
+    (94842836, 94843024),
+    (94849916, 94850058),
+    (94852732, 94855547),
 ]
 SLCO1B1_START = 21128193
 SLCO1B1_EXONS = [
-    (21131193, 21131236), (21141513, 21141658), (21172649, 21172791),
-    (21174576, 21174709), (21176775, 21176897), (21178575, 21178722),
-    (21178921, 21179020), (21196945, 21197188), (21200507, 21200672),
-    (21202490, 21202686), (21205867, 21206033), (21217118, 21217303),
-    (21222299, 21222364), (21224721, 21224839), (21238978, 21239796),
+    (21131193, 21131236),
+    (21141513, 21141658),
+    (21172649, 21172791),
+    (21174576, 21174709),
+    (21176775, 21176897),
+    (21178575, 21178722),
+    (21178921, 21179020),
+    (21196945, 21197188),
+    (21200507, 21200672),
+    (21202490, 21202686),
+    (21205867, 21206033),
+    (21217118, 21217303),
+    (21222299, 21222364),
+    (21224721, 21224839),
+    (21238978, 21239796),
 ]
 # The check's 5 kb bins on 1000 Genomes 30x genomes.
 HG00268_CYP2C19 = [0.91, 0.91, 0.86, 0.86, 0.91, 0.91, 0.8, 0.8, 1.77, 1.83, 1.66,
@@ -91,7 +107,9 @@ def _bins(start, values, size=5000):
 
 
 def test_hg00268_is_cyp2c19_star37(check):
-    record = check.call_gene("CYP2C19", _bins(CYP2C19_START, HG00268_CYP2C19), CYP2C19_EXONS)
+    record = check.call_gene(
+        "CYP2C19", _bins(CYP2C19_START, HG00268_CYP2C19), CYP2C19_EXONS
+    )
     (deletion,) = record["deletions"]
     assert record["status"] == "measured"
     assert deletion["exons"] == [1, 2, 3, 4, 5]
@@ -100,7 +118,9 @@ def test_hg00268_is_cyp2c19_star37(check):
 
 
 def test_a_deletion_that_keeps_exon_1_is_not_star37(check):
-    record = check.call_gene("CYP2C19", _bins(CYP2C19_START, HG01771_CYP2C19), CYP2C19_EXONS)
+    record = check.call_gene(
+        "CYP2C19", _bins(CYP2C19_START, HG01771_CYP2C19), CYP2C19_EXONS
+    )
     (deletion,) = record["deletions"]
     assert deletion["exons"] == [2, 3, 4, 5] and deletion["allele"] is None
     assert "not *37" in deletion["description"]
@@ -118,7 +138,9 @@ def test_a_normal_profile_has_no_deletion(check, gene, start, values, exons):
     record = check.call_gene(gene, _bins(start, values), exons)
     assert record["status"] == "measured" and record["deletions"] == []
     assert check.genotype("*1/*2", record) == {
-        "diplotype": "*1/*2", "copy_number": "Normal", "conflict": False,
+        "diplotype": "*1/*2",
+        "copy_number": "Normal",
+        "conflict": False,
     }
 
 
@@ -165,7 +187,9 @@ def test_whole_genes_and_both_copies(check):
 
 
 def test_a_profile_off_two_copies_calls_nothing(check):
-    record = check.call_gene("CYP2C19", _bins(CYP2C19_START, [1.4] * 18 + [0.5, 0.5]), CYP2C19_EXONS)
+    record = check.call_gene(
+        "CYP2C19", _bins(CYP2C19_START, [1.4] * 18 + [0.5, 0.5]), CYP2C19_EXONS
+    )
     assert record["status"] == "uncertain" and record["deletions"] == []
     # SLCO1B1 reads a little under two copies on normal genomes: still measured.
     low = check.call_gene("SLCO1B1", _bins(SLCO1B1_START, [1.55] * 23), SLCO1B1_EXONS)
@@ -173,22 +197,32 @@ def test_a_profile_off_two_copies_calls_nothing(check):
 
 
 def test_the_call_takes_the_deletion(check):
-    record = check.call_gene("CYP2C19", _bins(CYP2C19_START, HG00268_CYP2C19), CYP2C19_EXONS)
+    record = check.call_gene(
+        "CYP2C19", _bins(CYP2C19_START, HG00268_CYP2C19), CYP2C19_EXONS
+    )
     # One copy left: its alleles read homozygous.
     assert check.genotype("*1/*1", record) == {
-        "diplotype": "*1/*37", "copy_number": "PartialDel1", "conflict": False,
+        "diplotype": "*1/*37",
+        "copy_number": "PartialDel1",
+        "conflict": False,
     }
     assert check.genotype("*17/*17", record)["diplotype"] == "*17/*37"
     # Heterozygous under a deletion: a contradiction, left as it was and marked.
     assert check.genotype("*1/*2", record) == {
-        "diplotype": "*1/*2", "copy_number": "PartialDel1", "conflict": True,
+        "diplotype": "*1/*2",
+        "copy_number": "PartialDel1",
+        "conflict": True,
     }
 
 
 def test_an_unnamed_deletion_leaves_the_call(check):
-    record = check.call_gene("CYP2C19", _bins(CYP2C19_START, HG01771_CYP2C19), CYP2C19_EXONS)
+    record = check.call_gene(
+        "CYP2C19", _bins(CYP2C19_START, HG01771_CYP2C19), CYP2C19_EXONS
+    )
     assert check.genotype("*1/*1", record) == {
-        "diplotype": "*1/*1", "copy_number": "PartialDel1", "conflict": False,
+        "diplotype": "*1/*1",
+        "copy_number": "PartialDel1",
+        "conflict": False,
     }
 
 
@@ -268,7 +302,9 @@ def pypgx(tmp_path_factory):
         mp.setenv("PYPGX_PROGRESS_LOG", str(root / "pypgx_progress.log"))
         mp.setitem(sys.modules, "psutil", psutil)
         mp.setitem(sys.modules, "job_client", job_client)
-        spec = importlib.util.spec_from_file_location("zaropgx_pypgx_deletions_test", WRAPPER)
+        spec = importlib.util.spec_from_file_location(
+            "zaropgx_pypgx_deletions_test", WRAPPER
+        )
         module = importlib.util.module_from_spec(spec)
         mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
@@ -283,13 +319,21 @@ def pypgx(tmp_path_factory):
 def _check_file(check, directory, values=HG00268_CYP2C19):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "abc.deletions.json"
-    path.write_text(json.dumps({
-        "version": check.VERSION,
-        "genes": {
-            "CYP2C19": check.call_gene("CYP2C19", _bins(CYP2C19_START, values), CYP2C19_EXONS),
-            "SLCO1B1": check.call_gene("SLCO1B1", _bins(SLCO1B1_START, NA18861_SLCO1B1), SLCO1B1_EXONS),
-        },
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "version": check.VERSION,
+                "genes": {
+                    "CYP2C19": check.call_gene(
+                        "CYP2C19", _bins(CYP2C19_START, values), CYP2C19_EXONS
+                    ),
+                    "SLCO1B1": check.call_gene(
+                        "SLCO1B1", _bins(SLCO1B1_START, NA18861_SLCO1B1), SLCO1B1_EXONS
+                    ),
+                },
+            }
+        )
+    )
     return path
 
 
@@ -318,8 +362,11 @@ def test_a_check_the_sidecar_did_not_write_is_ignored(pypgx, check, tmp_path):
 def _aggregated(cyp2c19="*1/*1"):
     return {
         "results": {
-            "CYP2C19": {"success": True, "diplotype": cyp2c19,
-                        "details": {"phenotype": "Normal Metabolizer"}},
+            "CYP2C19": {
+                "success": True,
+                "diplotype": cyp2c19,
+                "details": {"phenotype": "Normal Metabolizer"},
+            },
             "SLCO1B1": {"success": True, "diplotype": "*1/*15", "details": {}},
             "CYP2D6": {"success": True, "diplotype": "*1/*4", "details": {}},
         },
@@ -338,7 +385,9 @@ def test_a_named_deletion_goes_into_the_call_and_to_pharmcat(pypgx, check, tmp_p
     assert details["copy_number_by"] == "deletion_check"
     assert details["snv_diplotype"] == "*1/*1"
     # PyPGx's phenotype was for *1/*1; PharmCAT phenotypes the call it is given.
-    assert "phenotype" not in details and details["snv_phenotype"] == "Normal Metabolizer"
+    assert (
+        "phenotype" not in details and details["snv_phenotype"] == "Normal Metabolizer"
+    )
     assert details["deletion_check"]["deletions"][0]["allele"] == "*37"
     assert aggregated["outside_call_genes"] == ["CYP2D6", "CYP2C19"]
     # Measured normal: the copy number, and nothing else changes.

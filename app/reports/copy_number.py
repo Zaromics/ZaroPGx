@@ -459,7 +459,9 @@ def _deletion_found_entry(
             "found": found,
         }
     if in_call:
-        before = f" (from small variants alone, {snv_diplotype})" if snv_diplotype else ""
+        before = (
+            f" (from small variants alone, {snv_diplotype})" if snv_diplotype else ""
+        )
         note = (
             f"Read depth shows {what}. The call includes it{before}. Confirm it with "
             "an independent test. See Alerts and Warnings."
@@ -781,7 +783,11 @@ def _deletion_paragraph(
             snv = _details(pypgx_results, gene).get("snv_diplotype")
             text += (
                 f"PharmCAT was given the call with it, {html.escape(str(calls.get(gene)))}"
-                + (f"; from small variants alone it reads {html.escape(snv)}" if snv else "")
+                + (
+                    f"; from small variants alone it reads {html.escape(snv)}"
+                    if snv
+                    else ""
+                )
                 + "."
             )
         else:
@@ -850,9 +856,7 @@ def pharmcat_copy_number_alert(
         paragraphs.append(_found_paragraph(found))
     if unassessed:
         paragraphs.append(
-            _not_assessed_paragraph(
-                unassessed, bool(measured or found or deletions)
-            )
+            _not_assessed_paragraph(unassessed, bool(measured or found or deletions))
         )
     tail = _measured_paragraph(measured)
     if tail:
