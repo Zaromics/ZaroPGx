@@ -1779,8 +1779,9 @@ def sv_inputs_from_vcf(vcf_path: str, temp_dir) -> Optional[Tuple[str, str]]:
     return str(paths[0]), str(paths[1])
 
 
-# CYP2C19's and SLCO1B1's deletions, which PyPGx has no copy-number model for, from
-# the same read depth and control gene (deletion_check.py beside this file). Run in a
+# CYP2C19's and SLCO1B1's deletions, and DPYD's exon deletions, which PyPGx has no
+# copy-number model for, from the same read depth and control gene (deletion_check.py
+# beside this file). Run in a
 # subprocess, as PyPGx's own steps are, so its depth pass does not hold this process.
 DELETION_CHECK_HEADER_KEY = "ZaroPGx_deletion_check"
 DELETION_CHECK_SUFFIX = ".deletions.json"
@@ -1800,7 +1801,7 @@ def _deletion_check():
 def run_deletion_check(
     alignment_path: str, control_zip: str, out_prefix: str, assembly: str
 ) -> Optional[str]:
-    """Check CYP2C19 and SLCO1B1 for deletions; the result's path, or None.
+    """Check CYP2C19, SLCO1B1 and DPYD for deletions; the result's path, or None.
 
     Only with the SV inputs: the whole-genome gate passed and VDR measured. A failure
     costs the check (the report then says the genes' copy number was not assessed),
@@ -1867,7 +1868,7 @@ def deletion_check_from_vcf(vcf_path: str, temp_dir) -> Optional[Dict[str, Any]]
 
 
 def apply_deletion_check(aggregated: Dict[str, Any], check: Optional[Dict[str, Any]]) -> None:
-    """Put the deletion check on CYP2C19's and SLCO1B1's calls, in place.
+    """Put the deletion check on CYP2C19's, SLCO1B1's and DPYD's calls, in place.
 
     Each gets the check (details["deletion_check"]) and its copy number
     (details["copy_number"]: "Normal", or "WholeDel1"/"PartialDel1", "Hom" when both
@@ -1875,7 +1876,9 @@ def apply_deletion_check(aggregated: Dict[str, Any], check: Optional[Dict[str, A
     A named deletion under a homozygous call makes the call X/<deletion>, and that
     call goes to PharmCAT as an outside call, since PharmCAT's own, from small
     variants, cannot show it: CYP2C19 *1/*37 is an Intermediate Metabolizer that
-    small variants call *1/*1, Normal. A gene PyPGx did not genotype is left alone.
+    small variants call *1/*1, Normal. A deletion no allele names (DPYD's exon
+    deletions) leaves the call; the report says what it cannot show. A gene PyPGx did
+    not genotype is left alone.
     """
     if not check:
         return
@@ -3166,8 +3169,8 @@ def run_pypgx_create_input_vcf(alignment_path: str, output_vcf_gz: str, assembly
         )
         if sv_inputs:
             annotate_header_line(output_vcf_gz, sv_inputs_header_line(*sv_inputs))
-            # And from the same depth and control gene, CYP2C19's and SLCO1B1's
-            # deletions, which PyPGx has no model for. See run_deletion_check.
+            # And from the same depth and control gene, CYP2C19's, SLCO1B1's and
+            # DPYD's deletions, which PyPGx has no model for. See run_deletion_check.
             deletions = run_deletion_check(
                 calls_from, sv_inputs[1], output_vcf_gz[: -len(".vcf.gz")], str(assembly)
             )
@@ -3652,8 +3655,8 @@ async def genotype(
                     unread, total, no_reads_in
                 )
                 result["details"] = details
-        # CYP2C19's and SLCO1B1's deletions, checked by /create-input-vcf: on their
-        # calls, and a named one in the call itself. See apply_deletion_check.
+        # CYP2C19's, SLCO1B1's and DPYD's deletions, checked by /create-input-vcf: on
+        # their calls, and a named one in the call itself. See apply_deletion_check.
         try:
             apply_deletion_check(aggregated, deletion_check)
         except Exception as exc:

@@ -45,6 +45,15 @@ and the report says so beside it; found normal, the alert says so once. The chec
 the PyPGx image, so it needs the new images (`docker compose pull`, then
 `docker compose up -d`). VCF, BCF and gVCF runs are unchanged.
 
+### DPYD exon deletions from read depth
+
+CPIC's DPYD table lists no deletion, so a deletion of DPYD exons, found in patients with DPD
+deficiency, went unseen and the call read normal. The same check now measures DPYD from
+PyPGx's read depth; a deletion it finds is named by its exons in an alert asking for an
+independent test before fluoropyrimidine treatment. PharmCAT's call and phenotype are not
+changed. A VCF, BCF or gVCF report now also marks DPYD's call as one that cannot show such a
+deletion. Like the CYP2C19 and SLCO1B1 check, it needs the new images.
+
 ### CYP2B6 *30 named
 
 PyPGx's CYP2B6 copy-number state Tandem1, which its own call leaves Indeterminate, is the

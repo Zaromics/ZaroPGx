@@ -1,4 +1,4 @@
-"""Deletions in CYP2C19 and SLCO1B1, from the read depth PyPGx measures.
+"""Deletions in CYP2C19, SLCO1B1 and DPYD, from the read depth PyPGx measures.
 
 PyPGx calls structural alleles only for the genes its gene table marks SV, and
 CYP2C19 and SLCO1B1 are not among them, so their deletions went uncalled: CYP2C19
@@ -27,6 +27,17 @@ medians stayed at most 1.07, but one reference genome had two bins at 1.33 (SLCO
 a run must be at least 3 bins long with a median of at most 1.2, which calls all five and
 none of the 62 at both depths. A deletion under 15 kb is not called.
 
+DPYD's deletions take an exon or a few, and a few kb: GeT-RM's DPYD study (Gaedigk et
+al., J Mol Diagn 2024;26(10):864-875) has one copy of exon 4 deleted in HG00325 and of
+exon 11 in NA19093, and an exon 4 deletion was found in four Finnish patients with DPD
+deficiency (Saarenheimo et al., Cancer Chemother Pharmacol 2021;87(5):657-663). CPIC's
+DPYD table defines no such deletion, so neither PharmCAT nor PyPGx calls one. DPYD is
+binned by 1 kb: HG00325 reads 0.94 copies over 14 bins and NA19093 0.92 over 4. In the
+other 65 genomes no 4 consecutive bins read under 1.35 at their own depth (~30x) or at
+20x; at 15x, runs of 3 bins with a median of 1.1 and of 4 with 1.2 turn up. So a DPYD
+run must be at least 4 bins long with a median of at most 1.1, which calls both and none
+of the 65 at 30x, 20x and 15x. A DPYD deletion under 4 kb is not called.
+
     python3 deletion_check.py ALIGNMENT CONTROL_STATISTICS OUT.json [--assembly GRCh38]
 
 The calling below takes plain numbers, so it is tested without PyPGx.
@@ -40,7 +51,7 @@ import statistics
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-GENES = ("CYP2C19", "SLCO1B1")
+GENES = ("CYP2C19", "SLCO1B1", "DPYD")
 BIN = 5000
 # A bin under ONE_COPY reads as one copy lost, under BOTH_COPIES as both: between a
 # one-copy deletion's bins (at most 1.17 at 30x, 1.2 at 15x) and normal genomes' (no two
@@ -51,11 +62,19 @@ ONE_COPY = 1.35
 BOTH_COPIES = 0.4
 MIN_BINS = 3
 RUN_MEDIAN = 1.2
+# Each gene's bin size, run length and run median. DPYD's exon deletions are a few kb,
+# so its bins are 1 kb, and noisier: 4 of them, with a median of at most 1.1 (module
+# note).
+RULES: Dict[str, Tuple[int, int, float]] = {
+    "CYP2C19": (BIN, MIN_BINS, RUN_MEDIAN),
+    "SLCO1B1": (BIN, MIN_BINS, RUN_MEDIAN),
+    "DPYD": (1000, 4, 1.1),
+}
 # The bins outside any run must read as two copies for a call to be made: a profile
 # whose rest is off (a low-quality or unusually normalised alignment) says nothing.
 # Normal genomes' medians were 1.66-2.03 (SLCO1B1 reads a little under two copies).
 NORMAL_RANGE = (1.5, 2.5)
-VERSION = 2
+VERSION = 3
 
 # What each deletion is, in PharmVar's names (CPIC: no function, limited evidence).
 # CYP2C19 *37 is "a partial deletion including at least the whole of exon 1"; a
@@ -65,14 +84,18 @@ PARTIAL = {"SLCO1B1": "*49"}
 
 
 def bins_of(
-    positions: Sequence[int], copy_numbers: Sequence[float], start: int, end: int
+    positions: Sequence[int],
+    copy_numbers: Sequence[float],
+    start: int,
+    end: int,
+    size: int = BIN,
 ) -> List[Tuple[int, int, float]]:
-    """(start, end, median copy number) for each BIN bp of [start, end)."""
+    """(start, end, median copy number) for each ``size`` bp of [start, end)."""
     out = []
     pairs = sorted(zip(positions, copy_numbers))
     i = 0
-    for lo in range(start, end, BIN):
-        hi = min(lo + BIN, end)
+    for lo in range(start, end, size):
+        hi = min(lo + size, end)
         values = []
         while i < len(pairs) and pairs[i][0] < hi:
             if pairs[i][0] >= lo:
@@ -83,9 +106,13 @@ def bins_of(
     return out
 
 
-def runs_under(bins: Sequence[Tuple[int, int, float]]) -> List[List[Tuple[int, int, float]]]:
-    """Runs of at least MIN_BINS consecutive bins under ONE_COPY, whose median is at
-    most RUN_MEDIAN."""
+def runs_under(
+    bins: Sequence[Tuple[int, int, float]],
+    min_bins: int = MIN_BINS,
+    run_median: float = RUN_MEDIAN,
+) -> List[List[Tuple[int, int, float]]]:
+    """Runs of at least ``min_bins`` consecutive bins under ONE_COPY, whose median is
+    at most ``run_median``."""
     runs, current = [], []
     for b in bins:
         if b[2] < ONE_COPY and (not current or current[-1][1] == b[0]):
@@ -96,7 +123,7 @@ def runs_under(bins: Sequence[Tuple[int, int, float]]) -> List[List[Tuple[int, i
     runs.append(current)
     return [
         run for run in runs
-        if len(run) >= MIN_BINS and statistics.median(b[2] for b in run) <= RUN_MEDIAN
+        if len(run) >= min_bins and statistics.median(b[2] for b in run) <= run_median
     ]
 
 
@@ -137,6 +164,12 @@ def describe(gene: str, deletion: Dict[str, Any], total: int) -> str:
     allele = deletion.get("allele")
     if allele:
         text = f"{gene} {allele}: {what} deleted"
+    elif gene == "DPYD":
+        # CPIC's DPYD table names alleles by variant, not star, and has no deletion: the
+        # report says so beside it.
+        text = f"a deletion of {copies} of " + (
+            "the whole of DPYD" if whole else f"DPYD {_exon_span(deletion['exons'])}"
+        )
     else:
         text = f"a deletion of {what}, which is no star allele CPIC assigns a function"
         if gene == "CYP2C19" and deletion["exons"] and 1 not in deletion["exons"]:
@@ -156,14 +189,18 @@ def call_gene(
     strand: str = "+",
 ) -> Dict[str, Any]:
     """The gene's deletion call from its binned copy number."""
+    size, min_bins, run_median = RULES.get(gene, (BIN, MIN_BINS, RUN_MEDIAN))
     record: Dict[str, Any] = {
         "status": "measured",
+        "bin_size": size,
+        "min_bins": min_bins,
+        "run_median": run_median,
         "bins": [list(b) for b in bins],
         "deletions": [],
     }
-    if len(bins) < MIN_BINS:
+    if len(bins) < min_bins:
         return dict(record, status="no_depth")
-    runs = runs_under(bins)
+    runs = runs_under(bins, min_bins, run_median)
     inside = {(b[0], b[1]) for run in runs for b in run}
     rest = [b[2] for b in bins if (b[0], b[1]) not in inside]
     if rest and not NORMAL_RANGE[0] <= statistics.median(rest) <= NORMAL_RANGE[1]:
@@ -242,15 +279,12 @@ def measure(alignment: str, control_statistics: str, assembly: str) -> Dict[str,
         region = str(row[f"{assembly}Region"]).split(":")[1]
         lo, hi = (int(x) for x in region.split("-"))
         sample = df.columns[2]
-        bins = bins_of(df.Position.tolist(), df[sample].astype(float).tolist(), lo, hi)
+        size = RULES.get(gene, (BIN,))[0]
+        bins = bins_of(df.Position.tolist(), df[sample].astype(float).tolist(), lo, hi, size)
         genes[gene] = call_gene(gene, bins, list(zip(starts, ends)), row.Strand)
     return {
         "version": VERSION,
-        "bin_size": BIN,
-        "thresholds": {
-            "one_copy": ONE_COPY, "both_copies": BOTH_COPIES, "min_bins": MIN_BINS,
-            "run_median": RUN_MEDIAN,
-        },
+        "thresholds": {"one_copy": ONE_COPY, "both_copies": BOTH_COPIES},
         "genes": genes,
     }
 

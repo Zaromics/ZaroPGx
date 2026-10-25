@@ -1104,7 +1104,7 @@ def pypgx_record(
         record["copy_number_summary"] = NAMED_COPY_NUMBER.get(
             (str(gene or "").strip().upper(), str(details["copy_number"]).strip())
         ) or copy_number_summary(details["copy_number"], diplotype)
-        # ZaroPGx's deletion check (CYP2C19, SLCO1B1), not one of PyPGx's models.
+        # ZaroPGx's deletion check (CYP2C19, SLCO1B1, DPYD), not one of PyPGx's models.
         if details.get("copy_number_by"):
             record["copy_number_by"] = details["copy_number_by"]
     return record
@@ -4435,7 +4435,8 @@ def generate_report(
     # (CYP2B6 *29/*30, CYP2C19 *36/*37, CYP4F2 *16, SLCO1B1 *48/*49): PharmCAT's own
     # calls, on every input, a whole genome too, unless their copy number was
     # measured; PyPGx's CYP2C19 and SLCO1B1 when ZaroPGx's deletion check did not
-    # measure them. A note beside each and one alert of their own. PharmCAT's report.json carries no such
+    # measure them. DPYD likewise, for exon deletions, which no allele names
+    # (copy_number.UNLISTED_STRUCTURAL). A note beside each and one alert of their own. PharmCAT's report.json carries no such
     # message, so nothing here repeats one of PharmCAT's.
     annotate_pharmcat_copy_number(data.get("genes", []), pypgx_results)
     _noted = [
