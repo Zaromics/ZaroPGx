@@ -94,7 +94,9 @@ def pharmcat(tmp_path_factory):
         mp.syspath_prepend(str(ASSUME_REF_LIB))
         mp.setitem(sys.modules, "psutil", _fake_psutil())
         mp.setitem(sys.modules, "job_client", _fake_job_client())
-        spec = importlib.util.spec_from_file_location("zaropgx_pharmcat_health_test", SIDECAR)
+        spec = importlib.util.spec_from_file_location(
+            "zaropgx_pharmcat_health_test", SIDECAR
+        )
         module = importlib.util.module_from_spec(spec)
         mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
@@ -119,7 +121,9 @@ def server(pharmcat):
     thread.start()
     deadline = time.monotonic() + 10
     while not srv.started:
-        assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+        assert (
+            thread.is_alive() and time.monotonic() < deadline
+        ), "uvicorn did not start"
         time.sleep(0.02)
     try:
         yield f"http://127.0.0.1:{port}"
@@ -148,7 +152,9 @@ class _SlowPharmCAT:
             yield f"step {i}\n"
         base = Path(self._cmd[-1]).name.split(".vcf")[0]
         Path(self._cwd, f"{base}.report.json").write_text('{"genes": {}, "drugs": {}}')
-        Path(self._cwd, f"{base}.report.tsv").write_text("PharmCAT 3.4.0\nGene\tDiplotype\n")
+        Path(self._cwd, f"{base}.report.tsv").write_text(
+            "PharmCAT 3.4.0\nGene\tDiplotype\n"
+        )
 
     def wait(self, timeout=None):
         self.returncode = 0
@@ -177,7 +183,10 @@ def test_health_and_cancel_answer_while_pharmcat_runs(pharmcat, server, monkeypa
             outcome["response"] = httpx.post(
                 f"{server}/genotype",
                 files={"file": ("in.vcf", VCF, "text/plain")},
-                data={"patient_id": "p1", "job_id": "11111111-2222-3333-4444-555555555555"},
+                data={
+                    "patient_id": "p1",
+                    "job_id": "11111111-2222-3333-4444-555555555555",
+                },
                 timeout=30 + WORK_SECONDS,
             )
         except Exception as exc:  # surfaced below, not lost in the thread
@@ -220,7 +229,11 @@ def test_health_asks_for_the_versions_once(pharmcat, monkeypatch):
 
     def run(cmd, *args, **kwargs):
         calls.append(cmd[0])
-        out = "PharmCAT 3.4.0" if cmd[0] == "pharmcat_pipeline" else 'openjdk version "21"'
+        out = (
+            "PharmCAT 3.4.0"
+            if cmd[0] == "pharmcat_pipeline"
+            else 'openjdk version "21"'
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr(pharmcat.subprocess, "run", run)
