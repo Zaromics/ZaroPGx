@@ -62,27 +62,196 @@ SLCO1B1_EXONS = [
     (21238978, 21239796),
 ]
 # The check's 5 kb bins on 1000 Genomes 30x genomes.
-HG00268_CYP2C19 = [0.91, 0.91, 0.86, 0.86, 0.91, 0.91, 0.8, 0.8, 1.77, 1.83, 1.66,
-                   1.83, 1.77, 1.83, 1.89, 1.89, 1.89, 1.83, 1.83, 1.71]
-HG01771_CYP2C19 = [2.06, 1.89, 1.0, 1.0, 0.94, 1.0, 1.06, 0.83, 0.94, 1.06, 1.75,
-                   1.78, 2.17, 1.89, 2.0, 1.83, 1.94, 2.0, 1.89, 2.06]
-NA18861_CYP2C19 = [2.0, 1.89, 1.77, 1.89, 1.71, 1.83, 1.94, 1.77, 1.94, 2.0, 1.77,
-                   1.71, 1.77, 1.77, 2.06, 1.77, 1.94, 1.71, 1.83, 1.94]
-NA18861_SLCO1B1 = [1.66, 1.83, 1.71, 1.66, 1.6, 1.66, 1.71, 1.66, 1.77, 1.66, 1.83,
-                   1.6, 1.77, 1.66, 1.77, 1.71, 1.54, 2.06, 1.71, 1.77, 1.66, 1.83,
-                   1.66]
+HG00268_CYP2C19 = [
+    0.91,
+    0.91,
+    0.86,
+    0.86,
+    0.91,
+    0.91,
+    0.8,
+    0.8,
+    1.77,
+    1.83,
+    1.66,
+    1.83,
+    1.77,
+    1.83,
+    1.89,
+    1.89,
+    1.89,
+    1.83,
+    1.83,
+    1.71,
+]
+HG01771_CYP2C19 = [
+    2.06,
+    1.89,
+    1.0,
+    1.0,
+    0.94,
+    1.0,
+    1.06,
+    0.83,
+    0.94,
+    1.06,
+    1.75,
+    1.78,
+    2.17,
+    1.89,
+    2.0,
+    1.83,
+    1.94,
+    2.0,
+    1.89,
+    2.06,
+]
+NA18861_CYP2C19 = [
+    2.0,
+    1.89,
+    1.77,
+    1.89,
+    1.71,
+    1.83,
+    1.94,
+    1.77,
+    1.94,
+    2.0,
+    1.77,
+    1.71,
+    1.77,
+    1.77,
+    2.06,
+    1.77,
+    1.94,
+    1.71,
+    1.83,
+    1.94,
+]
+NA18861_SLCO1B1 = [
+    1.66,
+    1.83,
+    1.71,
+    1.66,
+    1.6,
+    1.66,
+    1.71,
+    1.66,
+    1.77,
+    1.66,
+    1.83,
+    1.6,
+    1.77,
+    1.66,
+    1.77,
+    1.71,
+    1.54,
+    2.06,
+    1.71,
+    1.77,
+    1.66,
+    1.83,
+    1.66,
+]
 # DPYD's 1 kb bins over 30 kb (- strand: exon 11 at 97,573,759, exon 4 at 97,740,391).
 DPYD_EXON_11_START = 97566742
-NA19093_DPYD = [1.9, 2.21, 1.79, 1.9, 1.68, 1.58, 0.9, 0.74, 0.95, 1.0, 1.9, 1.63, 1.92,
-                1.84, 1.68, 2.0, 1.84, 1.95, 1.84, 1.84, 1.84, 1.79, 1.79, 2.21, 1.68, 2.1,
-                2.21, 2.0, 1.53, 1.53]
-NA18861_DPYD = [2.06, 1.66, 1.6, 1.89, 1.89, 1.6, 1.77, 1.77, 1.83, 1.89, 1.83, 1.94,
-                1.49, 1.66, 1.77, 1.66, 1.77, 1.6, 1.49, 1.6, 1.83, 1.66, 1.43, 1.83, 1.77,
-                1.8, 1.66, 1.49, 1.83, 1.54]
+NA19093_DPYD = [
+    1.9,
+    2.21,
+    1.79,
+    1.9,
+    1.68,
+    1.58,
+    0.9,
+    0.74,
+    0.95,
+    1.0,
+    1.9,
+    1.63,
+    1.92,
+    1.84,
+    1.68,
+    2.0,
+    1.84,
+    1.95,
+    1.84,
+    1.84,
+    1.84,
+    1.79,
+    1.79,
+    2.21,
+    1.68,
+    2.1,
+    2.21,
+    2.0,
+    1.53,
+    1.53,
+]
+NA18861_DPYD = [
+    2.06,
+    1.66,
+    1.6,
+    1.89,
+    1.89,
+    1.6,
+    1.77,
+    1.77,
+    1.83,
+    1.89,
+    1.83,
+    1.94,
+    1.49,
+    1.66,
+    1.77,
+    1.66,
+    1.77,
+    1.6,
+    1.49,
+    1.6,
+    1.83,
+    1.66,
+    1.43,
+    1.83,
+    1.77,
+    1.8,
+    1.66,
+    1.49,
+    1.83,
+    1.54,
+]
 DPYD_EXON_4_START = 97726742
-HG00325_DPYD = [1.88, 1.88, 2.0, 2.0, 1.56, 1.94, 1.62, 1.94, 0.88, 1.0, 0.75, 0.94, 0.81,
-                0.81, 1.12, 0.88, 1.0, 0.94, 1.06, 1.0, 1.0, 0.94, 1.81, 1.69, 1.62, 1.88,
-                1.75, 1.81, 1.81, 2.25]
+HG00325_DPYD = [
+    1.88,
+    1.88,
+    2.0,
+    2.0,
+    1.56,
+    1.94,
+    1.62,
+    1.94,
+    0.88,
+    1.0,
+    0.75,
+    0.94,
+    0.81,
+    0.81,
+    1.12,
+    0.88,
+    1.0,
+    0.94,
+    1.06,
+    1.0,
+    1.0,
+    0.94,
+    1.81,
+    1.69,
+    1.62,
+    1.88,
+    1.75,
+    1.81,
+    1.81,
+    2.25,
+]
 
 
 def _dpyd_exons():
@@ -239,7 +408,8 @@ def test_dpyd_exon_deletions_are_called_and_leave_the_call(check, start, values,
     assert deletion["description"] == f"a deletion of one copy of DPYD exon {exon}"
     # No allele names it, so the call from small variants stands.
     assert check.genotype("Reference/c.1627A>G (*5)", record) == {
-        "diplotype": "Reference/c.1627A>G (*5)", "copy_number": "PartialDel1",
+        "diplotype": "Reference/c.1627A>G (*5)",
+        "copy_number": "PartialDel1",
         "conflict": False,
     }
 
@@ -250,11 +420,15 @@ def test_dpyds_noise_at_15x_is_not_a_deletion(check):
     for dip in ([1.1, 1.1, 1.1], [1.2, 1.2, 1.2, 1.2]):
         values = list(NA18861_DPYD)
         values[6 : 6 + len(dip)] = dip
-        record = check.call_gene("DPYD", _bins(DPYD_EXON_11_START, values, 1000), _dpyd_exons(), "-")
+        record = check.call_gene(
+            "DPYD", _bins(DPYD_EXON_11_START, values, 1000), _dpyd_exons(), "-"
+        )
         assert record["deletions"] == [], dip
     values = list(NA18861_DPYD)
     values[6:10] = [0.92] * 4
-    record = check.call_gene("DPYD", _bins(DPYD_EXON_11_START, values, 1000), _dpyd_exons(), "-")
+    record = check.call_gene(
+        "DPYD", _bins(DPYD_EXON_11_START, values, 1000), _dpyd_exons(), "-"
+    )
     assert [d["exons"] for d in record["deletions"]] == [[11]]
 
 
@@ -408,12 +582,21 @@ def test_a_contradiction_keeps_pharmcats_call(pypgx, check, tmp_path):
 
 
 def test_a_dpyd_deletion_marks_the_call_and_leaves_it_pharmcats(pypgx, check):
-    record = {"genes": {"DPYD": check.call_gene(
-        "DPYD", _bins(DPYD_EXON_4_START, HG00325_DPYD, 1000), _dpyd_exons(), "-"
-    )}}
+    record = {
+        "genes": {
+            "DPYD": check.call_gene(
+                "DPYD", _bins(DPYD_EXON_4_START, HG00325_DPYD, 1000), _dpyd_exons(), "-"
+            )
+        }
+    }
     aggregated = {
-        "results": {"DPYD": {"success": True, "diplotype": "Reference/Reference",
-                             "details": {"phenotype": "Normal Metabolizer"}}},
+        "results": {
+            "DPYD": {
+                "success": True,
+                "diplotype": "Reference/Reference",
+                "details": {"phenotype": "Normal Metabolizer"},
+            }
+        },
         "outside_call_genes": [],
     }
     pypgx.apply_deletion_check(aggregated, record)

@@ -1199,11 +1199,19 @@ def test_a_dpyd_deletion_is_an_alert_and_leaves_pharmcats_call():
     """HG00325 (GeT-RM's DPYD study): one copy of exon 4 deleted. No allele names it,
     so PharmCAT's call and phenotype stand, and the report says what they cannot
     show and how to confirm it before a fluoropyrimidine."""
-    rows = [{
-        "gene": "DPYD", "diplotype": "Reference/Reference", "call_source": "MATCHER",
-        "phenotype": "Normal Metabolizer",
-    }]
-    pypgx = {"results": {"DPYD": _checked("Reference/Reference", "PartialDel1", [DPYD_EXON_4])}}
+    rows = [
+        {
+            "gene": "DPYD",
+            "diplotype": "Reference/Reference",
+            "call_source": "MATCHER",
+            "phenotype": "Normal Metabolizer",
+        }
+    ]
+    pypgx = {
+        "results": {
+            "DPYD": _checked("Reference/Reference", "PartialDel1", [DPYD_EXON_4])
+        }
+    }
     annotate_pharmcat_copy_number(rows, pypgx)
     entry = rows[0]["copy_number_not_assessed"]
     assert entry["kind"] == "found_deletion" and entry["warn"] is True
@@ -1240,10 +1248,12 @@ def test_dpyd_measured_normal_is_said_with_the_other_checked_genes():
         {"gene": "CYP2C19", "diplotype": "*1/*2", "call_source": "MATCHER"},
         {"gene": "DPYD", "diplotype": "Reference/Reference", "call_source": "MATCHER"},
     ]
-    pypgx = {"results": {
-        "CYP2C19": _checked("*1/*2", "Normal"),
-        "DPYD": _checked("Reference/Reference", "Normal"),
-    }}
+    pypgx = {
+        "results": {
+            "CYP2C19": _checked("*1/*2", "Normal"),
+            "DPYD": _checked("Reference/Reference", "Normal"),
+        }
+    }
     annotate_pharmcat_copy_number(rows, pypgx)
     assert all("copy_number_not_assessed" not in r for r in rows)
     text = _clean(pharmcat_copy_number_alert(rows, pypgx))

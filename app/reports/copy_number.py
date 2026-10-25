@@ -185,7 +185,9 @@ UNLISTED_STRUCTURAL: Dict[str, Dict[str, str]] = {
 }
 # The genes docker/pypgx's deletion_check.py checks, and the deletions it names.
 CHECKED: Dict[str, str] = {
-    "CYP2C19": "*36, *37", "SLCO1B1": "*48, *49", "DPYD": "of one exon or more",
+    "CYP2C19": "*36, *37",
+    "SLCO1B1": "*48, *49",
+    "DPYD": "of one exon or more",
 }
 CHECKED_BY = "deletion_check"
 
@@ -437,6 +439,8 @@ DPYD_CONFIRM = (
     "phenotyping (DPD activity or plasma uracil) or a DPYD copy-number assay, before "
     "fluoropyrimidine treatment"
 )
+
+
 def _deletion_found_entry(
     gene: str, found: List[str], in_call: bool, snv_diplotype: Optional[str]
 ) -> Dict[str, Any]:
@@ -725,11 +729,17 @@ def _not_assessed_paragraph(
             f"{'it' if len(models) == 1 else 'them'}."
         )
     listed = [g for g in genes if g in PHARMCAT_ALERT]
-    shown = [
-        f"{_alleles(listed)}, structural alleles PharmCAT lists as undetectable from "
-        "a VCF"
-    ] if listed else []
-    shown += [UNLISTED_STRUCTURAL[g]["alert"] for g in genes if g in UNLISTED_STRUCTURAL]
+    shown = (
+        [
+            f"{_alleles(listed)}, structural alleles PharmCAT lists as undetectable from "
+            "a VCF"
+        ]
+        if listed
+        else []
+    )
+    shown += [
+        UNLISTED_STRUCTURAL[g]["alert"] for g in genes if g in UNLISTED_STRUCTURAL
+    ]
     text += (
         f" {'These calls' if len(genes) > 1 else 'This call'} cannot show "
         + ", or ".join(shown)
@@ -804,8 +814,11 @@ def _deletion_paragraph(
         f"checks {'it' if len(genes) == 1 else 'them'} for deletions from PyPGx's read "
         "depth, normalised to the same control gene (VDR)."
         # DPYD's says how to confirm it already.
-        + ("" if set(genes) == {"DPYD"} else
-           " Confirm a deletion with an independent test before acting on it.")
+        + (
+            ""
+            if set(genes) == {"DPYD"}
+            else " Confirm a deletion with an independent test before acting on it."
+        )
         + "</p>"
     )
 
