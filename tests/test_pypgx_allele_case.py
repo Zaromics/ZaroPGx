@@ -66,7 +66,9 @@ def pypgx(tmp_path_factory):
         mp.setenv("PYPGX_PROGRESS_LOG", str(root / "pypgx_progress.log"))
         mp.setitem(sys.modules, "psutil", _fake_psutil())
         mp.setitem(sys.modules, "job_client", _fake_job_client())
-        spec = importlib.util.spec_from_file_location("zaropgx_pypgx_allele_case_test", WRAPPER)
+        spec = importlib.util.spec_from_file_location(
+            "zaropgx_pypgx_allele_case_test", WRAPPER
+        )
         module = importlib.util.module_from_spec(spec)
         mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
@@ -86,10 +88,25 @@ def _vcf(path: Path, rows) -> str:
         "##contig=<ID=15>",
         "##contig=<ID=22>",
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
-        "\t".join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "S"]),
+        "\t".join(
+            [
+                "#CHROM",
+                "POS",
+                "ID",
+                "REF",
+                "ALT",
+                "QUAL",
+                "FILTER",
+                "INFO",
+                "FORMAT",
+                "S",
+            ]
+        ),
     ]
     for contig, pos, ref, alt, gt in rows:
-        lines.append("\t".join([contig, str(pos), ".", ref, alt, "50", "PASS", ".", "GT", gt]))
+        lines.append(
+            "\t".join([contig, str(pos), ".", ref, alt, "50", "PASS", ".", "GT", gt])
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     gz = str(path) + ".gz"
     pysam.tabix_compress(str(path), gz, force=True)
@@ -106,7 +123,13 @@ def test_lower_case_alleles_are_read_in_capitals(pypgx, tmp_path):
     src = _vcf(
         tmp_path / "calls.vcf",
         [
-            ("15", 74745879, "G", "A", "0/1"),  # *1C, as bcftools writes it outside repeats
+            (
+                "15",
+                74745879,
+                "G",
+                "A",
+                "0/1",
+            ),  # *1C, as bcftools writes it outside repeats
             ("15", 74747271, "at", "a", "0/1"),  # -2467delT, inside one
             ("22", 42126611, "C", "<DEL>", "0/1"),  # symbolic: left as it is
         ],
@@ -132,7 +155,11 @@ def test_genotype_capitalises_after_dropping_no_calls():
     # Every lane's VCF goes through /genotype's two steps, in this order, before
     # PyPGx reads it.
     source = WRAPPER.read_text(encoding="utf-8")
-    drop = source.index("vcf_for_pypgx = await asyncio.to_thread(drop_no_calls, vcf_for_pypgx)")
-    upper = source.index("vcf_for_pypgx = await asyncio.to_thread(uppercase_alleles, vcf_for_pypgx)")
+    drop = source.index(
+        "vcf_for_pypgx = await asyncio.to_thread(drop_no_calls, vcf_for_pypgx)"
+    )
+    upper = source.index(
+        "vcf_for_pypgx = await asyncio.to_thread(uppercase_alleles, vcf_for_pypgx)"
+    )
     assert drop < upper
     assert len(re.findall(r"to_thread\(uppercase_alleles,", source)) == 1
