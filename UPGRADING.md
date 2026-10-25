@@ -19,6 +19,13 @@ by `docker compose up -d`.
 
 ## v0.4.0 → next
 
+### The FHIR server's heap is set
+
+The FHIR server's `-Xmx2g` was never applied (the image does not read `JAVA_OPTS`), so its
+Java heap could grow to a quarter of the host's memory. It is now 2 GB, which a first start
+and whole-genome pushes fit with room to spare; `HAPI_JAVA_HEAP` in `.env` changes it.
+`docker compose up -d fhir-server` applies it.
+
 ### Updates wait for running jobs and uploads
 
 `start-docker.sh` and `start-docker.ps1`, which `--update` ends with, no longer stop a
