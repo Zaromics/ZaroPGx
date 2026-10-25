@@ -313,7 +313,7 @@ def get_author_name() -> str:
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
-    version="0.4.0",
+    version="0.4.1",
     # /docs is the project documentation (mounted below); FastAPI's API explorer
     # lives under /api instead of taking that path. FastAPI's own explorer pages load
     # Swagger UI and ReDoc from jsDelivr (and ReDoc's fonts from Google), so they are

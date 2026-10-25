@@ -8,8 +8,8 @@ type: software
 authors:
   - family-names: Yaroshevskiy
     given-names: Iliya
-version: 0.4.0
-date-released: 2026-10-20
+version: 0.4.1
+date-released: 2026-10-25
 license: AGPL-3.0-only
 repository-code: "https://github.com/Zaromics/ZaroPGx"
 abstract: >-

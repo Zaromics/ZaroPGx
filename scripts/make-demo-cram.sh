@@ -48,7 +48,7 @@ NAME="${3:-NA12878.pgx-demo}"
 LABEL="${4:-ZaroPGx demo: NA12878, 1000 Genomes 30x (NYGC, ERR3239334)}"
 REFERENCE="${ZAROPGX_REFERENCE:-./reference}"
 POSITIONS="${REFERENCE}/pharmcat/pharmcat_positions.vcf"
-IMAGE="${ZAROPGX_DEMO_IMAGE:-zaromicsresearch/zaropgx-gatk-api:0.4.0}"
+IMAGE="${ZAROPGX_DEMO_IMAGE:-zaromicsresearch/zaropgx-gatk-api:0.4.1}"
 DOCKER="${DOCKER:-docker}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 

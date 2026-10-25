@@ -24,7 +24,7 @@ param(
     [switch]$Force       # Restart even while a job or an upload is running
 )
 
-$ReleaseVersion = "0.4.0"
+$ReleaseVersion = "0.4.1"
 
 Write-Host "Starting ZaroPGx with Docker Compose" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green
