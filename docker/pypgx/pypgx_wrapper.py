@@ -1514,6 +1514,48 @@ def drop_no_calls(vcf_gz: str) -> str:
     return called
 
 
+def uppercase_alleles(vcf_gz: str) -> str:
+    """The VCF with its REF and ALT bases in capitals; its path.
+
+    bcftools writes the reference's own case, and pypgx_grch38.fasta is soft-masked,
+    so PyPGx's create-input-vcf wrote indels in repeats in lower case: CYP1A2's
+    -2467delT as `at`>`a` at 15:74747271. PyPGx matches its allele table's
+    "15-74747271-AT-A" by string, so *1L was never called (GeT-RM's 1000 Genomes
+    samples: 29 such records in 54 runs, 74 lower-case indels in one VCF). Bases are
+    case-insensitive in a VCF, so this changes no call. Symbolic and breakend alleles
+    are left as they are. A VCF with nothing to change is returned as it is.
+    """
+    def upper(allele: str) -> str:
+        return allele if any(c in allele for c in "<>[]") else allele.upper()
+
+    def capitalised(line: str) -> str:
+        if line.startswith("#"):
+            return line
+        fields = line.split("\t", 5)
+        if len(fields) < 6:
+            return line
+        fields[3] = fields[3].upper()
+        fields[4] = ",".join(upper(a) for a in fields[4].split(","))
+        return "\t".join(fields)
+
+    import pysam
+
+    with open(vcf_gz, "rb") as probe:
+        opener = gzip.open if probe.read(2) == b"\x1f\x8b" else open
+    with opener(vcf_gz, "rt", encoding="utf-8") as fh:
+        if all(capitalised(line) == line for line in fh):
+            return vcf_gz
+    plain = re.sub(r"(\.vcf)?(\.gz)?$", "", vcf_gz) + ".upper.vcf"
+    with opener(vcf_gz, "rt", encoding="utf-8") as src, open(plain, "w", encoding="utf-8") as out:
+        for line in src:
+            out.write(capitalised(line))
+    capitals = plain + ".gz"
+    pysam.tabix_compress(plain, capitals, force=True)
+    os.remove(plain)
+    pysam.tabix_index(capitals, preset="vcf", force=True)
+    return capitals
+
+
 def no_genotype_note(gene: str, positions: int, no_calls: int = 0) -> str:
     """What to say about a gene the VCF has no genotype in, and how to get a call.
 
@@ -3346,6 +3388,7 @@ async def genotype(
                 f"positions in the {measured_on}: {', '.join(at_positions)}"
             )
         vcf_for_pypgx = await asyncio.to_thread(drop_no_calls, vcf_for_pypgx)
+        vcf_for_pypgx = await asyncio.to_thread(uppercase_alleles, vcf_for_pypgx)
         # requested_genes stays the whole panel: the step's counts are out of it.
         genes_to_call = [
             g
