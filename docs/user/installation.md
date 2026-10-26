@@ -34,12 +34,6 @@ Windows (PowerShell):
 iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 | iex
 ```
 
-Alpine, as root (installs Bash and curl first):
-
-```sh
-apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
-```
-
 The script checks for Git, Docker and Compose and offers to install what is missing (apt,
 dnf, yum, zypper, pacman, apk, winget or Chocolatey; on macOS it installs Git only). It
 clones the repository into `./ZaroPGx`, checks out the release tag it names, and runs

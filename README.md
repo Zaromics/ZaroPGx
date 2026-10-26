@@ -40,11 +40,6 @@ iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1 
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
 ```
 
-**Stock Alpine (run as root; installs Bash and curl first):**
-```sh
-apk add --no-cache bash curl && curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash
-```
-
 - Checks for Git, Docker and Docker Compose, and offers to install what is missing.
 - Clones the latest release and starts the stack. The first start takes 8-15 minutes.
 - Then open `http://localhost:8765`. **Run Demo** is ready once the reference genomes have
