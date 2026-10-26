@@ -13,6 +13,7 @@ samples, on the samples whose 1000 Genomes 30x genome is public: 208 of GeT-RM's
 | `cut.sh` | Cuts each sample's CRAM to the reads ZaroPGx reads (`scripts/make-demo-cram.sh`, as the demo is made): about 30 MB and 10 minutes a sample, fetched by region |
 | `run.py` | Runs each cut through a ZaroPGx instance and keeps the outputs the score reads |
 | `score.py` | Compares the calls with GeT-RM's |
+| `stellarpgx-comparison.md` | What a second caller, StellarPGx, scored on the same genomes, and why it is not in the pipeline |
 
 ## Running it
 
