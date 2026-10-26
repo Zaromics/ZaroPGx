@@ -373,3 +373,37 @@ def test_startup_backfills_without_forcing_a_download():
     assert "except OSError" in guarded
     # DOWNLOAD_ON_STARTUP=false still decides: backfill only clears the flag.
     assert "repinned = bool(backfill_missing())" not in main
+
+
+def test_a_status_file_it_cannot_write_costs_the_status_not_the_download(
+    downloader, tmp_path
+):
+    # /reference read-only (a test stack mounts it so), or a full disk: save_status()
+    # raised, and the raise killed the thread that stages what is missing before its
+    # `finally`, so _download_lock stayed held and nothing staged, then or later.
+    downloader.STATUS_FILE = str(tmp_path / "no-such-dir" / "download_status.json")
+
+    downloader.save_status()  # says so, does not raise
+
+    assert not downloader._download_lock.locked()
+
+
+def test_the_staging_thread_always_releases_the_lock(downloader):
+    # Whatever it does inside, the lock is taken before the try and released in the
+    # finally, so a failure cannot leave "a download run is already in progress".
+    source = SOURCE.read_text(encoding="utf-8")
+    body = source[
+        source.index("def missing_only():") : source.index(
+            "threading.Thread(target=missing_only)"
+        )
+    ]
+    acquire, start, release = (
+        body.index("_download_lock.acquire"),
+        body.index("try:"),
+        body.index("_download_lock.release"),
+    )
+    assert acquire < start < release
+    assert "finally:" in body and body.index("finally:") < release
+    # Nothing between taking the lock and the try that could raise.
+    between = body[body.index("return", acquire) : start]
+    assert between.strip() == "return", between

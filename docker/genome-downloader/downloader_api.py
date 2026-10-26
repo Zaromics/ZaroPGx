@@ -104,9 +104,19 @@ STATUS_FILE = '/reference/download_status.json'
 DOWNLOAD_COMPLETE_FLAG = '/reference/.download_complete'
 
 def save_status():
-    """Save the current status to a file"""
-    with open(STATUS_FILE, 'w') as f:
-        json.dump(download_status, f)
+    """Save the current status to a file.
+
+    Best effort: /status answers from memory, and nothing else reads the file within a
+    run, so a write that fails (a read-only /reference, a full disk) costs the saved
+    status, not the download. It used to raise, and a raise from the thread that stages
+    what is missing killed it before its `finally`, leaving _download_lock held: the
+    staging never ran, and every later attempt said a download was already in progress.
+    """
+    try:
+        with open(STATUS_FILE, 'w') as f:
+            json.dump(download_status, f)
+    except OSError as e:
+        print(f"Could not save {STATUS_FILE}: {e}")
 
 def load_saved_status():
     """Restore the status a previous run saved.
@@ -473,10 +483,7 @@ def verify_staged_pins():
         print(f"Could not remove {DOWNLOAD_COMPLETE_FLAG}: {e}")
     if removed:
         download_status["completed"] = False
-    try:
-        save_status()
-    except OSError as e:
-        print(f"Could not save {STATUS_FILE}: {e}")
+    save_status()
     return removed
 
 
@@ -505,10 +512,7 @@ def backfill_missing():
             download_status["genomes"][name].update(status="pending", progress=0)
         os.remove(DOWNLOAD_COMPLETE_FLAG)
         download_status["completed"] = False
-        try:
-            save_status()
-        except OSError as e:
-            print(f"Could not save {STATUS_FILE}: {e}")
+        save_status()
     return missing
 
 
@@ -1018,9 +1022,9 @@ def schedule_download(delay_seconds=5):
                 if not _download_lock.acquire(blocking=False):
                     print("A download run is already in progress; not starting another.")
                     return
-                download_status["in_progress"] = True
-                save_status()
                 try:
+                    download_status["in_progress"] = True
+                    save_status()
                     done = populate_reference_cache() if cache else True
                     download_status["completed"] = done
                     if annotation:
