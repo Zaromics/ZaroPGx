@@ -102,3 +102,13 @@ Expected yield on the GeT-RM set: one wrong call corrected outright (CYP2D6 HG00
 12 multi-variant alleles within reach, 3 discordant calls and 1 no-call today — the
 most likely place for more. CYP4F2's `*1/*4` stays wrong: only a panel or long reads
 can decide it.
+
+The HG00589 call has since been checked against a second opinion. Cyrius, Illumina's
+CYP2D6 caller, was run on that genome and five others
+([caller-augmentation.md](caller-augmentation.md)) and returns GeT-RM's `*1/*21` from
+the same three variants we call, differing from us only in which chromosome it puts
+the two `*2` cores on. Two things follow. The truth value is not an artefact of the
+GeT-RM assay — an independent caller reading the same reads agrees with it. And the
+one call a restrictively licensed second caller would fix for us is this one, which
+the reads settle on their own, so adjudication is worth building before any second
+CYP2D6 caller is considered.
