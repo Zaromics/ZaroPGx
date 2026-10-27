@@ -214,12 +214,15 @@ curated: true
     limit, not a commercial one. ursaPGx is MIT but hands CYP2D6 to Cyrius and scores
     below us on everything else. StellarPGx was measured and not adopted
     (`scripts/getrm/stellarpgx-comparison.md`).
-  - Cyrius as an opt-in CYP2D6 second opinion the operator installs themselves (Illumina
-    publish it on PyPI; it needs only numpy, scipy, pysam and statsmodels, and PharmCAT
-    already takes CYP2D6 from an outside caller). Not in the image, off by default,
-    licence named where it is enabled. Measuring it first costs a re-cut: it normalises
-    depth against 3,004 control intervals across 22 autosomes, which the GeT-RM cuts do
-    not carry.
+  - Cyrius as an opt-in CYP2D6 second opinion the operator installs themselves — measured
+    Oct 2026 and **not worth taking on as things stand**. On the three CYP2D6 calls we get
+    wrong and the three hard ones we get right it scores 4 of 6 against our 3, with no
+    regression on the three we already get right. Its one win is the `*1/*21` call we
+    print as `*2/*21`, and that is a phasing decision the reads can settle on their own
+    (8 fragments carry both deciding positions), so the read-adjudication item above buys
+    the same call without naming a noncommercial licence in our UI. Of the two it does not
+    fix, one it gets wrong identically to us. Re-ask after read adjudication is built.
+    `scripts/getrm/caller-augmentation.md` has the table and the per-sample copy numbers.
 
 ## Reporting
 
