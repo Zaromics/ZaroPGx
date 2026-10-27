@@ -113,30 +113,51 @@ more samples say the same thing.
 
 ## What is worth building
 
-1. **Prefer PyPGx's NUDT15.** genes.json's `pypgx_preferred_over_pharmcat`, honoured by
-   `pharmcat_outside_call_genes` in the wrapper and by main.nf's own fallback filter.
-   +2 calls, no new dependency. CYP4F2 held pending more samples.
-2. **Say when the two callers disagree.** For a gene both call, the report prints
-   PharmCAT's and files PyPGx's under evidence, and nothing on the call says they
-   differ. CYP4F2 in NA19908 is the case to look at: PharmCAT printed `*1/*4`, PyPGx
-   called `*2/*3` and recorded `alternative_phase: ["*4"]` — it knew both readings fit
-   — and GeT-RM says `*2/*3`. The report has both calls in hand already
-   (`app/reports/copy_number.py` puts PyPGx's copy number beside PharmCAT's call), and
-   PharmCAT's own ambiguity is already surfaced as "Applies if". A disagreement between
-   callers deserves the same treatment. This costs no accuracy, because it changes
-   nothing about which call is printed, and it is the cheapest thing on this list.
-3. **Read-backed phasing.** PyPGx phases with Beagle — statistical, from a reference
-   panel, with no read evidence behind it. CYP4F2 shows what that costs. `*4` is
-   chr19:15,879,621 C>T and chr19:15,897,578 A>C **on one chromosome**; `*2/*3` is the
-   same two variants on opposite ones. In HG00436 and NA19908 both sit at allele
-   fraction ~0.5 — het, het, phase unknown from the genotypes alone — and Beagle put
-   them on one haplotype in HG00436 (wrong) and on two in NA19908 (right), from nothing
-   but the panel. CYP2D6 `*1/*21` read as `*2/*21` is the same failure. WhatsHap is MIT
-   and StellarPGx already depends on it.
-   Measure before building: the two CYP4F2 variants are 17,957 bp apart, far beyond a
-   150 bp read or a 500 bp fragment, so phasing them needs a chain through the
-   intervening heterozygous sites. Whether 30x reads support that chain across these
-   genes is a question the cached cuts can answer before any of it is wired in.
+1. **Prefer PyPGx's NUDT15.** *Built.* genes.json's `pypgx_preferred_over_pharmcat`,
+   honoured by `pharmcat_outside_call_genes` in the wrapper and by main.nf's own
+   fallback filter. +2 calls, no new dependency. CYP4F2 held pending more samples.
+2. **Say when the two callers disagree.** *Built*, `app/reports/caller_agreement.py`.
+   For a gene both call, the report printed PharmCAT's and said nothing about PyPGx's.
+   CYP4F2 in NA19908 was the case: PharmCAT printed `*1/*4`, PyPGx called `*2/*3` and
+   recorded `alternative_phase: ["*4"]` — it knew both readings fit — and GeT-RM says
+   `*2/*3`. A difference in the alleles is now a note beside the call, a note in the
+   Executive Summary and one alert; which call is printed does not change, so it costs
+   no accuracy.
+
+   Only calls both callers write as star alleles are compared, which leaves out every
+   gene whose callers describe a genotype in different terms (ABCG2, IFNL3 and VKORC1
+   by rsID, DPYD by variant, G6PD's "MALE", the RYR1 and CFTR variants PyPGx has no
+   allele for), and NAT2 is left out by name: PharmCAT 3.4 uses PharmVar's names and
+   PyPGx the legacy groups, so its `*12` or `*13` is PharmCAT's `*4`. Of the 1,159
+   gene-sample pairs on these genomes where PharmCAT called a gene itself and PyPGx
+   called it too, 671 are comparable that way and 21 named different alleles: 7 NAT2,
+   and 14 real differences — about one note per four reports, never more than one in a
+   report. PyPGx was right in four, PharmCAT in four, both wrong in one. A gene whose
+   printed call is PyPGx's has no second opinion to show, because PharmCAT records only
+   the outside call and not its own matcher's reading.
+3. **Read-backed phasing — for CYP2D6, not for CYP4F2.** PyPGx phases with Beagle —
+   statistical, from a reference panel, with no read evidence behind it. Two of the
+   wrong calls are phasing errors, and measuring the reads (`phase-blocks.py`, on the
+   cached cuts) says only one of them is within a short-read phaser's reach.
+
+   **CYP4F2: out of reach.** `*4` is chr19:15,879,621 C>T and chr19:15,897,578 A>C
+   **on one chromosome**; `*2/*3` is the same two variants on opposite ones. In HG00436
+   and NA19908 both sit at allele fraction ~0.5 — het, het, phase unknown from the
+   genotypes alone — and Beagle put them on one haplotype in HG00436 (wrong) and on two
+   in NA19908 (right), from nothing but the panel. The two are 17,957 bp apart. There
+   is no shortage of heterozygous sites between them — 55 in each sample, about one
+   every 330 bp — but the 2x150 reads (median fragment 415–429 bp) leave gaps no
+   fragment bridges: 6 of them in HG00436, the widest 3,485 bp, and 8 in NA19908. The
+   two variants fall in different read-backed phase blocks in both samples, whether a
+   link needs one fragment or two. Only a panel or long reads can decide CYP4F2 here.
+
+   **CYP2D6: within reach.** HG00589 was called `*2/*21` where GeT-RM says `*1/*21`.
+   All three deciding positions are heterozygous — `*2`'s cores at chr22:42,126,611 and
+   chr22:42,127,941, `*21`'s 2580_2581insC at chr22:42,128,211 — and all three sit in
+   one read-backed block. The pair that settles it, 2850C>T and the `*21` insertion,
+   are 270 bp apart with **8 fragments carrying both**: the reads say outright whether
+   2850C>T is on the `*21` chromosome, which is the question the call got wrong.
+   WhatsHap is MIT and StellarPGx already depends on it.
 4. **Cyrius as an opt-in second CYP2D6 caller.** The plumbing exists: PharmCAT already
    takes CYP2D6 from an outside caller, which is how PyPGx's reaches the report. Cyrius
    needs only numpy, scipy, pysam and statsmodels and reads the BAM the pipeline already
@@ -159,4 +180,6 @@ The two tools that would genuinely beat us — Cyrius on CYP2D6 structure, Aldy 
 `*6`/`*9` from reads — cannot go in the published images, and the permissively licensed
 alternatives do not beat us on the genes where we are weak. That leaves two routes to the
 same capability: build the method ourselves (2 and 3), or support the tool without
-shipping it (4). They are not exclusive, and 1 is worth doing either way.
+shipping it (4). They are not exclusive, and 1 is worth doing either way. 1 and 2 are
+built; 3 is worth building for CYP2D6, and the measurement says not to bother for
+CYP4F2.

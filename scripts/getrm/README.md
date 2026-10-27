@@ -14,6 +14,7 @@ samples, on the samples whose 1000 Genomes 30x genome is public: 208 of GeT-RM's
 | `run.py` | Runs each cut through a ZaroPGx instance and keeps the outputs the score reads |
 | `score.py` | Compares the calls with GeT-RM's |
 | `stellarpgx-comparison.md` | What a second caller, StellarPGx, scored on the same genomes, and why it is not in the pipeline |
+| `phase-blocks.py` | Whether short reads can phase two variants at all: the read-backed phase blocks of a region, from a cut |
 | `caller-augmentation.md` | What Cyrius, Aldy, ursaPGx and pangu would add, which of them can be shipped, and the three calls the stack already makes and discards |
 
 ## Running it
