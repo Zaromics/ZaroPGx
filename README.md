@@ -31,9 +31,9 @@ CPIC, DPWG and FDA guidances that apply, with reports in PDF, interactive HTML, 
 
 </details>
 
-**Workflow**: *Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → mtDNA-Server 2 Mitochondrial DNA Allele Calling → PyPGx Allele Calling → PharmCAT phenotype matching with Outside Calls → Report Creation → optional FHIR export*
+**Workflow**: *Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → mtDNA-Server 2 Mitochondrial DNA Allele Calling → PyPGx Allele Calling → Unlisted Variant Screening → PharmCAT phenotype matching with Outside Calls → Report Creation → optional FHIR export*
 
-Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when loaded in a local and secure network. It is research software, not a clinical test.
+Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when loaded in a local and secure network. Reports are for informational purposes only and are not intended for use as a substitute for professional medical advice, diagnosis, or treatment.
 
 ### Quickstart with One-Command Setup
 
@@ -59,7 +59,7 @@ This single command will:
 - PowerShell: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1
 - Bash: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh
 
-**To update an existing installation** (read [UPGRADING.md](UPGRADING.md) first):
+**To update an existing installation:**
 
 **PowerShell:**
 ```powershell
@@ -71,7 +71,7 @@ iex "& { $(iwr -useb https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/boo
 curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh | bash -s -- --update
 ```
 
-<img width="600" height="1100" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
+<img width="300" height="550" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
 
 ## Status
 **This project is in early development.**
@@ -90,7 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 *Features*
 - [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
 - [X] Priority 1 (*Supported*): **mtDNA-Server 2**: haplogroup and the MT-RNR1 outside call.
-- [o] Priority 2 (*Development*): **FHIR R4 export** (JSON, XML) following HL7's Genomics Reporting IG; push to the bundled HAPI FHIR server.
+- [X] Priority 2 (*Supported*): **FHIR R4 export** (JSON, XML) following HL7's Genomics Reporting IG; push to the bundled HAPI FHIR server.
 - [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
 - [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load
@@ -116,13 +116,14 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 <u>Hardware</u>
 
 - *Virtualization*: Hardware Virtualization must be enabled for Windows and macOS users
+- *CPU*: x86-64 (64-bit Intel or AMD)
 
 (resource usage, projected)
 
 - *Internet connection*: <u>first run only</u> requires significant bandwidth to fetch images and load reference genomes; advisable to NOT be on a metered connection, and preferably use a wired one.
-- *Hardware, Minimum* (limited function): **4 CPU cores, 8 GB DDR3 RAM, 50 GB storage**
-- *Hardware, Acceptable* (full function): **8 CPU cores, 32-64 GB DDR4 RAM, 1 TB NVMe SSD storage**
-- *Hardware, Preferred* (fast, full function): **16 CPU cores, 128 GB ECC DDR4+ RAM, 2 TB NVMe SSD storage**
+- *Hardware, Minimum* (limited function): **4 CPU cores, 16 GB RAM, 100 GB storage**
+- *Hardware, Acceptable* (full function): **8 CPU cores, 32-64 GB RAM, 1 TB NVMe SSD storage**
+- *Hardware, Preferred* (fast, full function): **16 CPU cores, 128 GB ECC RAM, 2 TB NVMe SSD storage**
 
 ## Manual Installation (Advanced)
 
@@ -134,31 +135,12 @@ If you prefer more control or want to customize the installation:
    cd ZaroPGx
    ```
 
-2. **Choose your environment**
-
-   For personal and home (LAN) use, a local deployment is recommended
-
-   **Local Development (default):** Your typical template for personal / home use
-   ```bash
-   cp .env.local .env
-   ```
-
-   **Web Deployment:** For hosting an externally accessible service on the web
-   ```bash
-   cp .env.production .env
-   ```
-
-   **Custom Configuration:** More complete and in-line documented, for convenience
-   ```bash
-   cp .env.example .env
-   ```
-
-3. **Start services**
+2. **Start services** (the script asks which `.env` template to use)
 
    - **PowerShell (Windows):** `.\start-docker.ps1`
    - **Bash (Linux / Mac / Windows WSL):** `./start-docker.sh`
 
-4. **Access the Main App**
+3. **Access the Main App**
    - Web UI: `http://localhost:8765`
    - Documentation: `http://localhost:8765/docs`
    - HAPI FHIR dashboard (optional): `http://localhost:8090`
@@ -182,7 +164,7 @@ For real-world sample data, try browsing the **Personal Genome Project**:
 - https://www.personalgenomes.org/
 
 Sample files available in the repo:
-- `app/static/demo/NA12878.pgx-demo.cram` (used by **Run Demo**)
+- `app/static/demo/NA12878.pgx-demo.cram`
 - `test_data/sample_cpic.vcf`
 
 ## Contributions are welcome and are gratefully appreciated!

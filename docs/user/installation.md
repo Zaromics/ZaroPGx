@@ -11,8 +11,9 @@ title: Installation
 - Docker Compose v2.24 or later, and Git.
 - An x86-64 machine, or one that can emulate it: the published images are `linux/amd64`
   only. On Apple Silicon, turn on Rosetta emulation in Docker Desktop.
-- Memory: no minimum is enforced. A VCF needs little; alignments need much more, and the
-  stack allows the GATK service up to 28 GB and PyPGx up to 20 GB.
+- Hardware, minimum (limited function): 4 CPU cores, 16 GB RAM, 100 GB storage. Acceptable
+  (full function): 8 CPU cores, 32-64 GB RAM, 1 TB NVMe SSD storage. Preferred (fast, full
+  function): 16 CPU cores, 128 GB ECC RAM, 2 TB NVMe SSD storage.
 - Disk: about 10 GB of reference genomes (UCSC hg19 and hg38 and GRCh37, uncompressed, and
   PharmCAT's GRCh38), 5.3 GB for the CRAM reference cache plus 3.2 GB more while it is
   built, the images, and room for your inputs and reports. The FASTQ lane needs another
