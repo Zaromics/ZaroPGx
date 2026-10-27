@@ -166,14 +166,25 @@ curated: true
     where GeT-RM says `*1/*21`, all three deciding positions are heterozygous and in one
     block, and the pair that settles it (2850C>T and `*21`'s insertion, 270 bp apart) is
     carried by 8 fragments. WhatsHap is MIT and StellarPGx already depends on it.
-    Where it would go: `pypgx run-ngs-pipeline --variants` says "statistical haplotype
-    phasing will be skipped if input VCF is already fully phased", so PyPGx's Beagle
-    step can be displaced by handing it a phased VCF — but *fully*, and WhatsHap phases
-    only in blocks, so taking the step over means WhatsHap then Beagle for the rest
-    (Beagle 5 keeps phase it is given). The cheaper first move is not to displace it at
-    all: run WhatsHap only to *check* PyPGx's phasing where the reads reach, and say so
-    on the call when the two disagree, as `app/reports/caller_agreement.py` does for the
-    two callers. That changes no call and needs no change inside PyPGx.
+    Adjudicate, do not re-phase — `scripts/getrm/phasing.md` has the measurements.
+    Only 51 of the 179 star alleles defined by two or more core variants have their
+    whole span inside one 2x150 fragment, so reads reach about 28% of the alleles where
+    phase decides anything (median span 2,422 bp, 90th percentile 24,242 bp), and
+    chaining through intervening heterozygous sites does not rescue the rest. What they
+    do reach is concentrated in PyPGx's genes — CYP2D6 15 of 49, CYP2A6 9 of 12,
+    UGT1A1 2 of 2 — not PharmCAT's, whose one plausibly reachable unresolved call
+    (CYP2B6 `*1/*6 or *1/*9`, 2,422 bp) is not reachable. PyPGx already names the
+    alternative reading on the 34 calls over 61 genomes that hang on phase
+    (`alternative_phase`), and deciding between two arrangements of two variants needs
+    no phaser: count the fragments covering both, as `scripts/getrm/phase-blocks.py`
+    does. Settled outright in the cuts: APOE rs429358/rs7412 138 bp apart, 9 fragments;
+    CYP1B1's `*2` pair 213 bp, 16; CYP2D6's 2850C>T and `*21` insertion 270 bp, 8.
+    Report the read evidence beside the call first, as the caller-disagreement note
+    does, and only decide the call once the agreement rate is measured. Upstream will
+    not do it for us: PyPGx has accepted a *fully* phased VCF since 0.10.0 (issue #32)
+    and every phasing change since is a Beagle bug fix, with no mention of read-backed
+    phasing; PharmCAT reads `FORMAT/PS` from 3.0 but its phase-sensitive genes are the
+    wide ones.
   - [DONE Oct 2026] `GeneConfig.get_gene_set()` answered a name it did not know with
     *every* gene (`docker/pypgx/pypgx_wrapper.py`). Reachable without a typo:
     `_get_fallback_config()`, used when `config/genes.json` is not mounted, defines
