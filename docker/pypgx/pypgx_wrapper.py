@@ -442,19 +442,56 @@ def determine_pypgx_gene_set(preference: str, input_type: str) -> str:
     return 'pypgx_minus_pharmcat'
 
 
+def pypgx_preferred_genes() -> set:
+    """Genes PharmCAT calls itself whose PyPGx call is handed to it anyway, upper-cased.
+
+    PharmCAT's own call of such a gene is lost, so an entry needs a reason that holds
+    for every carrier, not a better score on one panel. genes.json's
+    `pypgx_preferred_over_pharmcat` holds them:
+
+    - NUDT15, because PharmCAT 3.4 has no *2 definition. A *2 carrier can only come
+      back as *3 -- *2/*2 as *3/*3, *2/*5 as *3/*5. The phenotype survives (both
+      alleles are No Function) but the diplotype printed is wrong, and wrong the same
+      way on every *2 carrier. PyPGx names *2, and on the 61 GeT-RM genomes had NUDT15
+      right 10 times of 11 against PharmCAT's 8, including every case PharmCAT had
+      right (scripts/getrm).
+
+    Read straight from the config rather than through get_gene_set, which answers a
+    name it does not know with *every* gene -- here that would hand PharmCAT every
+    PyPGx call, silently turning `auto` into `pypgx`. Anything unreadable means nothing
+    is preferred, which is how the pipeline behaved before this existed.
+    """
+    try:
+        sets = gene_config.load_config().get('sets') or {}
+        listed = sets.get('pypgx_preferred_over_pharmcat')
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        logger.warning(f"pypgx_preferred_over_pharmcat not read ({exc}): PharmCAT keeps its own calls")
+        return set()
+    if not isinstance(listed, list):
+        return set()
+    return {str(gene).strip().upper() for gene in listed}
+
+
 def pharmcat_outside_call_genes(preference: str, genes: List[str]) -> List[str]:
     """The genes whose PyPGx call main.nf hands PharmCAT as an outside call.
 
     PharmCAT takes an outside call over its own call of the gene ("PharmCAT would have
     called ... based on the VCF but it has been ignored in favor of the outside call",
     PharmCAT 3.4.0). So only under pypgx does every call go. Otherwise PharmCAT
-    keeps its call for the genes it calls itself ("pharmcat_can_call"): auto has PyPGx
-    genotype them from reads for their copy number, which the report gives beside
-    PharmCAT's call (app/reports/copy_number.py), not to replace it.
+    keeps its call for the genes it calls itself ("pharmcat_can_call") -- bar
+    pypgx_preferred_genes(), whose allele it cannot name: auto has PyPGx genotype them
+    from reads for their copy number, which the report gives beside PharmCAT's call
+    (app/reports/copy_number.py), not to replace it.
+
+    Only a gene PyPGx was asked for can be handed over, so a preferred gene reaches
+    alignment runs: from a VCF, BCF or gVCF, `auto` leaves PharmCAT's genes to PharmCAT
+    (determine_pypgx_gene_set) and there is no PyPGx call to hand over. `pharmcat` is
+    left as it was, an explicit "PharmCAT's genes are PharmCAT's", and asks PyPGx for
+    none of them either.
     """
     if str(preference or "").strip().lower() == 'pypgx':
         return list(genes)
-    own = set(gene_config.get_gene_set('pharmcat_can_call'))
+    own = set(gene_config.get_gene_set('pharmcat_can_call')) - pypgx_preferred_genes()
     return [gene for gene in genes if gene not in own]
 
 

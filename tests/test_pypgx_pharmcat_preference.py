@@ -8,6 +8,11 @@ from a VCF, BCF or gVCF it does not. PharmCAT takes an outside call over its own
 of a gene, so under `auto` its genes' PyPGx calls do not go to it as outside calls:
 the report keeps PharmCAT's call and gives PyPGx's copy number beside it. `pypgx`
 still hands PharmCAT every call, and `pharmcat` still leaves its genes alone.
+
+The exception is genes.json's `pypgx_preferred_over_pharmcat`, the genes PharmCAT
+calls itself whose PyPGx call it is given regardless, because its own definitions
+cannot name the allele: NUDT15, where PharmCAT 3.4 has no *2 and so calls every *2
+carrier *3.
 """
 
 from __future__ import annotations
@@ -39,6 +44,9 @@ class _GeneConfig:
     def get_gene_set(self, name):
         return _set(name)
 
+    def load_config(self):
+        return {"sets": SETS}
+
 
 def _load(names):
     """The named top-level definitions of the wrapper, without importing it (PyPGx,
@@ -68,11 +76,13 @@ NS = _load(
     [
         "ALIGNMENT_INPUT_TYPES",
         "determine_pypgx_gene_set",
+        "pypgx_preferred_genes",
         "pharmcat_outside_call_genes",
     ]
 )
 choose = NS["determine_pypgx_gene_set"]
 outside = NS["pharmcat_outside_call_genes"]
+preferred = NS["pypgx_preferred_genes"]
 
 READS = ["bam", "cram", "sam", "fastq"]
 NOT_READS = ["vcf", "bcf", "gvcf", "unknown", "", None]
@@ -124,9 +134,9 @@ def test_reads_are_the_types_main_nf_sends_for_an_alignment():
 def test_auto_keeps_pharmcats_calls_of_its_own_genes():
     genes = _set(choose("auto", "cram"))
     sent = outside("auto", genes)
-    assert set(sent) == set(_set("pypgx_minus_pharmcat"))
+    assert set(sent) == set(_set("pypgx_minus_pharmcat")) | preferred()
     assert "CYP2D6" in sent
-    assert not set(sent) & set(_set("pharmcat_can_call"))
+    assert not set(sent) & (set(_set("pharmcat_can_call")) - preferred())
     for gene in ("CYP2B6", "CYP4F2", "CYP2C19", "SLCO1B1", "DPYD", "F2", "F5"):
         assert gene in genes and gene not in sent
 
@@ -140,6 +150,71 @@ def test_pypgx_still_hands_pharmcat_every_call():
     genes = _set(choose("pypgx", "bam"))
     assert outside("pypgx", genes) == genes
     assert outside("PYPGX", genes) == genes
+
+
+# --------------------------------------------------------------------------
+# The genes PharmCAT calls itself but cannot name
+# --------------------------------------------------------------------------
+
+
+def test_nudt15_is_the_preferred_gene_and_pharmcat_calls_it_too():
+    """It has to be a gene PharmCAT calls, or preferring PyPGx's call means nothing."""
+    assert preferred() == {"NUDT15"}
+    assert "NUDT15" in _set("pharmcat_can_call")
+
+
+@pytest.mark.parametrize("input_type", READS)
+def test_reads_hand_pharmcat_pypgxs_nudt15(input_type):
+    """PharmCAT 3.4 has no NUDT15 *2, so *2/*2 comes back *3/*3 and *2/*5 as *3/*5."""
+    genes = _set(choose("auto", input_type))
+    assert "NUDT15" in genes
+    assert "NUDT15" in outside("auto", genes)
+
+
+@pytest.mark.parametrize("input_type", NOT_READS)
+def test_a_variant_input_leaves_nudt15_with_pharmcat(input_type):
+    """Nothing to hand over: without reads PyPGx is not asked for PharmCAT's genes."""
+    genes = _set(choose("auto", input_type))
+    assert "NUDT15" not in genes
+    assert "NUDT15" not in outside("auto", genes)
+
+
+def test_pharmcat_preference_still_keeps_nudt15():
+    genes = _set(choose("pharmcat", "bam"))
+    assert "NUDT15" not in genes
+    assert "NUDT15" not in outside("pharmcat", genes)
+
+
+class _PartialConfig:
+    """get_gene_set as it really behaves, with load_config broken in one way."""
+
+    def __init__(self, sets):
+        self._sets = sets
+
+    def get_gene_set(self, name):
+        return _set(name)
+
+    def load_config(self):
+        if self._sets is None:
+            raise OSError("config unreadable")
+        return {"sets": self._sets}
+
+
+@pytest.mark.parametrize(
+    "sets",
+    [None, {}, {"pypgx_preferred_over_pharmcat": "NUDT15"}],
+    ids=["unreadable", "absent", "not-a-list"],
+)
+def test_a_preferred_set_it_cannot_read_costs_pharmcat_nothing(sets, monkeypatch):
+    """get_gene_set answers a name it does not know with *every* gene, which here
+    would hand PharmCAT every PyPGx call and turn auto into pypgx. Read from the
+    config directly, a set that is missing or malformed means nothing is preferred."""
+    monkeypatch.setitem(NS, "gene_config", _PartialConfig(sets))
+    genes = _set(choose("auto", "bam"))
+    assert preferred() == set()
+    sent = outside("auto", genes)
+    assert set(sent) == set(_set("pypgx_minus_pharmcat"))
+    assert "NUDT15" not in sent
 
 
 # --------------------------------------------------------------------------
@@ -230,6 +305,14 @@ def test_an_older_pypgx_does_not_replace_pharmcats_calls(tmp_path):
     reads: main.nf holds those back itself, from genes.json."""
     rows = _write_outside_calls(tmp_path, {"success": True, "results": RESULTS})
     assert rows == ["CYP2D6\t*3/*68+*4", "GSTM1\t*0/*B"]
+
+
+def test_an_older_pypgx_still_hands_over_the_preferred_genes(tmp_path):
+    """main.nf holds PharmCAT's genes back from the same genes.json, so it has to make
+    the same exception for the ones PharmCAT cannot name."""
+    results = dict(RESULTS, NUDT15=_call("NUDT15", "*2/*5"))
+    rows = _write_outside_calls(tmp_path, {"success": True, "results": results})
+    assert sorted(rows) == ["CYP2D6\t*3/*68+*4", "GSTM1\t*0/*B", "NUDT15\t*2/*5"]
 
 
 def test_without_genes_json_every_call_goes_as_before(tmp_path):

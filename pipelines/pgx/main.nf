@@ -739,7 +739,14 @@ except (json.JSONDecodeError, IOError) as e:
 if outside_genes is None and res:
     try:
         with open('!{projectDir}/../../config/genes.json', encoding='utf-8') as f:
-            held_back = {str(g).strip().upper() for g in json.load(f)['sets']['pharmcat_can_call']}
+            sets = json.load(f)['sets']
+        held_back = {str(g).strip().upper() for g in sets['pharmcat_can_call']}
+        # Except the genes PharmCAT takes from PyPGx although it calls them itself,
+        # because its own definitions cannot name the allele (NUDT15 *2). Absent, or
+        # not a list, nothing is preferred and PharmCAT keeps every call of its own.
+        preferred = sets.get('pypgx_preferred_over_pharmcat')
+        if isinstance(preferred, list):
+            held_back -= {str(g).strip().upper() for g in preferred}
     except (OSError, ValueError, KeyError, TypeError) as e:
         print(f"genes.json not read ({e}): every PyPGx call goes to PharmCAT", file=sys.stderr)
 
