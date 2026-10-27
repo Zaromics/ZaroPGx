@@ -166,6 +166,19 @@ curated: true
     where GeT-RM says `*1/*21`, all three deciding positions are heterozygous and in one
     block, and the pair that settles it (2850C>T and `*21`'s insertion, 270 bp apart) is
     carried by 8 fragments. WhatsHap is MIT and StellarPGx already depends on it.
+  - [DONE Oct 2026] `GeneConfig.get_gene_set()` answered a name it did not know with
+    *every* gene (`docker/pypgx/pypgx_wrapper.py`). Reachable without a typo:
+    `_get_fallback_config()`, used when `config/genes.json` is not mounted, defines
+    only `all` and `core`, so `pharmcat_outside_call_genes` asked for
+    `pharmcat_can_call`, received all 91 genes, found every gene to be PharmCAT's own
+    and handed PharmCAT no outside call at all — CYP2D6 included — in a run that
+    otherwise looked normal. It now raises, naming the file and the sets it has, and a
+    test checks that every set the wrapper names is in `genes.json`. Sets and
+    categories were confused too: `/genotype` tested a requested name against the
+    *categories*, so `genes=phase2` genotyped all 91 instead of its 8 and
+    `genes=neuropsychopharmacogenes` was refused as an unsupported gene; a new
+    `resolve_gene_selection()` takes a set, else a category, else a 400. Found while
+    adding `pypgx_preferred_genes`, which reads `load_config()` directly.
   - CYP2D6 and CYP2A6 have no second caller in the stack, so their seven wrong calls on
     GeT-RM went unchallenged. Say so in the report when nothing corroborates a call,
     rather than printing it as flatly as a corroborated one.
