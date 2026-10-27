@@ -306,24 +306,69 @@ class GeneConfig:
             return self._supported_genes
 
         config = self.load_config()
-        if "sets" in config and "all" in config["sets"]:
-            self._supported_genes = config["sets"]["all"]
+        every = self._genes_of((config.get("sets") or {}).get("all"))
+        if every is not None:
+            self._supported_genes = every
         else:
             # Fallback to extracting from genes list
             self._supported_genes = [gene["name"] for gene in config.get("genes", [])]
 
         return self._supported_genes
 
+    @staticmethod
+    def _genes_of(entry: Any) -> Optional[List[str]]:
+        """The gene names in a "sets" or "categories" entry: a plain list, or the
+        "genes" of an entry that carries a name and a count beside them."""
+        if isinstance(entry, list):
+            return list(entry)
+        if isinstance(entry, dict) and isinstance(entry.get("genes"), list):
+            return list(entry["genes"])
+        return None
+
     def get_gene_set(self, set_name: str = "all") -> List[str]:
-        """Get a specific gene set"""
+        """The named gene set from the configuration; raises if it has no such set.
+
+        It used to answer an unknown name with *every* gene, which turned a missing
+        set into a different run rather than a failure. config/genes.json is a bind
+        mount (compose.yml, ./config:/app/config), so an install without it falls
+        back to _get_fallback_config(), which defines only "all" and "core" -- and
+        pharmcat_outside_call_genes, asking for "pharmcat_can_call", would have been
+        handed all 91 genes, found every gene to be "PharmCAT's own" and given
+        PharmCAT no outside call at all, CYP2D6 included, in a run that otherwise
+        looked normal. A name the configuration does not define is a fault in the
+        configuration or in the caller, and either way the run should say so.
+        """
         config = self.load_config()
-        if "sets" in config and set_name in config["sets"]:
-            return config["sets"][set_name]
-        elif set_name == "all":
+        sets = config.get("sets") or {}
+        genes = self._genes_of(sets.get(set_name))
+        if genes is not None:
+            return genes
+        if set_name == "all":
             return self.get_supported_genes()
-        else:
-            logger.warning(f"Gene set '{set_name}' not found, returning all genes")
-            return self.get_supported_genes()
+        raise KeyError(
+            f"gene set '{set_name}' is not defined in {self.config_path}; "
+            f"it defines {', '.join(sorted(sets)) or 'none'}"
+        )
+
+    def resolve_gene_selection(self, name: str) -> Optional[List[str]]:
+        """The genes a request's name asks for -- a set, else a category -- or None
+        when it names neither, which leaves it to be read as a list of genes.
+
+        Sets and categories are different things in config/genes.json and only
+        partly overlap: "phase2", "transporters", "other_enzymes", "receptors",
+        "blood_clotting" and "other" are categories and not sets, while
+        "neuropsychopharmacogenes" and "neuropsychopharmacogenes_panel_missing" are
+        sets and not categories. /genotype tested a name against the *categories*
+        and then asked get_gene_set for it, so a category genotyped all 91 genes
+        and a set that is not also a category was refused as an unsupported gene.
+        """
+        config = self.load_config()
+        # `is not None`, not truthiness: a set defined as empty is still that set,
+        # and must not fall through to a category or to being read as gene names.
+        in_sets = self._genes_of((config.get("sets") or {}).get(name))
+        if name == "all" or in_sets is not None:
+            return self.get_gene_set(name)
+        return self._genes_of((config.get("categories") or {}).get(name))
 
     def get_gene_info(self, gene_name: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a specific gene"""
@@ -770,13 +815,13 @@ def get_gene_sets():
     """Get available gene sets"""
     config = gene_config.load_config()
     sets_info = {}
-    if "sets" in config:
-        for set_name, genes in config["sets"].items():
-            sets_info[set_name] = {
-                "count": len(genes),
-                "description": f"{set_name.title()} gene set",
-                "genes": genes[:10]  # Show first 10 genes as sample
-            }
+    for set_name, entry in (config.get("sets") or {}).items():
+        genes = GeneConfig._genes_of(entry) or []
+        sets_info[set_name] = {
+            "count": len(genes),
+            "description": f"{set_name.title()} gene set",
+            "genes": genes[:10]  # Show first 10 genes as sample
+        }
     return sets_info
 
 @app.post("/create-input-vcf")
@@ -3288,12 +3333,12 @@ async def genotype(
     # for a request that named its genes: the response then carries no list.
     outside_call_genes: Optional[List[str]] = None
 
-    # Check if genes parameter refers to a predefined gene set
+    # Check if genes parameter refers to a predefined gene set or category
     if genes and genes.strip().upper() != "ALL":
         potential_set = genes.strip().lower()
-        available_sets = gene_config.get_categories().keys()
-        if potential_set in ["core", "cyp450", "all"] or potential_set in available_sets:
-            requested_genes = gene_config.get_gene_set(potential_set)
+        named = gene_config.resolve_gene_selection(potential_set)
+        if named is not None:
+            requested_genes = named
         else:
             # Parse as comma-separated list. This is raw request text, so it
             # gets the same SUPPORTED_GENES membership check the legacy
@@ -3306,7 +3351,14 @@ async def genotype(
                 raise HTTPException(status_code=400, detail=f"Unsupported genes: {unsupported}. Supported genes: {SUPPORTED_GENES}")
     elif gene_set:
         # Use explicit gene set parameter
-        requested_genes = gene_config.get_gene_set(gene_set.lower())
+        named = gene_config.resolve_gene_selection(gene_set.strip().lower())
+        if named is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown gene set '{gene_set}'. Available: "
+                f"{sorted((gene_config.load_config().get('sets') or {}))}",
+            )
+        requested_genes = named
     elif genes and genes.strip().upper() == "ALL":
         # For "ALL", apply preference logic based on input file type
         # Use input_type from workflow data if available, otherwise fallback to detection
