@@ -166,6 +166,14 @@ curated: true
     where GeT-RM says `*1/*21`, all three deciding positions are heterozygous and in one
     block, and the pair that settles it (2850C>T and `*21`'s insertion, 270 bp apart) is
     carried by 8 fragments. WhatsHap is MIT and StellarPGx already depends on it.
+    Where it would go: `pypgx run-ngs-pipeline --variants` says "statistical haplotype
+    phasing will be skipped if input VCF is already fully phased", so PyPGx's Beagle
+    step can be displaced by handing it a phased VCF — but *fully*, and WhatsHap phases
+    only in blocks, so taking the step over means WhatsHap then Beagle for the rest
+    (Beagle 5 keeps phase it is given). The cheaper first move is not to displace it at
+    all: run WhatsHap only to *check* PyPGx's phasing where the reads reach, and say so
+    on the call when the two disagree, as `app/reports/caller_agreement.py` does for the
+    two callers. That changes no call and needs no change inside PyPGx.
   - [DONE Oct 2026] `GeneConfig.get_gene_set()` answered a name it did not know with
     *every* gene (`docker/pypgx/pypgx_wrapper.py`). Reachable without a typo:
     `_get_fallback_config()`, used when `config/genes.json` is not mounted, defines
