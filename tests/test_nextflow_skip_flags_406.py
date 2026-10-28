@@ -211,11 +211,13 @@ def test_main_nf_rejects_skip_gatk_for_conversion_inputs():
 
 
 # PyPGxGenotypeAll degrades to PharmCAT-only on purpose; PharmCATRun ends in `|| true`;
-# UnlistedVariants writes "failed" into its JSON rather than fail the run.
+# UnlistedVariants and PyPGxReadPhase write "failed" into their JSON rather than fail
+# the run.
 EXEMPT_CURL_ENDPOINTS = (
     "http://pypgx:5000/genotype",
     "http://pharmcat:5000/genotype",
     "http://pypgx:5000/unlisted-variants",
+    "http://pypgx:5000/read-phase",
 )
 
 
@@ -236,14 +238,15 @@ def test_every_curl_call_site_fails_on_http_errors_or_is_annotated_exempt():
     # minus OptiTypeHLAFromFastq's call to zarohla, removed 2026-09-26 with the process:
     # it typed HLA from raw FASTQ and crashed on every panel FASTQ without HLA capture,
     # so the FASTQ lane now types from the aligned BAM through OptiTypeHLAFromBAM.
-    # 12 with UnlistedVariants' call to pypgx's /unlisted-variants.
-    assert len(calls) == 12, f"curl call-site count changed to {len(calls)}; re-audit"
+    # 12 with UnlistedVariants' call to pypgx's /unlisted-variants, 13 with
+    # PyPGxReadPhase's to /read-phase.
+    assert len(calls) == 13, f"curl call-site count changed to {len(calls)}; re-audit"
     for call in calls:
         if any(endpoint in call for endpoint in EXEMPT_CURL_ENDPOINTS):
             continue
         assert "--fail-with-body" in call, f"unguarded curl: {call}"
-    # The three exemptions must stay deliberate, not drift into being accidental.
-    assert text.count("DELIBERATELY EXEMPT") == 3
+    # The four exemptions must stay deliberate, not drift into being accidental.
+    assert text.count("DELIBERATELY EXEMPT") == 4
 
 
 def test_guarded_curl_failures_surface_the_server_message():

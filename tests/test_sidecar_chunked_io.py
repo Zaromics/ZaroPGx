@@ -273,8 +273,10 @@ def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
         "pypgx_wrapper.py reads an entire upload into memory with a bare "
         "await file.read(); every save site must stream via UPLOAD_CHUNK_BYTES"
     )
-    # /create-input-vcf, /genotype and /unlisted-variants: one chunked read loop each.
-    assert pypgx_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 3
+    # /create-input-vcf, /genotype, /unlisted-variants and /read-phase: one chunked
+    # read loop each. (/read-phase takes the alignment as a shared path only, never as
+    # an upload -- its loop is for the VCF.)
+    assert pypgx_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 4
 
 
 def test_zarohla_upload_sites_no_longer_buffer_whole_file(zarohla_source):

@@ -13,6 +13,12 @@
 {%- if d.alt_locus and d.diplotype is a_call %}
 <div class="call-note alt-locus-note">⚠ {{ d.alt_locus.call_note }}</div>
 {%- endif %}
+{#- The reads put two of the call's variants on the other chromosome from the one it
+    asserts (app/reports/read_phase.py): the alleles are not in question, the pairing
+    of them into a diplotype is. #}
+{%- if d.read_phase_conflict and d.diplotype is a_call %}
+<div class="call-note read-phase-note">⚠ {{ d.read_phase_conflict.call_note }}</div>
+{%- endif %}
 {#- A call on a gene with SV-defined alleles made without copy number
     (app/reports/copy_number.py): what it cannot show, marked. A call whose copy
     number PyPGx measured is not: its note (CYP2B6 *30) is plain. #}

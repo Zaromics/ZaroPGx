@@ -1,0 +1,230 @@
+"""Where the reads contradict the arrangement a printed call asserts.
+
+PyPGx phases with Beagle, from a reference panel, with no read evidence behind it. A
+diplotype resting on two heterozygous variants asserts that the two sit on one
+chromosome or on two, and the reads can check that without a phaser: count the
+fragments carrying both positions. The counting is done where the reads are
+(docker/pypgx/read_phase.py, which writes ``read_phase.json``); this reads that file,
+works out what each printed call asserts, and says so where the two disagree.
+
+It never changes a call. Naming the right allele from a corrected arrangement needs
+the allele definition table, which is not read here: the report says the printed
+arrangement is contradicted and what the reads show, and leaves the diplotype alone.
+
+Measured over the 61 GeT-RM genomes (scripts/getrm/arrangement.py): 719 pairs of
+heterozygous defining variants within 1 kb, 413 of which the reads decide, and 411 of
+those agreeing with the call. So this writes nothing at all for 59 of 61 genomes, and
+the note it does write is rare by construction. The two it found were CYP2D6
+``*2/*21`` in HG00589, where 7 fragments to 0 put the ``*2`` cores on the ``*21``
+chromosome, making GeT-RM's ``*1/*21`` -- one of three CYP2D6 calls the stack gets
+wrong, and the same call Illumina's Cyrius fixes
+(scripts/getrm/caller-augmentation.md) -- and CYP2F1 ``*1/*2`` in NA19026, a gene with
+no dosing guideline.
+
+**Only a row whose printed call is PyPGx's own is marked** (CYP2D6, and a gene in
+``pypgx_preferred_over_pharmcat``). For a gene the report prints PharmCAT's call for,
+PyPGx's arrangement is not the printed one, so a note about it would question a call
+the reader cannot see; the evidence is kept in the run's file either way.
+"""
+
+from __future__ import annotations
+
+import html
+import json
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from app.reports.copy_number import pypgx_called
+
+logger = logging.getLogger(__name__)
+
+# What the phasing it questions is called, in every note this module writes.
+PHASER = "Beagle"
+
+
+# What the pypgx wrapper's /read-phase writes and main.nf's PyPGxReadPhase publishes
+# into the report directory.
+RESULT_FILE = "read_phase.json"
+
+
+def read_result(report_dir: str) -> dict:
+    """read_phase.json, or {} for a run that has none.
+
+    No file is the normal case: a VCF upload has no reads to check, and a run that
+    predates this check has no file. Either way it costs the note, not the report.
+    """
+    path = Path(report_dir or ".") / RESULT_FILE
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read %s: %s", RESULT_FILE, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _details(pypgx_results: Any, gene: str) -> Mapping[str, Any]:
+    """PyPGx's details for one gene in this run, or {}."""
+    results = (
+        pypgx_results.get("results") if isinstance(pypgx_results, Mapping) else None
+    )
+    if not isinstance(results, Mapping):
+        return {}
+    for name, result in results.items():
+        if str(name).strip().upper() != gene.upper() or not isinstance(result, Mapping):
+            continue
+        details = result.get("details")
+        if result.get("success") and isinstance(details, Mapping):
+            return details
+    return {}
+
+
+def asserted(pypgx_results: Any, gene: str) -> Dict[frozenset, str]:
+    """{the two variants}: "cis" or "trans", as this gene's printed call places them.
+
+    A variant that defines an allele on both haplotypes places nothing -- the call
+    says it is on both chromosomes, which no pair of positions can contradict -- so it
+    is left out.
+    """
+    details = _details(pypgx_results, gene)
+    defines: Dict[str, set] = {}
+    for supporting in details.get("supporting_variants") or []:
+        if not isinstance(supporting, Mapping):
+            continue
+        names = {
+            str(item.get("variant"))
+            for item in supporting.get("variants") or []
+            if isinstance(item, Mapping) and item.get("variant")
+        }
+        defines[str(supporting.get("allele"))] = names
+
+    side: Dict[str, set] = {}
+    for number, key in ((1, "haplotype1"), (2, "haplotype2")):
+        for allele in details.get(key) or []:
+            for variant in defines.get(str(allele), ()):
+                side.setdefault(variant, set()).add(number)
+
+    out: Dict[frozenset, str] = {}
+    placed = [v for v, numbers in side.items() if len(numbers) == 1]
+    for i, a in enumerate(placed):
+        for b in placed[i + 1 :]:
+            out[frozenset((a, b))] = "cis" if side[a] == side[b] else "trans"
+    return out
+
+
+def contradicted(evidence: Mapping[str, Any], pypgx_results: Any) -> Dict[str, dict]:
+    """Gene -> the strongest pair whose arrangement the reads contradict.
+
+    One pair per gene: a note names the gene's call, not each pair, and the pair with
+    the most fragments behind it is the one worth quoting.
+    """
+    if str(evidence.get("status")) != "done":
+        return {}
+    by_gene: Dict[str, Dict[frozenset, str]] = {}
+    found: Dict[str, dict] = {}
+    for row in evidence.get("pairs") or []:
+        if not isinstance(row, Mapping):
+            continue
+        shows = row.get("shows")
+        gene = str(row.get("gene") or "").strip().upper()
+        if shows not in ("cis", "trans") or not gene:
+            continue
+        if gene not in by_gene:
+            by_gene[gene] = asserted(pypgx_results, gene)
+        says = by_gene[gene].get(frozenset((str(row.get("a")), str(row.get("b")))))
+        if says is None or says == shows:
+            continue
+        fragments = int(row.get("cis") or 0) + int(row.get("trans") or 0)
+        if fragments > int(found.get(gene, {}).get("fragments") or 0):
+            found[gene] = {
+                "a": str(row.get("a")),
+                "b": str(row.get("b")),
+                "distance": row.get("distance"),
+                "says": says,
+                "shows": shows,
+                "cis": int(row.get("cis") or 0),
+                "trans": int(row.get("trans") or 0),
+                "fragments": fragments,
+            }
+    return found
+
+
+def _where(shows: str) -> str:
+    return "the same chromosome" if shows == "cis" else "opposite chromosomes"
+
+
+def call_note(found: Mapping[str, Any]) -> str:
+    """The line beside the call."""
+    return (
+        "The reads place two of this call's variants on "
+        f"{_where(str(found.get('shows')))}, which this call does not (see Alerts)."
+    )
+
+
+def summary_note(found: Mapping[str, Any]) -> str:
+    """The Executive Summary's note, under the call it questions."""
+    return (
+        "The reads disagree with how this call splits its variants between the two "
+        f"chromosomes: {found.get('fragments')} fragments covering both positions put "
+        f"them on {_where(str(found.get('shows')))}. Which alleles were found is not "
+        "in question, only how they are paired. See Alerts and Warnings."
+    )
+
+
+def annotate_genes(
+    genes: Sequence[Any], evidence: Mapping[str, Any], pypgx_results: Any
+) -> Dict[str, dict]:
+    """Mark every row whose printed call is PyPGx's own and whose arrangement the
+    reads contradict, in place; returns {gene: what the reads showed} for the alert."""
+    contradictions = contradicted(evidence, pypgx_results)
+    if not contradictions:
+        return {}
+    found: Dict[str, dict] = {}
+    for row in genes or []:
+        if not isinstance(row, dict) or not pypgx_called(row):
+            continue
+        gene = str(row.get("gene") or "").strip().upper()
+        detail = contradictions.get(gene)
+        if not detail:
+            continue
+        row["read_phase_conflict"] = {
+            "phaser": PHASER,
+            "call_note": call_note(detail),
+            "note": summary_note(detail),
+            **detail,
+        }
+        found[str(row.get("gene") or gene)] = detail
+    return found
+
+
+def alert(found: Mapping[str, Mapping[str, Any]]) -> Optional[str]:
+    """Alerts and Warnings' entry naming each gene and what the reads showed."""
+    if not found:
+        return None
+    items = ", ".join(
+        f"{html.escape(gene)} ({detail.get('fragments')} fragments, "
+        f"{html.escape(_where(str(detail.get('shows'))))})"
+        for gene, detail in found.items()
+    )
+    return (
+        "<p>⚠️ <strong>The reads contradict how a call is phased:</strong> "
+        f"{items}. Which chromosome each variant sits on is decided by "
+        f"{PHASER}, from a reference panel rather than from these reads. Where two of "
+        "a call's variants are close enough for one fragment to cover both, the reads "
+        "settle it directly, and here they disagree with the call. The alleles found "
+        "are not in question, only how they are paired into a diplotype, so the "
+        "gene's activity may be right while the diplotype is not. This report prints "
+        "the call unchanged and says so here. Checked on every call; where the reads "
+        "do not reach two of its variants, nothing is said either way.</p>"
+    )
+
+
+def positions(found: Mapping[str, Mapping[str, Any]]) -> List[Tuple[str, str, str]]:
+    """(gene, variant, variant) for each contradiction, for a provenance line."""
+    return [
+        (str(gene), str(detail.get("a")), str(detail.get("b")))
+        for gene, detail in found.items()
+    ]
