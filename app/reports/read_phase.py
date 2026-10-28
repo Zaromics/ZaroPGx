@@ -207,6 +207,38 @@ def phenotype_note(
     return "this would make the phenotype " + _names_phrase(phenotypes)
 
 
+# More readings than this is a list rather than a statement. The service already
+# works out what every reading agrees on, and that is said instead: a gene with one
+# decided pair and five variants no fragment reaches allows 32 arrangements, which
+# belongs in neither the note beside the call nor the one-page Executive Summary.
+MAX_NAMES = 3
+
+
+def arrangement_phrase(found: Mapping[str, Any]) -> str:
+    """What the reads' own arrangement would be called, in as few words as it takes.
+
+    The readings themselves where there are few enough to read, and otherwise the
+    part of them they all agree on -- HG00589's CYP2D6 is *1/*21 or *21/*39, and
+    what both say is that one chromosome is *21.
+    """
+    names = [str(n) for n in (found.get("allows") or []) if n]
+    if 0 < len(names) <= MAX_NAMES:
+        return f"their arrangement would be {_names_phrase(names)}"
+    settles = [str(a) for a in (found.get("settles") or []) if a]
+    if names and settles:
+        return (
+            "the reads do not reach enough of its variants to name the pair, but "
+            f"every arrangement they allow carries {_names_phrase(settles)}"
+        )
+    return ""
+
+
+def settled_names(evidence: Mapping[str, Any], gene: str) -> List[str]:
+    """The alleles every arrangement the reads allow agrees on, from the service."""
+    entry = ((evidence.get("names") or {}).get(gene)) or {}
+    return [str(a) for a in (entry.get("settles") or []) if a]
+
+
 def _names_phrase(names: Sequence[str]) -> str:
     """ "*1/*21", or "*1/*21 or *21/*39" for the readings the reads leave open."""
     names = list(names)
@@ -221,9 +253,9 @@ def call_note(found: Mapping[str, Any]) -> str:
         "The reads place two of this call's variants on "
         f"{_where(str(found.get('shows')))}, which this call does not"
     )
-    names = found.get("allows") or []
-    if names:
-        note += f"; their arrangement would be {_names_phrase(names)}"
+    phrase = arrangement_phrase(found)
+    if phrase:
+        note += f"; {phrase}"
     if found.get("phenotype_note"):
         note += f", and {found['phenotype_note']}"
     return note + " (see Alerts)."
@@ -236,12 +268,7 @@ def summary_note(found: Mapping[str, Any]) -> str:
         f"chromosomes: {found.get('fragments')} fragments covering both positions put "
         f"them on {_where(str(found.get('shows')))}. Which alleles were found is not "
         "in question, only how they are paired"
-        + (
-            f", and on the reads' own arrangement this gene is "
-            f"{_names_phrase(found.get('allows') or [])}"
-            if found.get("allows")
-            else ""
-        )
+        + (f", and {arrangement_phrase(found)}" if arrangement_phrase(found) else "")
         + (
             f". On that arrangement {found['phenotype_note']}"
             if found.get("phenotype_note")
@@ -269,6 +296,7 @@ def annotate_genes(
             continue
         detail = dict(detail)
         detail["allows"] = allowed_names(evidence, gene, row.get("diplotype"))
+        detail["settles"] = settled_names(evidence, gene) if detail["allows"] else []
         if detail["allows"]:
             detail["phenotype_note"] = phenotype_note(
                 evidence, gene, row.get("phenotype")

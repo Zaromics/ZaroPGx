@@ -629,3 +629,124 @@ def test_nothing_is_said_about_a_phenotype_pypgx_has_no_rule_for():
     report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
     assert rows[0]["read_phase_conflict"].get("phenotype_note") is None
     assert "phenotype" not in rows[0]["read_phase_conflict"]["call_note"]
+
+
+# --- what the reads are not evidence of ------------------------------------
+#
+# Each of these is a way of counting evidence that is not there. They are kept
+# together because they share a shape: the read says nothing, and the question is
+# whether the code admits it.
+
+
+def test_a_soft_clip_is_not_an_insertion(tmp_path):
+    """An aligner clipping a read at an indel breakpoint leaves bases aligned to no
+    reference position -- exactly what an insertion leaves. Reading the clip as the
+    inserted sequence invents fragments at the one place they decide the most."""
+    service = _service()
+    pysam = pytest.importorskip("pysam")
+    at = 42_127_941
+    # 11M1S: the read stops at the anchor and carries a clipped G after it.
+    clipped = _fragment(pysam, "clip", at - 1, "G" + "A" * 9 + "A" + "G", "11M1S")
+    insertion = service.Variant("chr22", at + 10, "A", "AG")
+    assert service.allele_in_read(clipped, insertion) is None
+
+
+def test_a_read_that_stops_at_the_anchor_says_nothing_about_an_insertion(tmp_path):
+    """Ending where the insertion would start is not evidence that it is absent."""
+    service = _service()
+    pysam = pytest.importorskip("pysam")
+    at = 42_127_941
+    stops = _fragment(pysam, "stop", at - 1, "G" + "A" * 9 + "A", "11M")
+    insertion = service.Variant("chr22", at + 10, "A", "AG")
+    assert service.allele_in_read(stops, insertion) is None
+
+
+def test_a_half_call_is_not_a_heterozygote(tmp_path):
+    """``1/.`` names one chromosome and leaves the other unknown. Counting it as
+    heterozygous asserts a reference allele nobody called."""
+    service = _service()
+    pytest.importorskip("pysam")
+    vcf = tmp_path / "half.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr22,length=50818468>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        "chr22\t42127941\t.\tG\tA\t.\tPASS\t.\tGT\t1/.\n"
+        "chr22\t42128211\t.\tC\tCG\t.\tPASS\t.\tGT\t0/1\n",
+        encoding="utf-8",
+    )
+    positions = {
+        "CYP2D6": [("22", 42_127_940, 42_127_941), ("22", 42_128_210, 42_128_211)]
+    }
+    assert service.heterozygous(vcf, positions) == {}
+
+
+def test_an_alignment_with_no_index_is_not_silence(tmp_path):
+    """Every fetch would raise and every pair would come back 0/0, which reads like
+    "the reads reach nothing" -- a different claim from "they were never read"."""
+    service = _service()
+    pysam = pytest.importorskip("pysam")
+    header = {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chr22", "LN": CHR22}]}
+    path = tmp_path / "noindex.bam"
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        out.write(_fragment(pysam, "r", 42_127_900, "A" * 50, "50M"))
+    vcf = tmp_path / "two.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr22,length=50818468>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        "chr22\t42127941\t.\tG\tA\t.\tPASS\t.\tGT\t0/1\n"
+        "chr22\t42128211\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n",
+        encoding="utf-8",
+    )
+    positions = {
+        "CYP2D6": [("22", 42_127_940, 42_127_941), ("22", 42_128_210, 42_128_211)]
+    }
+    result = service.check(path, vcf, positions)
+    assert result["status"] == "not_run"
+    assert "index" in result["reason"] or "position" in result["reason"]
+
+
+def test_a_core_variant_on_both_chromosomes_still_names_its_allele():
+    """A homozygous core variant is in neither partition, so no allele needing it
+    could fit either side and the haplotype would fall back to *1. CYP2D6 with
+    42126611 homozygous reads *21/*39, not *1/*21."""
+    service = _service()
+    pytest.importorskip("pypgx")
+    on_both = service.Variant("chr22", 42126611, "C", "G")
+    core = service.Variant("chr22", 42127941, "G", "A")
+    insertion = service.Variant("chr22", 42128211, "C", "CG")
+    rows = [
+        {
+            "gene": "CYP2D6",
+            "a": core.name(),
+            "b": insertion.name(),
+            "distance": 270,
+            "cis": 7,
+            "trans": 0,
+            "shows": "cis",
+        }
+    ]
+    variants = [core, insertion]
+    assert service.reads_name("CYP2D6", variants, rows, "GRCh38") == ["*1/*21"]
+    assert service.reads_name("CYP2D6", variants, rows, "GRCh38", [on_both]) == [
+        "*21/*39"
+    ]
+
+
+def test_more_readings_than_can_be_read_say_what_they_agree_on():
+    """Six groups the reads leave free is 32 arrangements. Listing them is not a
+    statement, and it would not fit the Executive Summary's page."""
+    many = [f"*{i}/*21" for i in range(1, 9)]
+    found = {"shows": "cis", "allows": many, "settles": ["*21"], "fragments": 7}
+    phrase = report_phase.arrangement_phrase(found)
+    assert "*21" in phrase
+    for name in many:
+        assert name not in phrase
+    assert "every arrangement they allow carries" in phrase
+    few = {"shows": "cis", "allows": ["*1/*21", "*21/*39"], "settles": ["*21"]}
+    assert report_phase.arrangement_phrase(few) == (
+        "their arrangement would be *1/*21 or *21/*39"
+    )

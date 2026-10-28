@@ -4202,8 +4202,8 @@ async def read_phase_endpoint(
             link_shared_input(alignment_shared_input, alignment_path)
         except SharedInputRefused as exc:
             return {"status": "not_run", "reason": str(exc)}
-        if not vcf_path.with_suffix(vcf_path.suffix + ".tbi").exists():
-            tabix_index(str(vcf_path), force=True)
+        # No index is built: the check reads the VCF through once, start to end, and
+        # tabix would refuse an uncompressed .vcf -- which this endpoint accepts.
         reference = _reference_fasta_for_assembly(assembly)
         # In a thread: a pileup of a few hundred positions reads the disk.
         return await asyncio.to_thread(

@@ -97,8 +97,18 @@ def heterozygous(
 
     A multi-allelic record contributes one variant per alternate allele the genotype
     carries. A record whose genotype is not heterozygous is left out: both chromosomes
-    carry the same thing, so no arrangement is being asserted.
+    carry the same thing, so no arrangement is being asserted. Those records are not
+    lost -- ``homozygous`` collects them, because naming still needs them.
     """
+    return _defining(vcf_path, gene_positions, want="het")
+
+
+def _defining(
+    vcf_path: Path,
+    gene_positions: Mapping[str, Sequence[Tuple[str, int, int]]],
+    want: str,
+) -> Dict[str, List[Variant]]:
+    """The shared sweep behind ``heterozygous`` and ``homozygous``."""
     import pysam
 
     wanted: Dict[Tuple[str, int], List[str]] = collections.defaultdict(list)
@@ -116,9 +126,17 @@ def heterozygous(
             if not genes:
                 continue
             call = record.samples[sample]
-            alleles = {a for a in (call.allele_indices or ()) if a}
-            if not alleles or len(set(call.allele_indices or ())) < 2:
-                continue  # homozygous, or a no-call: nothing is being arranged
+            indices = {a for a in (call.allele_indices or ()) if a is not None}
+            alleles = {a for a in indices if a}
+            if not alleles:
+                continue  # reference, half called at the reference, or a no-call
+            if want == "het":
+                # A half call (``1/.``) names one chromosome and leaves the other
+                # unknown, which is not the same as carrying two different things.
+                if len(indices) < 2:
+                    continue
+            elif len(indices) != 1:
+                continue  # heterozygous, or half called: not on both chromosomes
             depths = call.get("AD")
             total = sum(d for d in depths if d is not None) if depths else 0
             for index in sorted(alleles):
@@ -131,7 +149,13 @@ def heterozygous(
                     and depths[index] is not None
                 ):
                     fraction = depths[index] / total
-                    if not HET[0] < fraction < HET[1]:
+                    if want == "het":
+                        if not HET[0] < fraction < HET[1]:
+                            continue
+                    elif fraction < HET[1]:
+                        # Called on both chromosomes but read on about half of them:
+                        # more likely a heterozygote genotyped wrong than a variant
+                        # to put on both sides of a name.
                         continue
                 variant = Variant(
                     record.chrom,
@@ -141,7 +165,8 @@ def heterozygous(
                 )
                 for gene in genes:
                     found[gene].append(variant)
-    return {gene: sorted(set(v)) for gene, v in found.items() if len(set(v)) > 1}
+    least = 1 if want == "het" else 0
+    return {gene: sorted(set(v)) for gene, v in found.items() if len(set(v)) > least}
 
 
 def pairs(
@@ -226,6 +251,13 @@ def allele_in_read(read, variant: Variant) -> Optional[str]:
         return "alt" if base == alt else "ref" if base == ref else None
 
     if alt.startswith(ref):  # an insertion after the anchor base
+        if not past_anchor:
+            # Nothing aligned after the anchor, so what follows it is unknown. A read
+            # that stops here is not evidence the insertion is absent, and a trailing
+            # soft clip is aligned to no reference position exactly as an insertion
+            # is -- an aligner clipping a read at an indel breakpoint would otherwise
+            # be read as carrying the insertion.
+            return None
         inserted = "".join(sequence[p].upper() for p in after)
         return "alt" if inserted == alt[len(ref) :] else "ref" if not inserted else None
     if ref.startswith(alt):  # a deletion of the bases after the anchor
@@ -283,6 +315,10 @@ def fragments(alignment, variant: Variant) -> Dict[str, str]:
     return out
 
 
+class NoIndex(RuntimeError):
+    """The alignment cannot be read by position, so nothing can be counted."""
+
+
 def count(
     alignment_path: Path,
     wanted: Sequence[Tuple[str, Variant, Variant]],
@@ -295,6 +331,13 @@ def count(
     rows: List[dict] = []
     options = {"reference_filename": str(reference)} if reference else {}
     with pysam.AlignmentFile(str(alignment_path), **options) as alignment:
+        # Without an index every fetch raises and each pair would come back 0/0 --
+        # silence that reads exactly like "the reads reach nothing", which is a
+        # different and much weaker statement than "they were never looked at".
+        if not alignment.has_index():
+            # Not the file's name: a shared input is linked under a job-scoped hash,
+            # and naming that tells a reader nothing.
+            raise NoIndex("the alignment has no index beside it")
         cache: Dict[Variant, Dict[str, str]] = {}
         for gene, a, b in wanted:
             for variant in (a, b):
@@ -460,7 +503,11 @@ NAMING_UNFAITHFUL = frozenset(
 
 
 def reads_name(
-    gene: str, variants: Sequence[Variant], rows: Sequence[dict], assembly: str
+    gene: str,
+    variants: Sequence[Variant],
+    rows: Sequence[dict],
+    assembly: str,
+    on_both: Sequence[Variant] = (),
 ) -> List[str]:
     """The diplotypes the reads allow for this gene, named as PyPGx names them.
 
@@ -471,10 +518,14 @@ def reads_name(
     decided = [r for r in rows if r.get("shows") in ("cis", "trans")]
     if not decided or gene.upper() in NAMING_UNFAITHFUL:
         return []
+    # A variant on both chromosomes belongs to both haplotypes. It is not arranged --
+    # there is nothing to arrange -- but an allele whose core variants include it
+    # could not fit either side without it, and would fall back to the default.
+    both = {v.name() for v in on_both}
     out = set()
     for left, right in arrangements(variants, decided):
-        first = name_haplotype(gene, left, assembly)
-        second = name_haplotype(gene, right, assembly)
+        first = name_haplotype(gene, set(left) | both, assembly)
+        second = name_haplotype(gene, set(right) | both, assembly)
         if not first or not second:
             return []
         out.add(tuple(sorted((first, second))))
@@ -525,6 +576,19 @@ def settled(names: Sequence[str]) -> List[str]:
     return sorted((common or collections.Counter()).elements())
 
 
+def homozygous(
+    vcf_path: Path, gene_positions: Mapping[str, Sequence[Tuple[str, int, int]]]
+) -> Dict[str, List[Variant]]:
+    """The defining variants this sample carries on both chromosomes, by gene.
+
+    These are not a phasing question -- there is nothing to arrange -- but a name is
+    wrong without them: an allele whose core variants include a homozygous one could
+    never fit either side, and every such haplotype would silently fall back to the
+    gene's default (``*1``).
+    """
+    return _defining(vcf_path, gene_positions, want="hom")
+
+
 def check(
     alignment_path: Path,
     vcf_path: Path,
@@ -545,6 +609,7 @@ def check(
                 "reason": "The alignment is not readable here.",
             }
         by_gene = heterozygous(Path(vcf_path), gene_positions)
+        on_both = homozygous(Path(vcf_path), gene_positions)
         wanted = pairs(by_gene)
         if not wanted:
             return {
@@ -553,7 +618,13 @@ def check(
                 "reason": "No two heterozygous defining variants lie within "
                 f"{REACH} bp of each other.",
             }
-        rows = count(Path(alignment_path), wanted, reference)
+        try:
+            rows = count(Path(alignment_path), wanted, reference)
+        except NoIndex as exc:
+            return {
+                "status": "not_run",
+                "reason": f"The reads could not be read by position: {exc}.",
+            }
         decided = sum(1 for row in rows if row["shows"])
         # What the reads' own arrangement would be called, per gene. Several names
         # where variants the reads do not reach could sit either way: HG00589's
@@ -563,7 +634,9 @@ def check(
         for gene, variants in by_gene.items():
             gene_rows = [r for r in rows if r["gene"] == gene]
             try:
-                allowed = reads_name(gene, variants, gene_rows, assembly)
+                allowed = reads_name(
+                    gene, variants, gene_rows, assembly, on_both.get(gene, ())
+                )
             except Exception as exc:  # naming is a bonus, the counts are the point
                 logger.warning("Could not name %s from the reads: %s", gene, exc)
                 continue
