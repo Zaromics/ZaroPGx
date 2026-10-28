@@ -7,9 +7,12 @@ fragments carrying both positions. The counting is done where the reads are
 (docker/pypgx/read_phase.py, which writes ``read_phase.json``); this reads that file,
 works out what each printed call asserts, and says so where the two disagree.
 
-It never changes a call. Naming the right allele from a corrected arrangement needs
-the allele definition table, which is not read here: the report says the printed
-arrangement is contradicted and what the reads show, and leaves the diplotype alone.
+It never changes a call. It does say what the reads' own arrangement would be called:
+the pypgx lane names each chromosome with PyPGx's own ranking, so HG00589's CYP2D6
+reads as ``*1/*21`` or ``*21/*39`` -- GeT-RM's answer is the first of those -- against
+the printed ``*2/*21``. There are two because a variant no fragment reaches could sit
+either way, and only what every reading allows is shown. The printed diplotype is left
+alone: changing it is a decision about what a call says, not about what the reads show.
 
 Measured over the 61 GeT-RM genomes (scripts/getrm/arrangement.py): 719 pairs of
 heterozygous defining variants within 1 kb, 413 of which the reads decide, and 411 of
@@ -156,12 +159,49 @@ def _where(shows: str) -> str:
     return "the same chromosome" if shows == "cis" else "opposite chromosomes"
 
 
+def allowed_names(evidence: Mapping[str, Any], gene: str, printed: Any) -> List[str]:
+    """The diplotypes the reads' own arrangement allows, when they rule out the
+    printed one.
+
+    The pypgx lane names them with PyPGx's own ranking (docker/pypgx/read_phase.py),
+    and there is more than one when a variant no fragment reaches could sit either
+    way: HG00589's CYP2D6 is *1/*21 or *21/*39, both of them not the printed *2/*21.
+    Nothing is said when the printed call is among them -- then the reads have not
+    ruled it out, whatever a single pair showed.
+    """
+    entry = ((evidence.get("names") or {}).get(gene)) or {}
+    allows = [str(name) for name in (entry.get("allows") or [])]
+    if not allows:
+        return []
+    shown = str(printed or "").replace(" ", "")
+    if any(_same(name, shown) for name in allows):
+        return []
+    return allows
+
+
+def _same(left: str, right: str) -> bool:
+    """Two diplotypes naming the same pair of alleles, in either order."""
+    return sorted(left.split("/")) == sorted(right.split("/"))
+
+
+def _names_phrase(names: Sequence[str]) -> str:
+    """ "*1/*21", or "*1/*21 or *21/*39" for the readings the reads leave open."""
+    names = list(names)
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " or " + names[-1]
+
+
 def call_note(found: Mapping[str, Any]) -> str:
     """The line beside the call."""
-    return (
+    note = (
         "The reads place two of this call's variants on "
-        f"{_where(str(found.get('shows')))}, which this call does not (see Alerts)."
+        f"{_where(str(found.get('shows')))}, which this call does not"
     )
+    names = found.get("allows") or []
+    if names:
+        note += f"; their arrangement would be {_names_phrase(names)}"
+    return note + " (see Alerts)."
 
 
 def summary_note(found: Mapping[str, Any]) -> str:
@@ -170,7 +210,14 @@ def summary_note(found: Mapping[str, Any]) -> str:
         "The reads disagree with how this call splits its variants between the two "
         f"chromosomes: {found.get('fragments')} fragments covering both positions put "
         f"them on {_where(str(found.get('shows')))}. Which alleles were found is not "
-        "in question, only how they are paired. See Alerts and Warnings."
+        "in question, only how they are paired"
+        + (
+            f", and on the reads' own arrangement this gene is "
+            f"{_names_phrase(found.get('allows') or [])}"
+            if found.get("allows")
+            else ""
+        )
+        + ". See Alerts and Warnings."
     )
 
 
@@ -190,6 +237,8 @@ def annotate_genes(
         detail = contradictions.get(gene)
         if not detail:
             continue
+        detail = dict(detail)
+        detail["allows"] = allowed_names(evidence, gene, row.get("diplotype"))
         row["read_phase_conflict"] = {
             "phaser": PHASER,
             "call_note": call_note(detail),

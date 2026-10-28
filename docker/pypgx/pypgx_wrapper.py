@@ -4212,6 +4212,7 @@ async def read_phase_endpoint(
             vcf_path,
             pypgx_gene_positions(assembly),
             reference if reference.exists() else None,
+            assembly,
         )
     except HTTPException:
         raise

@@ -343,11 +343,167 @@ def verdict(cis: int, trans: int) -> Optional[str]:
     return "cis" if cis > trans else "trans"
 
 
+def _allele_cores(gene: str, assembly: str) -> Dict[str, frozenset]:
+    """Star allele -> the core variants PyPGx defines it by, for one gene.
+
+    PyPGx's allele-table.csv, the same table the defining positions come from. An
+    allele with no core variants is the reference one ("N/A"), which every haplotype
+    would otherwise match.
+    """
+    import csv
+
+    import pypgx
+
+    data = Path(pypgx.__file__).parent / "api" / "data" / "allele-table.csv"
+    out: Dict[str, frozenset] = {}
+    with open(data, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            if row["Gene"].strip().upper() != gene.upper():
+                continue
+            raw = (row.get(f"{assembly}Core") or "").strip()
+            out[row["StarAllele"].strip()] = frozenset(
+                v for v in raw.split(",") if v and v != "N/A"
+            )
+    return out
+
+
+def name_haplotype(gene: str, variants, assembly: str = "GRCh38") -> Optional[str]:
+    """What PyPGx would call one chromosome carrying these variants.
+
+    Every allele whose core variants are all present is a candidate, and PyPGx's own
+    ``sort_alleles(by="priority")`` picks between them -- by allele function first,
+    then the number of core variants. That is what makes a chromosome carrying both
+    ``*2``'s cores and ``*21``'s core ``*21`` rather than ``*2``, and reproducing
+    PyPGx's rule is the point: naming by a rule of our own would disagree with the
+    caller somewhere it is right.
+    """
+    try:
+        from pypgx.api import core
+    except ImportError:  # pragma: no cover - PyPGx is always in this image
+        return None
+    table = _allele_cores(gene, assembly)
+    if not table:
+        return None
+    have = frozenset(variants)
+    fits = [a for a, need in table.items() if need and need <= have]
+    if not fits:
+        return core.get_default_allele(gene, assembly)
+    return core.sort_alleles(fits, by="priority", gene=gene, assembly=assembly)[0]
+
+
+# More than this many groups of variants to arrange is not worth enumerating: the
+# answer would be a list too long to mean anything.
+MAX_GROUPS = 6
+
+
+def arrangements(variants: Sequence[Variant], decided: Sequence[dict]) -> List[tuple]:
+    """Every split of these variants into two chromosomes the reads allow.
+
+    A decided pair fixes two variants relative to each other, cis or trans; variants
+    no decided pair links are free, so each group of linked variants can sit either
+    way round and every combination is returned. Returns (side, side) pairs of
+    variant-name sets.
+    """
+    names = [v.name() for v in variants]
+    index = {name: i for i, name in enumerate(names)}
+    # Union-find over the pairs the reads decide, carrying each member's side.
+    parent = list(range(len(names)))
+    flip = [False] * len(names)
+
+    def find(i):
+        root, inverted = i, False
+        while parent[root] != root:
+            inverted ^= flip[root]
+            root = parent[root]
+        return root, inverted
+
+    for row in decided:
+        a, b = index.get(str(row.get("a"))), index.get(str(row.get("b")))
+        if a is None or b is None:
+            continue
+        ra, fa = find(a)
+        rb, fb = find(b)
+        if ra == rb:
+            continue
+        parent[rb] = ra
+        flip[rb] = fa ^ fb ^ (row.get("shows") == "trans")
+
+    groups: Dict[int, List[tuple]] = {}
+    for i, name in enumerate(names):
+        root, inverted = find(i)
+        groups.setdefault(root, []).append((name, inverted))
+    if len(groups) > MAX_GROUPS:
+        return []
+
+    out = []
+    for mask in range(2 ** (len(groups) - 1) if groups else 0):
+        left, right = set(), set()
+        for position, members in enumerate(groups.values()):
+            turned = bool(mask >> (position - 1) & 1) if position else False
+            for name, inverted in members:
+                (left if inverted ^ turned else right).add(name)
+        out.append((frozenset(left), frozenset(right)))
+    return out
+
+
+# Genes where naming a haplotype from its own variants does NOT reproduce what PyPGx
+# printed, measured over every haplotype in the 61 GeT-RM genomes: 2,434 of 2,497
+# pairs came back identical, and the 63 that did not are almost all in these. Naming
+# is not shown for them -- a name that disagrees with the caller is worse than none.
+# CYP2D6 is kept deliberately: 53 of its 54 reproduced, and the one that did not
+# (NA19908, named *43 where PyPGx printed *46) is a genome whose CYP2D6 has no pair
+# of heterozygous variants within reach of a fragment, so the reads say nothing about
+# it and nothing is named.
+NAMING_UNFAITHFUL = frozenset(
+    {"CYP1A2", "CYP2A6", "CYP2E1", "POR", "SLC22A2", "SLCO1B1"}
+)
+
+
+def reads_name(
+    gene: str, variants: Sequence[Variant], rows: Sequence[dict], assembly: str
+) -> List[str]:
+    """The diplotypes the reads allow for this gene, named as PyPGx names them.
+
+    One entry when the reads settle the arrangement, several when variants they do
+    not reach could sit either way, and none when there is nothing to say. The
+    report prints these beside the call it questions, never instead of it.
+    """
+    decided = [r for r in rows if r.get("shows") in ("cis", "trans")]
+    if not decided or gene.upper() in NAMING_UNFAITHFUL:
+        return []
+    out = set()
+    for left, right in arrangements(variants, decided):
+        first = name_haplotype(gene, left, assembly)
+        second = name_haplotype(gene, right, assembly)
+        if not first or not second:
+            return []
+        out.add(tuple(sorted((first, second))))
+    return sorted("/".join(pair) for pair in out)
+
+
+def settled(names: Sequence[str]) -> List[str]:
+    """The allele names every arrangement the reads allow agrees on.
+
+    A variant no fragment reaches can sit either way, and the two readings can name
+    the chromosome it sits on differently -- HG00589's CYP2D6 is *1/*21 one way and
+    *39/*21 the other. What both agree on is the part the reads actually settle, and
+    it is the only part worth putting in front of a reader.
+    """
+    if not names:
+        return []
+    common = None
+    for diplotype in names:
+        pair = collections.Counter(diplotype.split("/"))
+        common = pair if common is None else (common & pair)
+    return sorted((common or collections.Counter()).elements())
+
+
 def check(
     alignment_path: Path,
     vcf_path: Path,
     gene_positions: Mapping[str, Sequence[Tuple[str, int, int]]],
     reference: Optional[Path] = None,
+    assembly: str = "GRCh38",
 ) -> dict:
     """The evidence file: ``{"status": ..., "pairs": [...]}``.
 
@@ -372,17 +528,33 @@ def check(
             }
         rows = count(Path(alignment_path), wanted, reference)
         decided = sum(1 for row in rows if row["shows"])
+        # What the reads' own arrangement would be called, per gene. Several names
+        # where variants the reads do not reach could sit either way: HG00589's
+        # CYP2D6 is *1/*21 or *39/*21, both of which contradict the printed *2/*21
+        # and agree that one chromosome is *21.
+        names = {}
+        for gene, variants in by_gene.items():
+            gene_rows = [r for r in rows if r["gene"] == gene]
+            try:
+                allowed = reads_name(gene, variants, gene_rows, assembly)
+            except Exception as exc:  # naming is a bonus, the counts are the point
+                logger.warning("Could not name %s from the reads: %s", gene, exc)
+                continue
+            if allowed:
+                names[gene] = {"allows": allowed, "settles": settled(allowed)}
         logger.info(
-            "Read phase: %d pairs within %d bp, %d the reads decide",
+            "Read phase: %d pairs within %d bp, %d the reads decide, %d genes named",
             len(rows),
             REACH,
             decided,
+            len(names),
         )
         return {
             "status": "done",
             "reach": REACH,
             "min_fragments": MIN_FRAGMENTS,
             "pairs": rows,
+            "names": names,
         }
     except Exception as exc:  # the evidence is worth less than the run
         logger.exception("Read-phase check failed")

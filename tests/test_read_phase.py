@@ -498,3 +498,91 @@ def test_the_note_survives_into_the_pdf(monkeypatch, tmp_path):
         )
     ]
     assert len(summary) == 1, f"the Executive Summary ran to {len(summary)} pages"
+
+
+# --- what the reads' arrangement would be called ---------------------------
+#
+# The pypgx lane names it with PyPGx's own ranking; these check the report says it
+# only when the reads rule the printed call out, and says nothing when they do not.
+
+NAMED_EVIDENCE = {
+    **HG00589_EVIDENCE,
+    "names": {"CYP2D6": {"allows": ["*1/*21", "*21/*39"], "settles": ["*21"]}},
+}
+
+
+def test_the_note_says_what_the_reads_arrangement_would_be_called():
+    rows = [_row()]
+    report_phase.annotate_genes(rows, NAMED_EVIDENCE, HG00589_RESULTS)
+    note = rows[0]["read_phase_conflict"]
+    assert "*1/*21 or *21/*39" in note["call_note"]
+    assert "*1/*21 or *21/*39" in note["note"]
+    # and the call itself is still the one that was called
+    assert rows[0]["diplotype"] == "*2/*21"
+
+
+def test_nothing_is_named_when_the_printed_call_is_still_allowed():
+    """A single contradicted pair does not rule the call out if the arrangements the
+    reads allow still include it."""
+    evidence = json.loads(json.dumps(NAMED_EVIDENCE))
+    evidence["names"]["CYP2D6"]["allows"] = ["*2/*21", "*21/*34"]
+    rows = [_row()]
+    report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
+    assert rows[0]["read_phase_conflict"]["allows"] == []
+    assert "would be" not in rows[0]["read_phase_conflict"]["call_note"]
+
+
+def test_a_run_without_names_still_gets_the_note():
+    """Evidence from before naming existed, or a gene whose naming is not trusted."""
+    rows = [_row()]
+    report_phase.annotate_genes(rows, HG00589_EVIDENCE, HG00589_RESULTS)
+    assert rows[0]["read_phase_conflict"]["allows"] == []
+    assert "same chromosome" in rows[0]["read_phase_conflict"]["call_note"]
+
+
+def test_naming_reproduces_what_pypgx_itself_would_print():
+    """The service names a haplotype with PyPGx's own ranking, so a chromosome
+    carrying both *2's cores and *21's core is *21, not *2. Measured over the 61
+    GeT-RM genomes: 2,434 of 2,497 printed haplotype pairs came back identical."""
+    service = _service()
+    pytest.importorskip("pypgx")
+    both = {"22-42126611-C-G", "22-42127941-G-A", "22-42128211-C-CG"}
+    assert service.name_haplotype("CYP2D6", both) == "*21"
+    assert (
+        service.name_haplotype("CYP2D6", {"22-42126611-C-G", "22-42127941-G-A"}) == "*2"
+    )
+    assert service.name_haplotype("CYP2D6", set()) == "*1"
+
+
+def test_a_gene_whose_naming_does_not_reproduce_pypgx_is_never_named():
+    service = _service()
+    v = [
+        service.Variant("chr12", 21178615, "T", "C"),
+        service.Variant("chr12", 21178700, "A", "G"),
+    ]
+    rows = [
+        {
+            "gene": "SLCO1B1",
+            "a": v[0].name(),
+            "b": v[1].name(),
+            "distance": 85,
+            "cis": 9,
+            "trans": 0,
+            "shows": "cis",
+        }
+    ]
+    assert "SLCO1B1" in service.NAMING_UNFAITHFUL
+    assert service.reads_name("SLCO1B1", v, rows, "GRCh38") == []
+
+
+def test_the_arrangements_a_variant_out_of_reach_leaves_open():
+    """Two groups, one of them a single variant no pair links: both ways round."""
+    service = _service()
+    a = service.Variant("chr22", 42126611, "C", "G")
+    b = service.Variant("chr22", 42127941, "G", "A")
+    c = service.Variant("chr22", 42128211, "C", "CG")
+    rows = [{"a": b.name(), "b": c.name(), "shows": "cis"}]
+    splits = service.arrangements([a, b, c], rows)
+    assert len(splits) == 2
+    for left, right in splits:
+        assert {b.name(), c.name()} <= left or {b.name(), c.name()} <= right
