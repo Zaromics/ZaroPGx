@@ -4497,7 +4497,16 @@ def generate_report(
         )
     except Exception as e:  # a comparison must not cost the report
         logger.warning("Caller disagreements not marked: %s", e, exc_info=True)
-        _disagreements = {}
+        # Rows marked before it failed carry a note that sends the reader to an
+        # alert. The alert has to name them rather than vanish, or the note points
+        # at nothing.
+        _disagreements = {
+            str(_row.get("gene") or ""): str(
+                (_row.get("caller_disagreement") or {}).get("call") or ""
+            )
+            for _row in (data.get("genes") or [])
+            if isinstance(_row, dict) and _row.get("caller_disagreement")
+        }
     _disagreement_alert = caller_agreement.alert(_disagreements)
     if _disagreement_alert:
         workflow_warnings = list(workflow_warnings) + [_disagreement_alert]

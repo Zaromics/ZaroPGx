@@ -91,7 +91,6 @@ def test_the_same_call_written_differently_is_not_a_disagreement(printed, other)
         ("*1/*46", "*1/*8"),  # TPMT HG03521: PyPGx has no *46
         ("*27/*80+*28", "*1/*80+*28"),  # UGT1A1 HG00436: one allele differs
         ("*14/*27 or *37/*53", "*14/*37"),  # SLCO1B1 NA19035: a third reading
-        ("*2x2/*10", "*2/*10"),  # the number of copies
     ],
 )
 def test_different_alleles_are_a_disagreement(printed, other):
@@ -183,8 +182,8 @@ def test_agreement_leaves_the_row_alone():
 
 def test_a_call_pypgx_supplied_has_no_second_opinion_to_show():
     """PharmCAT takes an outside call over its own matcher's and records only the
-    outside one, so its own reading of CYP2D6 -- or of a gene in genes.json's
-    pypgx_preferred_over_pharmcat -- is not in its report to compare."""
+    outside one, so its own reading of CYP2D6 -- or of any gene a preference later
+    routes the same way -- is not in its report to compare."""
     rows = [
         {
             "gene": "CYP2D6",
@@ -393,3 +392,38 @@ def test_a_report_whose_callers_agree_says_nothing(monkeypatch, tmp_path):
     body = page.split("</style>")[-1]
     assert "disagreement-note" not in body
     assert "The two callers disagree" not in body
+
+
+def test_a_difference_only_in_copy_number_is_not_a_disagreement():
+    """PharmCAT does not assess copy number on an alignment, so PyPGx's *1x2/*6
+    against its *1/*6 is PyPGx measuring something PharmCAT never looked at. The row
+    already carries the copy-number note; "which is right is not known" would
+    contradict it."""
+    assert disagree("*1/*6", "*1x2/*6") is False
+    assert disagree("*4/*4", "*4x2/*4") is False
+    assert disagree("*2x2/*10", "*2/*10") is False
+    # A real allele difference alongside a copy-number one is still a disagreement.
+    assert disagree("*2x2/*3", "*2/*4") is True
+
+
+def test_the_fhir_genotype_carries_the_caveat():
+    """A bundle a pharmacist's system reads is as much the report as the PDF. A
+    genotype exported without the caveat is the one place a reader could not tell
+    there were two readings of the same data."""
+    from unittest.mock import MagicMock
+
+    from app.services.fhir_export_service import FHIRExportService
+
+    row = {
+        "gene": "CYP4F2",
+        "diplotype": "*1/*4",
+        "call_source": "MATCHER",
+        "phenotype": "Normal Metabolizer",
+    }
+    annotate_genes([row], _pypgx(CYP4F2="*2/*3"))
+    assert row["caller_disagreement"]["fhir_note"]
+    obs = FHIRExportService(MagicMock())._create_genotype_observation(
+        gene_data=row, patient_ref="Patient/p", run_id="r"
+    )
+    assert {"text": row["caller_disagreement"]["fhir_note"]} in obs["note"]
+    assert "*2/*3" in row["caller_disagreement"]["fhir_note"]

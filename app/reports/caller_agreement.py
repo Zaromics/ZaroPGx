@@ -23,7 +23,8 @@ this way, and the two callers named different alleles in 21. Seven were NAT2
 (below). Of the remaining 14 -- about one note for every four reports -- every one
 was a real difference in the alleles called, and in four the printed call was wrong
 where PyPGx's was right (CYP4F2 *1/*4 against *2/*3, GeT-RM *2/*3; NUDT15 three
-times, which genes.json's ``pypgx_preferred_over_pharmcat`` now settles).
+times -- PharmCAT has no *2 in its NUDT15 definitions at all, so handing it one
+names the allele at the cost of the phenotype, and these stay as notes).
 
 A gene whose printed call came from PyPGx has no second opinion to show: PharmCAT
 takes an outside call over its own matcher's and records only the outside one
@@ -117,13 +118,29 @@ def pypgx_call(pypgx_results: Any, gene: str) -> Optional[str]:
     return None
 
 
+def _without_copies(reading: Tuple[Tuple[str, ...], ...]) -> Tuple[Tuple[str, ...], ...]:
+    """The same reading with each chromosome's repeats collapsed: "*1x2/*6" and
+    "*1/*6" both become (("*1",), ("*6",))."""
+    return tuple(sorted(tuple(sorted(set(side))) for side in reading))
+
+
 def disagree(printed: Any, other: Any) -> bool:
     """Whether the two calls name different alleles. False unless both are written
-    as star alleles and neither reading of one matches a reading of the other."""
+    as star alleles and neither reading of one matches a reading of the other.
+
+    A difference only in how many copies of an allele a chromosome carries is not a
+    difference in the alleles named: PharmCAT does not assess copy number on an
+    alignment, so PyPGx's ``*1x2/*6`` against its ``*1/*6`` is PyPGx measuring
+    something PharmCAT did not look at. The row already carries the copy-number note
+    that says so, and "which is right is not known" would contradict it.
+    """
     left, right = _readings(printed), _readings(other)
     if not left or not right:
         return False
-    return not any(reading in right for reading in left)
+    if not any(reading in right for reading in left):
+        bare = {_without_copies(reading) for reading in right}
+        return not any(_without_copies(reading) in bare for reading in left)
+    return False
 
 
 def call_note(other: str) -> str:
@@ -147,9 +164,9 @@ def annotate_genes(genes: Sequence[Any], pypgx_results: Any) -> Dict[str, str]:
     """Mark every called row whose call is PharmCAT's own and whose gene PyPGx
     called differently, in place; returns {gene: PyPGx's call} for the alert.
 
-    A row PyPGx supplied the call for (CYP2D6, and a gene in
-    ``pypgx_preferred_over_pharmcat``) is PyPGx's own call, so there is nothing to
-    compare it with: ``pharmcat_called`` leaves it out.
+    A row PyPGx supplied the call for (CYP2D6 today, and any gene a preference
+    later routes the same way) is PyPGx's own call, so there is nothing to compare
+    it with: ``pharmcat_called`` leaves it out.
     """
     found: Dict[str, str] = {}
     for row in genes or []:
@@ -166,9 +183,23 @@ def annotate_genes(genes: Sequence[Any], pypgx_results: Any) -> Dict[str, str]:
             "call": other,
             "call_note": call_note(other),
             "note": summary_note(other),
+            "fhir_note": fhir_note(other),
         }
         found[str(row.get("gene") or gene)] = other
     return found
+
+
+def fhir_note(other: str) -> str:
+    """The same caveat for the exported genotype Observation.
+
+    A bundle a pharmacist's system reads is as much the report as the PDF is, and a
+    diplotype exported without the caveat the PDF carries is the one place a reader
+    could not tell there were two readings.
+    """
+    return (
+        f"{CALLER} called this gene {other} from the same data, and this genotype "
+        "is PharmCAT's. The two callers disagree and which is right is not known."
+    )
 
 
 def alert(found: Mapping[str, str]) -> Optional[str]:

@@ -943,6 +943,13 @@ class FHIRExportService:
         if isinstance(flag, dict) and flag.get("fhir_note"):
             observation.setdefault("note", []).append({"text": flag["fhir_note"]})
 
+        # Where the two callers read the same data differently
+        # (app/reports/caller_agreement.py): the exported genotype is PharmCAT's,
+        # and carries the same caveat the report prints beside it.
+        other = gene_data.get("caller_disagreement")
+        if isinstance(other, dict) and other.get("fhir_note"):
+            observation.setdefault("note", []).append({"text": other["fhir_note"]})
+
         # No phenotype here: the genotype profile has no place for one, and the
         # IG states it as a therapeutic implication of the genotype
         # (_create_phenotype_implication). It was a text component.
