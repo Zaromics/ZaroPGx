@@ -165,8 +165,18 @@ curated: true
     decide `*4` against `*2/*3`. CYP2D6 is the opposite: in HG00589, called `*2/*21`
     where GeT-RM says `*1/*21`, all three deciding positions are heterozygous and in one
     block, and the pair that settles it (2850C>T and `*21`'s insertion, 270 bp apart) is
-    carried by 8 fragments. WhatsHap is MIT and StellarPGx already depends on it.
-    Adjudicate, do not re-phase — `scripts/getrm/phasing.md` has the measurements.
+    carried by 7 fragments that all put the two **together**, none apart — which makes
+    the call GeT-RM's `*1/*21`. Adjudicate, do not re-phase, and **check every call, not
+    the ones PyPGx flags**: keying the check to `alternative_phase` finds nothing (the
+    reads decide 2 of its 34 cases and confirm both), and HG00589 carries
+    `alternative_phase: null` — Beagle was confident and wrong. Measured with
+    `scripts/getrm/arrangement.py` over the 60 genomes with a cut: 713 pairs within
+    1 kb, 411 the reads decide, 409 agreeing with the call. The yield is one corrected CYP2D6 call plus a
+    CYP2F1 call with no dosing guideline, so the case is cheapness and safety, not
+    volume. It must read indels (HG00589's `*21` is an insertion) and must not treat two
+    variants at one position as a phasing question (UGT1A1 `*28` and `*36` are competing
+    alleles of one repeat, and conflating them invents contradictions).
+    `scripts/getrm/phasing.md` has the measurements.
     Only 51 of the 179 star alleles defined by two or more core variants have their
     whole span inside one 2x150 fragment, so reads reach about 28% of the alleles where
     phase decides anything (median span 2,422 bp, 90th percentile 24,242 bp), and

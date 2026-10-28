@@ -84,24 +84,62 @@ silently move every PyPGx call, to gain the 28% of alleles reads actually reach.
 reads PS. The measurement says PharmCAT's phase-sensitive genes have wide spans: its
 one plausibly reachable unresolved call is not reachable.
 
-**The fit for this stack is to adjudicate, not to phase.** PyPGx already enumerates
-the alternative reading (`alternative_phase`) for the 34 calls that hang on phase.
-For such a call, the question is binary and local: are these two variants on one
-chromosome or two? Answering it needs no phaser at all — count the fragments covering
-both positions and see which arrangement they carry, which is what `phase-blocks.py`
-already does. That means:
+**The fit for this stack is to adjudicate, not to phase.** For a call resting on two
+heterozygous variants the question is binary and local: are they on one chromosome or
+two? Answering it needs no phaser — count the fragments covering both positions and
+see which arrangement they carry. No new tool in the image, no WhatsHap dependency,
+nothing changed inside PyPGx, and it says nothing where the reads do not reach.
 
-- no new tool in the image, no WhatsHap dependency, nothing changed inside PyPGx;
-- it fires only where the reads genuinely reach, and says nothing where they do not;
-- it can start by *reporting* the read evidence beside the call, exactly as
-  `app/reports/caller_agreement.py` reports a disagreement between callers, and only
-  later decide the call, once the agreement rate is measured on all 61 genomes.
+**But not triggered by `alternative_phase`.** That was the obvious design and it is
+the wrong one. `arrangement.py` put it to the 34 calls that carry the flag, 33 of them
+on a genome this archive has a cut for: the reads decide **2**, and both times they
+confirm the call PyPGx already prints. Of the other 31, 23 have no linking fragment at
+all — the deciding variants are kilobases apart — and 8 are cases where the printed
+reading and the alternative imply the same arrangement for the one pair the reads can
+reach, so nothing is being asked.
+The flag marks the calls PyPGx knows are uncertain, and those are not the calls that
+are wrong. HG00589, whose CYP2D6 call *is* wrong, carries `alternative_phase: null`.
+Beagle was confident and mistaken, and a feature keyed to the flag would never look.
 
-Expected yield on the GeT-RM set: one wrong call corrected outright (CYP2D6 HG00589
-`*2/*21` for `*1/*21`), the APOE and CYP1B1 coin-flips settled, and CYP2A6 — 9 of its
-12 multi-variant alleles within reach, 3 discordant calls and 1 no-call today — the
-most likely place for more. CYP4F2's `*1/*4` stays wrong: only a panel or long reads
-can decide it.
+**Every call has to be checked, not the flagged ones.** `arrangement.py` asks the
+question of every diplotype resting on two heterozygous variants within 1 kb, across
+the 60 genomes this archive holds a cut for: 713 such pairs, 411 the reads decide, and
+**409 of 411 agree with the call**. Beagle is right 99.5% of the time the reads can check it. The two it gets
+wrong are:
+
+| sample | gene | call | apart | the call says | the reads say |
+|---|---|---|---|---|---|
+| HG00589 | CYP2D6 | `*2/*21` | 270 bp | opposite chromosomes | **same**, 7 fragments to 0 |
+| NA19026 | CYP2F1 | `*1/*2` | 146 bp | same chromosome | **opposite**, 5 fragments to 0 |
+
+HG00589 is the one that matters: putting the `*2` core on the `*21` chromosome makes
+that allele `*21` and the other reference, which is GeT-RM's `*1/*21`. It is one of
+our three wrong CYP2D6 calls, and it is the same call Cyrius fixes
+([caller-augmentation.md](caller-augmentation.md)) — so a samtools pileup buys what a
+PolyForm Strict dependency would. CYP2F1 has no dosing guideline, so correcting it
+changes no recommendation; it is listed because it is real, not because it is useful.
+Nine other genomes carry the same CYP2F1 pair and all nine read `cis`, as their call
+says.
+
+Two things the measurement had to be taught, both of which produced false findings
+first:
+
+- **Indels count.** A substitutions-only pass finds 366 decidable pairs and only the
+  CYP2F1 one. HG00589 hangs on an insertion, 2580_2581insC, so the check is worthless
+  for the call that matters unless it reads indels.
+- **Two variants at one position are not a phasing question.** UGT1A1 `*28` and `*36`
+  are an insertion and a deletion of the same TA repeat. Counting "an indel is here"
+  made a read carrying either look like evidence for both and produced three
+  confident contradictions that do not exist. The check compares the indel's own
+  sequence and skips pairs no fragment could carry together.
+
+Expected yield on the GeT-RM set, then: **one wrong call corrected** — CYP2D6 HG00589
+— plus a CYP2F1 call nobody prescribes on. Not the haul the APOE and CYP1B1
+coin-flips suggested: those are flagged, reachable and *already right*. CYP4F2's
+`*1/*4` stays wrong, as only a panel or long reads can decide it. The case for
+building this is not volume. It is that it is cheap (one pileup over the positions a
+call already names), it never guesses where the reads are silent, and the single call
+it fixes is in the gene that matters most.
 
 The HG00589 call has since been checked against a second opinion. Cyrius, Illumina's
 CYP2D6 caller, was run on that genome and five others

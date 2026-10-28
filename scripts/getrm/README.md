@@ -16,6 +16,7 @@ samples, on the samples whose 1000 Genomes 30x genome is public: 208 of GeT-RM's
 | `stellarpgx-comparison.md` | What a second caller, StellarPGx, scored on the same genomes, and why it is not in the pipeline |
 | `phasing.md` | What phasing would buy us: what short reads can reach, what upstream is doing, and where a fix belongs |
 | `phase-blocks.py` | Whether short reads can phase two variants at all: the read-backed phase blocks of a region, from a cut |
+| `arrangement.py` | Whether the arrangement each PyPGx call asserts matches the one the reads show, over a whole run |
 | `caller-augmentation.md` | What Cyrius, Aldy, ursaPGx and pangu would add, which of them can be shipped, and the three calls the stack already makes and discards |
 
 ## Running it

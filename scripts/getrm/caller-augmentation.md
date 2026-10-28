@@ -207,13 +207,24 @@ built from it. Worth knowing before anyone plans a re-cut of all 61.
    two variants fall in different read-backed phase blocks in both samples, whether a
    link needs one fragment or two. Only a panel or long reads can decide CYP4F2 here.
 
-   **CYP2D6: within reach.** HG00589 was called `*2/*21` where GeT-RM says `*1/*21`.
-   All three deciding positions are heterozygous — `*2`'s cores at chr22:42,126,611 and
-   chr22:42,127,941, `*21`'s 2580_2581insC at chr22:42,128,211 — and all three sit in
-   one read-backed block. The pair that settles it, 2850C>T and the `*21` insertion,
-   are 270 bp apart with **8 fragments carrying both**: the reads say outright whether
-   2850C>T is on the `*21` chromosome, which is the question the call got wrong.
-   WhatsHap is MIT and StellarPGx already depends on it.
+   **CYP2D6: within reach, and settled.** HG00589 was called `*2/*21` where GeT-RM
+   says `*1/*21`. All three deciding positions are heterozygous — `*2`'s cores at
+   chr22:42,126,611 and chr22:42,127,941, `*21`'s 2580_2581insC at chr22:42,128,211 —
+   and all three sit in one read-backed block. The pair that settles it, 2850C>T and
+   the `*21` insertion, are 270 bp apart, and the reads have since been counted:
+   **7 fragments carry the `*2` core and the insertion together, none carry one
+   without the other**. That makes the allele `*2` core + insC = `*21` and the other
+   chromosome reference, which is GeT-RM's `*1/*21`. No phaser was needed to find it,
+   only a pileup over the two positions the call already names.
+
+   `arrangement.py` then asked the same question of every call on the 60 genomes with
+   a cut — 713 pairs of heterozygous variants within 1 kb, 411 the reads decide, **409
+   of 411 agreeing with the call**. Beagle is right 99.5% of the time the reads can check it,
+   and the only other disagreement is CYP2F1 in NA19026, a gene with no dosing
+   guideline. The yield is one corrected CYP2D6 call, not a haul; the case for
+   building it is that the check is cheap and never guesses where the reads are
+   silent. [phasing.md](phasing.md) has the detail, including the two ways the
+   measurement produced false findings before it was right.
 4. **Cyrius as an opt-in second CYP2D6 caller — measured, and weaker than it looked.**
    The plumbing exists: PharmCAT already takes CYP2D6 from an outside caller, which is
    how PyPGx's reaches the report. Cyrius needs only numpy, scipy, pysam and statsmodels
