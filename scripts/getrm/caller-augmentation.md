@@ -217,9 +217,9 @@ built from it. Worth knowing before anyone plans a re-cut of all 61.
    chromosome reference, which is GeT-RM's `*1/*21`. No phaser was needed to find it,
    only a pileup over the two positions the call already names.
 
-   `arrangement.py` then asked the same question of every call on the 60 genomes with
-   a cut — 713 pairs of heterozygous variants within 1 kb, 411 the reads decide, **409
-   of 411 agreeing with the call**. Beagle is right 99.5% of the time the reads can check it,
+   `arrangement.py` then asked the same question of every call on all 61 genomes —
+   719 pairs of heterozygous variants within 1 kb, 413 the reads decide, **411
+   of 413 agreeing with the call**. Beagle is right 99.5% of the time the reads can check it,
    and the only other disagreement is CYP2F1 in NA19026, a gene with no dosing
    guideline. The yield is one corrected CYP2D6 call, not a haul; the case for
    building it is that the check is cheap and never guesses where the reads are

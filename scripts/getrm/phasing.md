@@ -91,9 +91,9 @@ see which arrangement they carry. No new tool in the image, no WhatsHap dependen
 nothing changed inside PyPGx, and it says nothing where the reads do not reach.
 
 **But not triggered by `alternative_phase`.** That was the obvious design and it is
-the wrong one. `arrangement.py` put it to the 34 calls that carry the flag, 33 of them
-on a genome this archive has a cut for: the reads decide **2**, and both times they
-confirm the call PyPGx already prints. Of the other 31, 23 have no linking fragment at
+the wrong one. `arrangement.py` put it to the 34 calls that carry the flag: the reads
+decide **3** — APOE in NA19093 (13 fragments to 0), and two others — and every one of
+the three confirms the call PyPGx already prints. Of the other 31, 23 have no linking fragment at
 all — the deciding variants are kilobases apart — and 8 are cases where the printed
 reading and the alternative imply the same arrangement for the one pair the reads can
 reach, so nothing is being asked.
@@ -103,8 +103,8 @@ Beagle was confident and mistaken, and a feature keyed to the flag would never l
 
 **Every call has to be checked, not the flagged ones.** `arrangement.py` asks the
 question of every diplotype resting on two heterozygous variants within 1 kb, across
-the 60 genomes this archive holds a cut for: 713 such pairs, 411 the reads decide, and
-**409 of 411 agree with the call**. Beagle is right 99.5% of the time the reads can check it. The two it gets
+all 61 genomes: 719 such pairs, 413 the reads decide, and
+**411 of 413 agree with the call**. Beagle is right 99.5% of the time the reads can check it. The two it gets
 wrong are:
 
 | sample | gene | call | apart | the call says | the reads say |

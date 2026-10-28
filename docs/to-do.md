@@ -168,10 +168,10 @@ curated: true
     carried by 7 fragments that all put the two **together**, none apart — which makes
     the call GeT-RM's `*1/*21`. Adjudicate, do not re-phase, and **check every call, not
     the ones PyPGx flags**: keying the check to `alternative_phase` finds nothing (the
-    reads decide 2 of its 34 cases and confirm both), and HG00589 carries
+    reads decide 3 of its 34 cases and confirm all three), and HG00589 carries
     `alternative_phase: null` — Beagle was confident and wrong. Measured with
-    `scripts/getrm/arrangement.py` over the 60 genomes with a cut: 713 pairs within
-    1 kb, 411 the reads decide, 409 agreeing with the call. The yield is one corrected CYP2D6 call plus a
+    `scripts/getrm/arrangement.py` over all 61 genomes: 719 pairs within
+    1 kb, 413 the reads decide, 411 agreeing with the call. The yield is one corrected CYP2D6 call plus a
     CYP2F1 call with no dosing guideline, so the case is cheapness and safety, not
     volume. It must read indels (HG00589's `*21` is an insertion) and must not treat two
     variants at one position as a phasing question (UGT1A1 `*28` and `*36` are competing

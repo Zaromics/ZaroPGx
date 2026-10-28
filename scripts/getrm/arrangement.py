@@ -11,7 +11,7 @@ This asks that of every call in a run's ``pypgx_result.json`` files, against the
 
 Not only the calls PyPGx flags. ``alternative_phase`` names the readings PyPGx could
 not rule out, and keying the check to it finds nothing: of the 34 flagged calls on the
-61 GeT-RM genomes the reads decide 2, and both confirm what is already printed. The
+61 GeT-RM genomes the reads decide 3, and all three confirm what is already printed. The
 flag marks the calls PyPGx knows are uncertain, which are not the calls that are
 wrong -- HG00589's CYP2D6 call is wrong and carries ``alternative_phase: null``.
 
@@ -19,9 +19,9 @@ Usage:
   scripts/getrm/arrangement.py ~/getrm/results ~/getrm/cuts
   scripts/getrm/arrangement.py ~/getrm/results ~/getrm/cuts --all   # every pair
 
-What it found, 2026-10-27, on the 60 GeT-RM genomes the cut archive holds (2x150,
-median fragment 415-431 bp): 713 pairs within 1 kb, 411 the reads decide, 409 of them
-agreeing with the call.
+What it found, 2026-10-27, on the 61 GeT-RM genomes (2x150, median fragment
+415-431 bp): 719 pairs within 1 kb, 413 the reads decide, 411 of them agreeing with
+the call.
 The two that disagree are CYP2D6 ``*2/*21`` in HG00589, where 7 fragments to 0 put the
 ``*2`` core on the ``*21`` chromosome and so make the call GeT-RM's ``*1/*21``, and
 CYP2F1 ``*1/*2`` in NA19026, a gene with no dosing guideline.
