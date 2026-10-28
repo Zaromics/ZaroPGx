@@ -130,8 +130,22 @@ curated: true
     carrier came back *3 — *2/*2 as *3/*3, *2/*5 as *3/*5: the phenotype was right and the
     diplotype was not, on every sample carrying it. PyPGx names *2, and had NUDT15 right
     10 times of 11 on the GeT-RM genomes against PharmCAT's 8, including every case
-    PharmCAT had right. Its call is handed over as an outside call, listed in
-    `config/genes.json`'s `pypgx_preferred_over_pharmcat` (`fix/nudt15-prefer-pypgx`).
+    PharmCAT had right.
+    **Handing PyPGx's call over as an outside call does not work, and the branch that
+    did it (`fix/nudt15-prefer-pypgx`) is held.** PharmCAT has no *2 anywhere — not in
+    `NUDT15_translation.json`, not in its CPIC function data — so an outside call naming
+    *2 is accepted and given `Unassigned function`: the phenotype comes out `n/a`, and
+    no CPIC thiopurine recommendation matches. That trades a wrong diplotype with the
+    right phenotype for a right diplotype with no phenotype and no azathioprine or
+    mercaptopurine guidance, which is worse for the patient. Measured against the
+    shipped image, 2026-10-28.
+    What would work: `outside.tsv` already passes through `translate_outside_tsv_file`
+    (`docker/pharmcat/pharmcat.py`), and `lexicon/allele_map_pypgx_to_pharmcat.json`
+    maps NUDT15 *2 to *2 today. Mapping it to *3 — the same No function, so the same
+    phenotype — keeps the guidance, at the cost of printing *3/*5 rather than *2/*5.
+    Whether that is the right trade is a decision about what the report should say, not
+    one the measurement settles. Before adding any gene to a preference list, check that
+    PyPGx's allele names for it are a subset of PharmCAT's.
   - CYP4F2 is the other gene PyPGx scored better on, 18 of 20 against 17, with no case
     PharmCAT alone had right. One call is thin; held until more samples than GeT-RM's say
     the same. `scripts/getrm/caller-augmentation.md` has the per-gene table.

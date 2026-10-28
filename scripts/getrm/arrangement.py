@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -68,8 +69,16 @@ def parse_variant(text: str) -> Variant | None:
 def pairs_for(record: dict) -> List[dict]:
     """Every pair of heterozygous variants this call places, and where it puts them."""
     details = (record or {}).get("details") or {}
+    # haplotype1/haplotype2 are PyPGx's ranked candidate lists for each chromosome,
+    # its call first -- not the call. Joining the whole list printed *2+*1/*21+*1
+    # where the call is *2/*21. The candidates are still what places a variant on a
+    # chromosome (they are all read off the same per-chromosome assignment), so only
+    # the printed label changes.
     hap1 = details.get("haplotype1") or []
     hap2 = details.get("haplotype2") or []
+    called = (record or {}).get("diplotype") or "/".join(
+        [(hap1[0] if hap1 else "?"), (hap2[0] if hap2 else "?")]
+    )
     defines: Dict[str, set] = {}
     fraction: Dict[Variant, float] = {}
     for supporting in details.get("supporting_variants") or []:
@@ -103,7 +112,7 @@ def pairs_for(record: dict) -> List[dict]:
                     "a": a,
                     "b": b,
                     "implied": "cis" if side[a] == side[b] else "trans",
-                    "call": "/".join(["+".join(hap1), "+".join(hap2)]),
+                    "call": called,
                 }
             )
     return out
@@ -119,10 +128,15 @@ def pileup(
     . and , -- which is what the comparison wants anyway.
     """
     bed = "\n".join(f"{c}\t{p - 1}\t{p}" for c, p in sorted(positions))
+    # mktemp, not a fixed path: two runs against the same long-lived container
+    # (pgx_gatk_api, which this script's usage suggests) would otherwise overwrite
+    # each other's BED between the printf and the mpileup, and one would pileup the
+    # other's positions and report them for the wrong sample.
     shell = (
-        f"printf '%s\\n' \"$BED\" > /tmp/arrangement.bed && "
-        f"samtools mpileup -l /tmp/arrangement.bed --output-QNAME -q 20 -Q 13 "
-        f"--no-output-ends '{cram}' 2>/dev/null"
+        'b=$(mktemp) && trap \'rm -f "$b"\' EXIT && '
+        'printf \'%s\\n\' "$BED" > "$b" && '
+        f"samtools mpileup -l \"$b\" --output-QNAME -q 20 -Q 13 "
+        f"--no-output-ends '{cram}'"
     )
     if docker:
         command = ["docker", "exec", "-e", f"BED={bed}", docker, "bash", "-c", shell]
@@ -148,13 +162,34 @@ def pileup(
         command += ["--entrypoint", "bash", image, "-c", shell]
     else:
         command = ["bash", "-c", shell]
-    text = subprocess.run(
+    environment = None
+    if not (docker or image):
+        # The cuts are CRAM against the analysis set, so samtools needs REF_PATH --
+        # or HOME, for its own $HOME/.cache/hts-ref. Stripping the environment to
+        # BED and PATH took both away and left nothing able to decode them.
+        environment = dict(os.environ, BED=bed)
+    done = subprocess.run(
         command,
         capture_output=True,
         text=True,
-        env={"BED": bed, "PATH": "/usr/bin:/bin"} if not (docker or image) else None,
+        env=environment,
         timeout=900,
-    ).stdout
+    )
+    # Without this a samtools that never ran -- no container, no reference, a bad
+    # mount -- gives empty output, every pair reads as undecided, and the script
+    # prints "0 the reads contradict" and exits 0. A tool that failed and a run
+    # that confirmed every call must not look the same.
+    if done.returncode != 0:
+        raise SystemExit(
+            f"samtools mpileup failed ({done.returncode}): "
+            + (done.stderr.strip() or "no reason given").splitlines()[-1]
+        )
+    text = done.stdout
+    if not text.strip():
+        raise SystemExit(
+            f"samtools mpileup read none of the {len(positions)} positions of "
+            f"{cram}; the alignment or the reference is not reachable here"
+        )
 
     seen = {}
     for line in text.splitlines():
@@ -167,6 +202,13 @@ def pileup(
             fields[4],
             fields[6].split(","),
         )
+        # Known limitation: a base followed by an indel ("GGG+2ATGG" parses to
+        # G, G, +AT, G, G) loses its letter, so that read is dropped from both cis
+        # and trans rather than contributing its base. It costs evidence at
+        # indel-rich loci and cannot invent a contradiction, and the production
+        # counter (docker/pypgx/read_phase.py) reads the alignment directly and does
+        # not share it -- which is part of why it decides 415 pairs where this
+        # decides 413.
         per_read, i = [], 0
         while i < len(bases):
             ch = bases[i]
@@ -184,6 +226,15 @@ def pileup(
                 i += 2  # mapping quality follows the marker
             else:
                 i += 1
+        if len(per_read) != len(names):
+            # A base symbol this parser does not know (">"/"<" for a reference skip,
+            # say) leaves the two lists different lengths, and the position used to
+            # vanish into "the reads do not decide" rather than into a parse bug.
+            print(
+                f"arrangement: {chrom}:{position} parsed {len(per_read)} bases for "
+                f"{len(names)} reads; skipped",
+                file=sys.stderr,
+            )
         if len(per_read) == len(names):
             seen[(chrom, position)] = dict(zip(names, per_read))
     return seen
@@ -222,13 +273,17 @@ def main() -> None:
     parser.add_argument("--docker", help="run samtools in this running container")
     parser.add_argument("--image", help="run samtools in a throwaway container")
     parser.add_argument(
-        "--reference", help="the staged reference, for REF_PATH with --image"
+        "--reference",
+        help="the staged reference, for REF_PATH with --image (ignored otherwise: "
+        "without a container samtools uses this environment's own REF_PATH)",
     )
     parser.add_argument("--json", help="write every pair here")
     args = parser.parse_args()
 
     results = pathlib.Path(args.results).expanduser()
-    cuts = pathlib.Path(args.cuts).expanduser()
+    # resolve(), not just expanduser(): --image mounts this directory, and docker
+    # refuses a relative -v source ("mount path must be absolute").
+    cuts = pathlib.Path(args.cuts).expanduser().resolve()
     rows = []
     for sample_dir in sorted(d for d in results.iterdir() if d.is_dir()):
         record_file = sample_dir / "pypgx_result.json"

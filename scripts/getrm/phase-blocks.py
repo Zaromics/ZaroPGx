@@ -15,7 +15,7 @@ phased from the reads, two in different blocks cannot.
 Usage:
   scripts/getrm/phase-blocks.py CRAM chr19:15879400-15897800 \\
       --reference reference/grch38/Homo_sapiens_assembly38.fasta \\
-      --mark 15879621=CYP4F2 *4 --mark 15897578=CYP4F2 *4
+      --mark '15879621=CYP4F2 *4' --mark '15897578=CYP4F2 *4'
 
   # samtools and bcftools from a container instead of PATH (the stack's gatk-api
   # image has both, with the reference at /reference):
@@ -51,7 +51,11 @@ from collections import defaultdict
 from typing import Dict, List, Tuple
 
 CIGAR = re.compile(r"(\d+)([MIDNSHP=X])")
-REF_CONSUMING = "MDN=X"
+# The operations that put a base of the read on a reference position. D and N consume
+# reference but carry no base, so a mate whose CIGAR is 50M20D100M has nothing to say
+# about a site inside that deletion -- counting it as linking two such sites was an
+# over-count exactly at the indel loci this script is used to study.
+REF_CONSUMING = "M=X"
 HET = {"0/1", "1/0", "0/2", "1/2"}
 
 
@@ -61,7 +65,12 @@ def run(command: List[str], docker: str | None) -> str:
         command = ["docker", "exec", docker] + command
     proc = subprocess.run(command, capture_output=True, text=True)
     if proc.returncode:
-        sys.exit(f"{command[0]} failed: {proc.stderr.strip()[:400]}")
+        # The reason, not just the name: these commands used to send stderr to
+        # /dev/null and fail with an empty explanation.
+        sys.exit(
+            f"{command[0]} failed ({proc.returncode}): "
+            + (proc.stderr.strip()[:400] or "no reason given")
+        )
     return proc.stdout
 
 
@@ -71,8 +80,8 @@ def heterozygous_sites(cram: str, region: str, reference: str, docker: str | Non
         [
             "sh",
             "-c",
-            f"bcftools mpileup -q 20 -Q 20 -r {region} -f {reference} {cram} 2>/dev/null"
-            " | bcftools call -mv -Ov 2>/dev/null",
+            f"set -o pipefail; bcftools mpileup -q 20 -Q 20 -r {region} "
+            f"-f {reference} {cram} | bcftools call -mv -Ov",
         ],
         docker,
     )
@@ -87,12 +96,20 @@ def heterozygous_sites(cram: str, region: str, reference: str, docker: str | Non
     return sites
 
 
-def fragments(cram: str, region: str, docker: str | None) -> Dict[str, List[Tuple[int, int]]]:
-    """{read name: the reference span of each of its mates}. Secondary and
-    supplementary alignments and mapping quality under 20 are left out, as a phaser
-    leaves them out."""
+def fragments(
+    cram: str, region: str, reference: str, docker: str | None
+) -> Dict[str, List[Tuple[int, int]]]:
+    """{read name: the reference span of each of its mates}.
+
+    Duplicates, QC failures, secondary and supplementary alignments and mapping
+    quality under 20 are left out, as a phaser leaves them out -- 0xF00, not 0x900.
+    The sites these fragments link were called by `bcftools mpileup`, which excludes
+    UNMAP,SECONDARY,QCFAIL,DUP by default; counting duplicates here but not there
+    would have made the same PCR fragment several pieces of linking evidence.
+    """
     text = run(
-        ["sh", "-c", f"samtools view -q 20 -F 0x900 {cram} {region} 2>/dev/null"],
+        # -T: the cuts are CRAM, which samtools cannot decode without the reference.
+        ["sh", "-c", f"samtools view -q 20 -F 0xF00 -T {reference} {cram} {region}"],
         docker,
     )
     spans: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
@@ -138,7 +155,7 @@ def main() -> None:
     sites = heterozygous_sites(args.cram, args.region, args.reference, args.docker)
     if not sites:
         sys.exit(f"no heterozygous site in {args.region}")
-    reads = fragments(args.cram, args.region, args.docker)
+    reads = fragments(args.cram, args.region, args.reference, args.docker)
     lengths = sorted(
         max(e for _, e in m) - min(s for s, _ in m) + 1
         for m in reads.values()
