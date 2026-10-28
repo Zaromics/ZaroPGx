@@ -111,25 +111,44 @@ sample that carries it, for ever. The phenotype survives — both alleles are No
 but the diplotype is wrong. CYP4F2 is +1 of 20, which is real but thin; it is left until
 more samples say the same thing.
 
-## Cyrius, run on six of the genomes
+## Cyrius, run on every genome with a scored CYP2D6 call
 
 Item 4 below used to say the measurement had not been done. It has: Cyrius 1.1.1 in a
-throwaway venv (nothing shipped, nothing added to any image), on the three CYP2D6 calls
-we get wrong and the three structurally hard ones we get right, so the comparison shows
-both what it would fix and what it would cost.
+throwaway venv (nothing shipped, nothing added to any image), on **all 31** of the
+GeT-RM genomes whose CYP2D6 call this archive scores. 31 is the whole denominator, not
+a sample of it — the other 30 genomes have no CYP2D6 value to score against.
+
+**ZaroPGx 28 of 31, Cyrius 28 of 31.** A tie, and not a tie made of the same calls:
+Cyrius fixes one we get wrong and loses one we get right.
 
 | sample | GeT-RM | ZaroPGx 0.4.1 | Cyrius 1.1.1 | |
 |---|---|---|---|---|
-| HG00436 | `*2x2/*71` | `*2x2/*71` | `*2x2/*71` | both right |
-| NA12878 | `*3/(*68)+*4` | `*3/*68 + *4` | `*3/*68+*4` | both right |
-| NA18526 | `*1/*36x2+*10` | `*1/*36x2 + *10` | `*1/*36+*36+*10` | both right |
 | HG00589 | `*1/*21` | `*2/*21` | `*1/*21` | **Cyrius fixes it** |
+| NA19908 | `*1/*46` | `*1/*46` | `*1/*46;*43/*45` | **Cyrius loses it** |
 | NA18565 | `*10/*36x2` | `*10/*36 + *10` | `*36/*36+*10` | both wrong |
 | NA18545 | `*5/*36x2+*10x2` | `*36 + *10/*36 + *10` | `*36+*10/*36+*10` | both wrong |
 
-Cyrius 4 of 6, us 3 of 6, every call `PASS`, coverage MAD 0.065–0.078. It costs us
-nothing on the three we already get right, which is the result that matters most: an
-opt-in second caller that regressed a correct call would not be worth having.
+The other 27 both callers get right, including the structurally hard ones — `*2x2/*71`
+(HG00436), `*3/(*68)+*4` (NA12878), `*1/*36x2+*10` (NA18526), `*1/*4x2` (NA19920),
+`*2x2/*10` (NA19207). **No call we get right is regressed except NA19908**, which is the
+result that matters most for an opt-in second caller.
+
+Every cut carried enough depth for Cyrius to normalise against — median depth 32–60x,
+coverage MAD 0.065–0.080 across the 31 — so nothing here is an artefact of a thin cut.
+
+Cyrius filtered 30 of 31 `PASS`, and the one it flagged
+(`More_than_one_possible_genotype`) is exactly the call it gets wrong, so it is honest
+about its own failure rather than printing a wrong diplotype flat. That is a point in
+its favour as a *disagreement detector* (item 5), not as a replacement.
+
+**NA19908 is the mirror image of HG00589.** Both callers read the same four variants —
+`g.42126611C>G` and `g.42127941G>A` (`*2`'s cores), `g.42129075C>T`, `g.42130715C>T` —
+at ordinary two-copy depth (`cn2`, MAD 0.073). Cyrius cannot choose between the two
+partitions of them, `*1_*46` and `*43_*45`, and reports both. Beagle chooses, and here
+it chooses right. The deciding positions are **1,640 bp apart**, well beyond a 2x150
+fragment, so read adjudication cannot settle this one either (item 3's check does not
+reach it: it has no CYP2D6 pair within 1 kb in this genome). One phasing call Beagle
+loses, one it wins, and reads can check only the first.
 
 The single win is **HG00589, and it is a phasing decision, not a structural one**.
 Copy number is ordinary there — Cyrius reads `cn2`, two copies, no hybrid — and it calls
@@ -140,7 +159,8 @@ and the other `*1`; Beagle put them opposite, making `*2/*21`. This is exactly t
 item 3 measured and found **within a short-read phaser's reach** — 8 fragments carry
 both deciding positions. We can have this one without Cyrius.
 
-The two it does not fix are the two whose total copy number was already right:
+The two neither caller gets right are the two whose total copy number was already
+right:
 
 - **NA18545 — both callers produce the identical wrong answer.** Cyrius reads four
   CYP2D6 units (`*10_*10_*36_*36`, `exon9hyb_exon9hyb`) and so do we; GeT-RM's
@@ -158,14 +178,28 @@ The two it does not fix are the two whose total copy number was already right:
 
 **On re-cutting.** Cyrius normalises depth against 3,004 intervals over 22 autosomes,
 so each sample is thousands of range requests rather than the handful a PGx cut makes.
-EBI's FTP host will not sustain that — four of the first six attempts died with
-`Seek at offset … failed` / `EOF marker is absent` after htslib exhausted its own
-reconnects, and the two that survived were running at about 0.15 MB/min. The same cuts
-against the AWS Open Data mirror of the same CRAMs
-(`1000genomes.s3.amazonaws.com/1000G_2504_high_coverage/data/<run>/<sample>.final.cram`)
-ran at about 7 MB/min and all six finished in 11–25 minutes, two of them needing a
-retry. The run accession is already in `samples.tsv`'s EBI URL, so the mirror URL can be
-built from it. Worth knowing before anyone plans a re-cut of all 61.
+EBI's FTP host will not sustain that. Six samples are not on the mirror's panel prefix
+and fell back to it; five failed all three tries with `Seek at offset … failed` /
+`EOF marker is absent` after htslib exhausted its own reconnects, and the sixth was
+still inside its first attempt fifty minutes later, at about 0.6 MB/min of an 80 MB cut,
+when the same sample came off the mirror in eight minutes. The AWS Open Data mirror of
+the same CRAMs served all 31 at about 7 MB/min: 8–17 minutes a sample on a first try,
+up to 41 with the retries a dropped stream costs.
+
+The mirror holds the 2,504-sample panel under
+`1000G_2504_high_coverage/data/<run>/<sample>.final.cram` and the 698 related genomes
+under `1000G_2504_high_coverage/additional_698_related/data/<run>/…`; the empty
+`1000G_698_related_high_coverage/` prefix at the top of the same bucket is a decoy, and
+probing only it is what made an earlier pass of this file say the related genomes were
+not mirrored. Both prefixes together carry **all 208** samples in `samples.tsv`, 173 and
+35, which is why `cut.sh` probes both. The run accession is already in `samples.tsv`'s
+EBI URL, so either URL is built from it.
+
+Two things cost time and are worth knowing before a re-cut of all 61: more than about
+three concurrent cuts starts producing `Seek at offset … failed` *on S3 too* (two
+samples failed three times each at six streams and then succeeded first try at three),
+and a cut interrupted mid-stream leaves a BAM without an index, so a manifest should be
+built from the `.bai` rather than the `.bam`.
 
 ## What is worth building
 
@@ -230,14 +264,14 @@ built from it. Worth knowing before anyone plans a re-cut of all 61.
    how PyPGx's reaches the report. Cyrius needs only numpy, scipy, pysam and statsmodels
    and reads the BAM the pipeline already has, and it would go in as a runtime-detected
    option, off by default, licence named where it is enabled. The section above measures
-   it: 4 of 6 against our 3, no regression on the three we already get right, and its one
-   win is the `*1/*21` phasing call that **item 3 can fix without it**. What is left is
-   one genuine modelling advantage that still does not yield a correct call (the second
-   `*36` in NA18565) and one error it makes identically to ours (NA18545). Taking on a
-   PolyForm Strict dependency and naming someone else's noncommercial licence in our UI
-   buys, on this evidence, nothing that item 3 does not. Build item 3 first and re-ask
-   afterwards. Measured on six genomes, not 61: a wider run would firm up the hybrid
-   advantage, but it would have to overturn the HG00589 finding to change the answer.
+   it on all 31 scored CYP2D6 calls: **28 of 31, the same as ours**. It fixes the
+   `*1/*21` phasing call that **item 3 can fix without it**, and loses NA19908, which
+   item 3 cannot reach. What is left is one genuine modelling advantage that still does
+   not yield a correct call (the second `*36` in NA18565) and one error it makes
+   identically to ours (NA18545). Taking on a PolyForm Strict dependency and naming
+   someone else's noncommercial licence in our UI buys, on the full denominator, a
+   net of zero correct calls. Build item 3 and do not adopt Cyrius as a caller; its
+   one real use here is item 5, since the one call it gets wrong it also flags.
 5. **Say when a CYP2D6 or CYP2A6 call has nothing behind it.** Those two have no second
    caller at all, so the 7 errors there are unchallenged. StellarPGx is MIT and fails on
    different structural variants than PyPGx, so running it as a disagreement detector
@@ -251,7 +285,7 @@ The two tools that would genuinely beat us — Cyrius on CYP2D6 structure, Aldy 
 `*6`/`*9` from reads — cannot go in the published images, and the permissively licensed
 alternatives do not beat us on the genes where we are weak. That left two routes to the
 same capability: build the method ourselves (2 and 3), or support the tool without
-shipping it (4). Running Cyrius has now separated them. Its advantage over us on these
-genomes is one call, and that call is a phasing decision the reads can settle, so route 4
-collapses into route 3. 1 and 2 are built; 3 is worth building for CYP2D6, and the
-measurement says not to bother for CYP4F2.
+shipping it (4). Running Cyrius on the full denominator has now settled it: its advantage
+over us is **nil** — one call fixed, one lost, 28 of 31 each — and the one it fixes is a
+phasing decision the reads can settle. Route 4 collapses into route 3. 1 and 2 are built;
+3 is worth building for CYP2D6, and the measurement says not to bother for CYP4F2.

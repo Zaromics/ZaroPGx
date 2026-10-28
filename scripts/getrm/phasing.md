@@ -142,11 +142,11 @@ call already names), it never guesses where the reads are silent, and the single
 it fixes is in the gene that matters most.
 
 The HG00589 call has since been checked against a second opinion. Cyrius, Illumina's
-CYP2D6 caller, was run on that genome and five others
+CYP2D6 caller, was run on all 31 GeT-RM genomes with a scored CYP2D6 call
 ([caller-augmentation.md](caller-augmentation.md)) and returns GeT-RM's `*1/*21` from
 the same three variants we call, differing from us only in which chromosome it puts
 the two `*2` cores on. Two things follow. The truth value is not an artefact of the
 GeT-RM assay — an independent caller reading the same reads agrees with it. And the
 one call a restrictively licensed second caller would fix for us is this one, which
-the reads settle on their own, so adjudication is worth building before any second
-CYP2D6 caller is considered.
+the reads settle on their own; across the full 31 Cyrius ties us at 28, so adjudication
+is not merely worth building first — it is the only one of the two that gains anything.

@@ -225,13 +225,15 @@ curated: true
     below us on everything else. StellarPGx was measured and not adopted
     (`scripts/getrm/stellarpgx-comparison.md`).
   - Cyrius as an opt-in CYP2D6 second opinion the operator installs themselves — measured
-    Oct 2026 and **not worth taking on as things stand**. On the three CYP2D6 calls we get
-    wrong and the three hard ones we get right it scores 4 of 6 against our 3, with no
-    regression on the three we already get right. Its one win is the `*1/*21` call we
-    print as `*2/*21`, and that is a phasing decision the reads can settle on their own
-    (8 fragments carry both deciding positions), so the read-adjudication item above buys
-    the same call without naming a noncommercial licence in our UI. Of the two it does not
-    fix, one it gets wrong identically to us. Re-ask after read adjudication is built.
+    Oct 2026 on **all 31 GeT-RM genomes with a scored CYP2D6 call**, and **not worth
+    taking on**. It scores 28 of 31; so do we. It fixes the `*1/*21` call we print as
+    `*2/*21` — a phasing decision the reads settle on their own, 7 fragments to 0, so the
+    read-adjudication item above buys that call without naming a noncommercial licence in
+    our UI — and it loses NA19908's `*1/*46`, where it cannot choose between two
+    partitions of the same four variants and reports both. Of the two neither caller
+    gets right, one it gets wrong identically to us. The one thing it does better is
+    flag itself: the call it misses is the one call it does not mark `PASS`, which is an
+    argument for the uncertainty item, not for adopting it.
     `scripts/getrm/caller-augmentation.md` has the table and the per-sample copy numbers.
 
 ## Reporting
