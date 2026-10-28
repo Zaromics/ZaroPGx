@@ -450,11 +450,26 @@ def pypgx_preferred_genes() -> set:
     `pypgx_preferred_over_pharmcat` holds them:
 
     - NUDT15, because PharmCAT 3.4 has no *2 definition. A *2 carrier can only come
-      back as *3 -- *2/*2 as *3/*3, *2/*5 as *3/*5. The phenotype survives (both
-      alleles are No Function) but the diplotype printed is wrong, and wrong the same
-      way on every *2 carrier. PyPGx names *2, and on the 61 GeT-RM genomes had NUDT15
-      right 10 times of 11 against PharmCAT's 8, including every case PharmCAT had
-      right (scripts/getrm).
+      back as *3 -- *2/*2 as *3/*3, *2/*5 as *3/*5: the diplotype printed is wrong,
+      and wrong the same way on every *2 carrier, though the phenotype PharmCAT
+      reaches by its own route is right (both alleles are No Function). PyPGx names
+      *2, and on the 61 GeT-RM genomes had NUDT15 right 10 times of 11 against
+      PharmCAT's 8, including every case PharmCAT had right (scripts/getrm).
+
+      !! THIS DOES NOT WORK AS WRITTEN, AND THIS BRANCH IS HELD. !!
+      PharmCAT having no *2 definition is not only a naming gap: *2 is absent from
+      its CPIC function data too, so an outside call naming *2 is accepted and given
+      `Unassigned function`. The phenotype comes out `n/a` and no CPIC thiopurine
+      recommendation matches -- measured against the shipped image, 2026-10-28. So
+      handing the call over buys the right diplotype at the price of the phenotype
+      and of all azathioprine/mercaptopurine guidance, which is worse for the patient
+      than the wrong label was. Do not merge until this is resolved.
+      What would work: outside.tsv already passes through translate_outside_tsv_file
+      (docker/pharmcat/pharmcat.py), and lexicon/allele_map_pypgx_to_pharmcat.json
+      maps NUDT15 *2 to *2 today; mapping it to *3 (the same No function, so the same
+      phenotype) keeps the guidance, at the cost of printing *3/*5 rather than *2/*5.
+      That is a decision about what the report should say. Before adding any gene
+      here, check that PyPGx's allele names for it are a subset of PharmCAT's.
 
     Read straight from the config rather than through get_gene_set, which answers a
     name it does not know with *every* gene -- here that would hand PharmCAT every
