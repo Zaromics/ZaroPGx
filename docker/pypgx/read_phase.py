@@ -481,6 +481,33 @@ def reads_name(
     return sorted("/".join(pair) for pair in out)
 
 
+def phenotypes_for(gene: str, names: Sequence[str]) -> List[str]:
+    """What PyPGx would call the phenotype of each diplotype the reads allow.
+
+    A wrongly paired diplotype does not always mean a wrongly reported patient: the
+    phenotype comes of the two alleles' functions, and HG00589's CYP2D6 is an
+    Intermediate Metaboliser whether it is read as *2/*21, *1/*21 or *21/*39. Saying
+    which of the two it is lets the report tell a reader whether anything downstream
+    of the call would change.
+    """
+    try:
+        from pypgx.api import core
+    except ImportError:  # pragma: no cover - PyPGx is always in this image
+        return []
+    out = set()
+    for diplotype in names:
+        parts = diplotype.split("/")
+        if len(parts) != 2:
+            continue
+        try:
+            phenotype = core.predict_phenotype(gene, parts[0], parts[1])
+        except Exception:  # a gene PyPGx has no phenotype rule for
+            return []
+        if phenotype:
+            out.add(str(phenotype))
+    return sorted(out)
+
+
 def settled(names: Sequence[str]) -> List[str]:
     """The allele names every arrangement the reads allow agrees on.
 
@@ -541,7 +568,11 @@ def check(
                 logger.warning("Could not name %s from the reads: %s", gene, exc)
                 continue
             if allowed:
-                names[gene] = {"allows": allowed, "settles": settled(allowed)}
+                names[gene] = {
+                    "allows": allowed,
+                    "settles": settled(allowed),
+                    "phenotypes": phenotypes_for(gene, allowed),
+                }
         logger.info(
             "Read phase: %d pairs within %d bp, %d the reads decide, %d genes named",
             len(rows),

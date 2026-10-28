@@ -507,7 +507,14 @@ def test_the_note_survives_into_the_pdf(monkeypatch, tmp_path):
 
 NAMED_EVIDENCE = {
     **HG00589_EVIDENCE,
-    "names": {"CYP2D6": {"allows": ["*1/*21", "*21/*39"], "settles": ["*21"]}},
+    "names": {
+        "CYP2D6": {
+            "allows": ["*1/*21", "*21/*39"],
+            "settles": ["*21"],
+            # Both readings, and the printed *2/*21, are Intermediate Metabolisers.
+            "phenotypes": ["Intermediate Metabolizer"],
+        }
+    },
 }
 
 
@@ -586,3 +593,39 @@ def test_the_arrangements_a_variant_out_of_reach_leaves_open():
     assert len(splits) == 2
     for left, right in splits:
         assert {b.name(), c.name()} <= left or {b.name(), c.name()} <= right
+
+
+# --- whether the phasing error would change anything downstream ------------
+
+
+def _row_with_phenotype(phenotype="Intermediate Metabolizer"):
+    row = _row()
+    row["phenotype"] = phenotype
+    return row
+
+
+def test_a_wrongly_paired_call_whose_phenotype_is_unchanged_says_so():
+    """The point of the note is what a reader must do about it, and here: nothing."""
+    rows = [_row_with_phenotype()]
+    report_phase.annotate_genes(rows, NAMED_EVIDENCE, HG00589_RESULTS)
+    note = rows[0]["read_phase_conflict"]
+    assert "the phenotype above is the same either way" in note["call_note"]
+    assert "the phenotype above is the same either way" in note["note"]
+
+
+def test_a_phasing_error_that_would_change_the_phenotype_says_that_instead():
+    evidence = json.loads(json.dumps(NAMED_EVIDENCE))
+    evidence["names"]["CYP2D6"]["phenotypes"] = ["Poor Metabolizer"]
+    rows = [_row_with_phenotype()]
+    report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
+    note = rows[0]["read_phase_conflict"]
+    assert "would make the phenotype Poor Metabolizer" in note["call_note"]
+
+
+def test_nothing_is_said_about_a_phenotype_pypgx_has_no_rule_for():
+    evidence = json.loads(json.dumps(NAMED_EVIDENCE))
+    evidence["names"]["CYP2D6"]["phenotypes"] = []
+    rows = [_row_with_phenotype()]
+    report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
+    assert rows[0]["read_phase_conflict"].get("phenotype_note") is None
+    assert "phenotype" not in rows[0]["read_phase_conflict"]["call_note"]

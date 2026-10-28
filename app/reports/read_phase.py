@@ -184,6 +184,29 @@ def _same(left: str, right: str) -> bool:
     return sorted(left.split("/")) == sorted(right.split("/"))
 
 
+def phenotype_note(
+    evidence: Mapping[str, Any], gene: str, printed: Any
+) -> Optional[str]:
+    """Whether the reads' arrangement would change the phenotype, where it is known.
+
+    A diplotype paired the wrong way is not always a patient reported the wrong way.
+    HG00589's CYP2D6 is an Intermediate Metaboliser read as *2/*21, *1/*21 or
+    *21/*39, so the printed label is wrong and nothing downstream of it is. Saying so
+    is the difference between a note a reader must act on and one they need only
+    know about.
+    """
+    entry = ((evidence.get("names") or {}).get(gene)) or {}
+    phenotypes = [str(p) for p in (entry.get("phenotypes") or []) if p]
+    if not phenotypes:
+        return None
+    shown = str(printed or "").strip()
+    if not shown:
+        return None
+    if len(phenotypes) == 1 and phenotypes[0].casefold() == shown.casefold():
+        return "the phenotype above is the same either way"
+    return "this would make the phenotype " + _names_phrase(phenotypes)
+
+
 def _names_phrase(names: Sequence[str]) -> str:
     """ "*1/*21", or "*1/*21 or *21/*39" for the readings the reads leave open."""
     names = list(names)
@@ -201,6 +224,8 @@ def call_note(found: Mapping[str, Any]) -> str:
     names = found.get("allows") or []
     if names:
         note += f"; their arrangement would be {_names_phrase(names)}"
+    if found.get("phenotype_note"):
+        note += f", and {found['phenotype_note']}"
     return note + " (see Alerts)."
 
 
@@ -215,6 +240,11 @@ def summary_note(found: Mapping[str, Any]) -> str:
             f", and on the reads' own arrangement this gene is "
             f"{_names_phrase(found.get('allows') or [])}"
             if found.get("allows")
+            else ""
+        )
+        + (
+            f". On that arrangement {found['phenotype_note']}"
+            if found.get("phenotype_note")
             else ""
         )
         + ". See Alerts and Warnings."
@@ -239,6 +269,10 @@ def annotate_genes(
             continue
         detail = dict(detail)
         detail["allows"] = allowed_names(evidence, gene, row.get("diplotype"))
+        if detail["allows"]:
+            detail["phenotype_note"] = phenotype_note(
+                evidence, gene, row.get("phenotype")
+            )
         row["read_phase_conflict"] = {
             "phaser": PHASER,
             "call_note": call_note(detail),
