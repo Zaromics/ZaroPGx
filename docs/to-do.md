@@ -156,8 +156,18 @@ curated: true
     the CNV-state vocabulary, and the published CYP2D6 leaders resolve them from CYP2D7
     breakpoints or long reads. See `scripts/getrm/caller-augmentation.md`.
   - Read-backed phasing for CYP2D6, which the reads support; not for CYP4F2, which they
-    do not. Phasing is Beagle's today: statistical, from a reference panel, with no read
-    evidence behind it, and two wrong calls are phasing errors. Measured on the cached
+    do not. **Built 2026-10-27** on `feat/read-phase-adjudication`: the pypgx lane
+    counts the fragments carrying each pair of heterozygous defining variants within
+    1 kb (`docker/pypgx/read_phase.py`, `/read-phase`, published as `read_phase.json`)
+    and the report says where the reads contradict the arrangement a printed call
+    asserts (`app/reports/read_phase.py`): a note beside the call, one in the Executive
+    Summary, one alert. The call is printed unchanged — naming the right allele from a
+    corrected arrangement needs the allele definition table, which is the follow-up.
+    The built code reproduces the measurement on all 61 genomes (719 pairs, 415 the
+    reads decide against mpileup's 413 — it reads deletions mpileup drops — 413
+    agreeing, the same two contradictions). What follows is what was measured before it
+    was built. Phasing is Beagle's today: statistical, from a reference panel, with no
+    read evidence behind it, and two wrong calls are phasing errors. Measured on the cached
     cuts (`scripts/getrm/phase-blocks.py`): CYP4F2's two `*4` variants are 17,957 bp
     apart, and although 55 heterozygous sites lie between them the 2x150 reads leave
     gaps no fragment bridges — 6 in HG00436, the widest 3,485 bp, 8 in NA19908 — so the

@@ -101,6 +101,15 @@ The flag marks the calls PyPGx knows are uncertain, and those are not the calls 
 are wrong. HG00589, whose CYP2D6 call *is* wrong, carries `alternative_phase: null`.
 Beagle was confident and mistaken, and a feature keyed to the flag would never look.
 
+**This is built**: `docker/pypgx/read_phase.py` counts the fragments in the pypgx
+lane, which has the reads, and `app/reports/read_phase.py` compares them with what the
+printed call asserts (branch `feat/read-phase-adjudication`, 2026-10-27). The built
+code was run over these same 61 genomes and reproduces what follows, deciding 415
+pairs where this measurement's `samtools mpileup` pass decides 413 -- it reads
+deletions mpileup drops -- with the same 413 agreeing and the same two contradicting.
+It flags and does not rewrite: naming the right allele from a corrected arrangement
+needs the allele definition table.
+
 **Every call has to be checked, not the flagged ones.** `arrangement.py` asks the
 question of every diplotype resting on two heterozygous variants within 1 kb, across
 all 61 genomes: 719 such pairs, 413 the reads decide, and
