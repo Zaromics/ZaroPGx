@@ -208,3 +208,26 @@ def test_genotype_resolves_a_requested_name_rather_than_testing_the_categories()
     genotype = source[source.index("elif gene_set:") :][:600]
     assert "resolve_gene_selection" in genotype
     assert "status_code=400" in genotype
+
+
+def test_health_reports_a_missing_gene_config_instead_of_dying_of_it(tmp_path):
+    """An install without the ./config:/app/config mount otherwise fails /health
+    with a KeyError: the compose healthcheck never passes, the container is
+    permanently unhealthy, and nothing says the configuration is missing."""
+    config = GeneConfig(str(tmp_path / "absent.json"))
+    assert config.fallback_reason()
+    assert "config" in config.fallback_reason()
+    with pytest.raises(KeyError) as caught:
+        config.get_gene_set("pypgx_minus_pharmcat")
+    # The message sends the operator to the mount, not to a file that is not there.
+    assert "mount" in str(caught.value)
+
+
+def test_an_unknown_set_names_the_categories_too():
+    """resolve_gene_selection accepts categories as well as sets, so a 400 that
+    lists only the sets omits valid values."""
+    gene_config = _config()
+    config = gene_config.load_config()
+    assert config.get("categories"), "genes.json should define categories"
+    for category in config["categories"]:
+        assert gene_config.resolve_gene_selection(category) is not None

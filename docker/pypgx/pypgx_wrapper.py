@@ -261,6 +261,10 @@ class GeneConfig:
     """Manages PyPGx supported genes configuration"""
 
     def __init__(self, config_path: Optional[str] = None):
+        # Why the built-in fallback is in use, when it is: an install without the
+        # ./config:/app/config mount otherwise looks like a healthy container that
+        # simply has no gene sets.
+        self._fallback_reason: Optional[str] = None
         if config_path:
             self.config_path = Path(config_path)
         else:
@@ -293,10 +297,15 @@ class GeneConfig:
             return self._config
         except FileNotFoundError:
             logger.warning(f"Gene configuration file not found at {self.config_path}, using fallback")
+            self._fallback_reason = (
+                f"no gene configuration at {self.config_path} -- the image carries "
+                "none, so it is the ./config:/app/config mount that is missing"
+            )
             self._config = self._get_fallback_config()
             return self._config
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in gene configuration: {e}")
+            self._fallback_reason = f"{self.config_path} is not valid JSON: {e}"
             self._config = self._get_fallback_config()
             return self._config
 
@@ -345,10 +354,19 @@ class GeneConfig:
             return genes
         if set_name == "all":
             return self.get_supported_genes()
+        self.load_config()
         raise KeyError(
-            f"gene set '{set_name}' is not defined in {self.config_path}; "
-            f"it defines {', '.join(sorted(sets)) or 'none'}"
+            f"gene set '{set_name}' is not defined: "
+            + (
+                getattr(self, "_fallback_reason", None)
+                or f"{self.config_path} defines {', '.join(sorted(sets)) or 'none'}"
+            )
         )
+
+    def fallback_reason(self) -> Optional[str]:
+        """Why the built-in fallback configuration is in use, or None when it is not."""
+        self.load_config()
+        return self._fallback_reason
 
     def resolve_gene_selection(self, name: str) -> Optional[List[str]]:
         """The genes a request's name asks for -- a set, else a category -- or None
@@ -764,14 +782,27 @@ def health_check():
         },
         'preference_config': {
             'pypgx_pharmcat_preference': PYPGX_PHARMCAT_PREFERENCE,
-            'available_gene_sets': {
-                'pypgx': len(gene_config.get_gene_set('pypgx')),
-                'pypgx_minus_pharmcat': len(gene_config.get_gene_set('pypgx_minus_pharmcat')),
-                'pharmcat_can_call': len(gene_config.get_gene_set('pharmcat_can_call'))
-            }
+            'available_gene_sets': _gene_set_sizes(),
+            'gene_config_fault': gene_config.fallback_reason(),
         },
         'timestamp': time.time()
     }
+
+def _gene_set_sizes() -> Dict[str, Any]:
+    """How big each gene set the preference uses is, or why it could not be read.
+
+    /health must answer: a set the configuration has no name for is a fault to
+    report, not an exception that makes the container look dead to the compose
+    healthcheck while saying nothing about the configuration.
+    """
+    sizes: Dict[str, Any] = {}
+    for name in ("pypgx", "pypgx_minus_pharmcat", "pharmcat_can_call"):
+        try:
+            sizes[name] = len(gene_config.get_gene_set(name))
+        except KeyError as exc:
+            sizes[name] = f"unavailable: {exc}"
+    return sizes
+
 
 @app.get("/")
 def root():
@@ -3356,7 +3387,9 @@ async def genotype(
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown gene set '{gene_set}'. Available: "
-                f"{sorted((gene_config.load_config().get('sets') or {}))}",
+                f"{sorted((gene_config.load_config().get('sets') or {}))}"
+                f"; categories: "
+                f"{sorted((gene_config.load_config().get('categories') or {}))}",
             )
         requested_genes = named
     elif genes and genes.strip().upper() == "ALL":
@@ -3381,7 +3414,15 @@ async def genotype(
         preferred_gene_set = determine_pypgx_gene_set(PYPGX_PHARMCAT_PREFERENCE, detected_input_type)
         logger.info(f"Using gene set: {preferred_gene_set} (preference: {PYPGX_PHARMCAT_PREFERENCE}, input_type: {detected_input_type})")
         
-        requested_genes = gene_config.get_gene_set(preferred_gene_set)
+        try:
+            requested_genes = gene_config.get_gene_set(preferred_gene_set)
+        except KeyError as exc:
+            # Without this the run degrades to PharmCAT-only on an unhandled 500
+            # (pipelines/pgx/main.nf) and says nothing about why.
+            raise HTTPException(
+                status_code=500,
+                detail=f"The gene configuration cannot answer this run: {exc}",
+            )
         outside_call_genes = pharmcat_outside_call_genes(
             PYPGX_PHARMCAT_PREFERENCE, requested_genes
         )
