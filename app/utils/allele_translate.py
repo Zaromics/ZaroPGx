@@ -11,7 +11,14 @@ logger = logging.getLogger(__name__)
 
 _MAP_NAME = "allele_map_pypgx_to_pharmcat.json"
 
-SYNONYM_GENES = frozenset({"ABCG2", "IFNL3", "VKORC1"})
+# PharmCAT 3.4 has no NUDT15 *2 in its allele definitions or its CPIC function data,
+# so an outside call naming *2 is accepted and then given `Unassigned function`: the
+# phenotype comes out n/a and no thiopurine recommendation matches. Its *3 is defined
+# as 48037782 "AGGAGTC or AGGAGTCGGAGTC" AND 48045719 "T", which permits either state
+# of the 6 bp duplication -- so the haplotype PyPGx calls *2 (that duplication plus
+# c.415C>T) is one PharmCAT's own definition calls *3. Translating is a rename into
+# PharmCAT's nomenclature, not a loss of information.
+SYNONYM_GENES = frozenset({"ABCG2", "IFNL3", "NUDT15", "VKORC1"})
 
 # PharmCAT names a CYP2D6 tandem arrangement with spaced plus signs ("*68 + *4");
 # PyPGx writes it unspaced ("*3/*68+*4"), and PharmCAT reports an allele it does not

@@ -449,27 +449,31 @@ def pypgx_preferred_genes() -> set:
     for every carrier, not a better score on one panel. genes.json's
     `pypgx_preferred_over_pharmcat` holds them:
 
-    - NUDT15, because PharmCAT 3.4 has no *2 definition. A *2 carrier can only come
-      back as *3 -- *2/*2 as *3/*3, *2/*5 as *3/*5: the diplotype printed is wrong,
-      and wrong the same way on every *2 carrier, though the phenotype PharmCAT
-      reaches by its own route is right (both alleles are No Function). PyPGx names
-      *2, and on the 61 GeT-RM genomes had NUDT15 right 10 times of 11 against
-      PharmCAT's 8, including every case PharmCAT had right (scripts/getrm).
+    - NUDT15, because PharmCAT 3.4 has no *2 definition and PyPGx does. On the 61
+      GeT-RM genomes PyPGx had NUDT15 right 10 times of 11 against PharmCAT's 8,
+      including every case PharmCAT had right (scripts/getrm).
 
-      !! THIS DOES NOT WORK AS WRITTEN, AND THIS BRANCH IS HELD. !!
-      PharmCAT having no *2 definition is not only a naming gap: *2 is absent from
-      its CPIC function data too, so an outside call naming *2 is accepted and given
-      `Unassigned function`. The phenotype comes out `n/a` and no CPIC thiopurine
-      recommendation matches -- measured against the shipped image, 2026-10-28. So
-      handing the call over buys the right diplotype at the price of the phenotype
-      and of all azathioprine/mercaptopurine guidance, which is worse for the patient
-      than the wrong label was. Do not merge until this is resolved.
-      What would work: outside.tsv already passes through translate_outside_tsv_file
-      (docker/pharmcat/pharmcat.py), and lexicon/allele_map_pypgx_to_pharmcat.json
-      maps NUDT15 *2 to *2 today; mapping it to *3 (the same No function, so the same
-      phenotype) keeps the guidance, at the cost of printing *3/*5 rather than *2/*5.
-      That is a decision about what the report should say. Before adding any gene
-      here, check that PyPGx's allele names for it are a subset of PharmCAT's.
+      *2 is absent from PharmCAT's CPIC function data as well as its allele
+      definitions, so an outside call naming *2 is accepted and then given
+      `Unassigned function`: the phenotype comes out `n/a` and no CPIC thiopurine
+      recommendation matches (measured against the shipped image, 2026-10-28). The
+      call is therefore translated on the way in --
+      lexicon/allele_map_pypgx_to_pharmcat.json maps NUDT15 *2 to *3, applied to
+      outside.tsv by translate_outside_tsv_file (docker/pharmcat/pharmcat.py).
+
+      *3 is not an approximation of *2. Read the definitions:
+        PyPGx     *2 = 13-48037782-A-AGGAGTC + 13-48045719-C-T   (No function)
+                  *3 = 13-48045719-C-T                           (No function)
+                  *6 = 13-48037782-A-AGGAGTC                     (Uncertain)
+        PharmCAT  *3 = 48037782 "AGGAGTC or AGGAGTCGGAGTC" AND 48045719 "T"
+      PharmCAT's *3 is written to permit either state of the 6 bp duplication at
+      48037782, so the haplotype PyPGx calls *2 -- duplication plus c.415C>T -- is
+      one PharmCAT's own definition calls *3. Translating is a rename into PharmCAT's
+      nomenclature, not a loss: same variants, same No function, and the thiopurine
+      guidance works. PyPGx's own *2 is still shown in the PyPGx evidence panel.
+
+      Before adding any gene here, check that PyPGx's allele names for it are a
+      subset of PharmCAT's, or that the ones that are not can be translated as above.
 
     Read straight from the config rather than through get_gene_set, which answers a
     name it does not know with *every* gene -- here that would hand PharmCAT every
