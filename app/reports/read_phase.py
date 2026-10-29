@@ -333,14 +333,6 @@ def alert(found: Mapping[str, Mapping[str, Any]]) -> Optional[str]:
     )
 
 
-def positions(found: Mapping[str, Mapping[str, Any]]) -> List[Tuple[str, str, str]]:
-    """(gene, variant, variant) for each contradiction, for a provenance line."""
-    return [
-        (str(gene), str(detail.get("a")), str(detail.get("b")))
-        for gene, detail in found.items()
-    ]
-
-
 def unreached_alternative(
     evidence: Mapping[str, Any], gene: str, printed: Any
 ) -> Optional[Tuple[str, List[str]]]:
@@ -386,11 +378,12 @@ def open_note(alternative: str, phenotypes: Sequence[str] = ()) -> str:
     )
 
 
-def annotate_open(
-    genes: Sequence[Any], evidence: Mapping[str, Any], pypgx_results: Any
-) -> Dict[str, dict]:
+def annotate_open(genes: Sequence[Any], evidence: Mapping[str, Any]) -> Dict[str, dict]:
     """Mark every row whose printed call is PyPGx's own, whose arrangement no fragment
     reaches, and for which exactly one alternative exists; returns {gene: detail}.
+
+    Takes no ``pypgx_results``: unlike ``annotate_genes`` it asks nothing of what the
+    call asserts, only what the service already named.
 
     Left alone where ``annotate_genes`` already marked a contradiction: a note built
     from evidence beats one built from its absence, and two notes on one call would

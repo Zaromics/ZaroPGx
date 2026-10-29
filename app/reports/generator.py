@@ -4546,9 +4546,7 @@ def generate_report(
     # phaser's alone, and the other reading is a different diplotype 92% of the time
     # in the two-variant case. Named beside the call, where one alternative exists.
     try:
-        read_phase.annotate_open(
-            data.get("genes", []), read_phase_result, pypgx_results
-        )
+        read_phase.annotate_open(data.get("genes", []), read_phase_result)
     except Exception as e:  # naming an alternative must not cost the report
         logger.warning("Read phase alternative not named: %s", e, exc_info=True)
     _read_phase_alert = read_phase.alert(_read_phase_found)

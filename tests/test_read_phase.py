@@ -965,7 +965,7 @@ def test_the_note_names_the_alternative_and_contrasts_the_phenotype():
 
 def test_a_row_is_marked_with_the_alternative():
     row = _row(diplotype="*2/*21")
-    found = report_phase.annotate_open([row], OPEN_EVIDENCE, HG00589_RESULTS)
+    found = report_phase.annotate_open([row], OPEN_EVIDENCE)
     assert set(found) == {"CYP2D6"}
     assert row["read_phase_open"]["alternative"] == "*1/*21"
 
@@ -974,13 +974,13 @@ def test_a_contradiction_wins_over_an_alternative():
     """Evidence beats the absence of it, and two notes would contradict each other."""
     row = _row(diplotype="*2/*21")
     row["read_phase_conflict"] = {"call_note": "already said"}
-    assert report_phase.annotate_open([row], OPEN_EVIDENCE, HG00589_RESULTS) == {}
+    assert report_phase.annotate_open([row], OPEN_EVIDENCE) == {}
     assert "read_phase_open" not in row
 
 
 def test_a_call_not_of_pypgx_own_is_left_alone():
     row = _row(tool="PHARMCAT", diplotype="*2/*21")
-    assert report_phase.annotate_open([row], OPEN_EVIDENCE, HG00589_RESULTS) == {}
+    assert report_phase.annotate_open([row], OPEN_EVIDENCE) == {}
 
 
 def test_the_alternative_reaches_the_page(monkeypatch, tmp_path):
