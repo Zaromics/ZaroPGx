@@ -39,6 +39,7 @@ sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 # Beside this file in the image (/app), and wherever the tests load it from.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import read_phase  # noqa: E402  # pyright: ignore[reportMissingImports]
 import unlisted_variants  # noqa: E402  # pyright: ignore[reportMissingImports]
 try:
     from shared_input import SharedInputRefused, link_shared_input  # pyright: ignore[reportMissingImports]
@@ -4244,6 +4245,75 @@ async def unlisted_variants_endpoint(
     finally:
         # The VCF (a link, for a shared input) and the check's files: nothing here
         # is a result, which goes back in the response.
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+@app.post("/read-phase")
+async def read_phase_endpoint(
+    file: Optional[UploadFile] = File(None),
+    shared_input: Optional[str] = Form(None),
+    alignment_shared_input: Optional[str] = Form(None),
+    reference_genome: str = Form("hg38"),
+    job_id: Optional[str] = Form(None),
+):
+    """What the reads say about which chromosome each heterozygous defining variant
+    sits on, for the VCF /genotype reads (read_phase.py).
+
+    The alignment is read in place from the shared volume and never copied: a 30x
+    genome is tens of gigabytes, and this reads a few hundred positions of it. An
+    alignment that is not on that volume is not read, and the answer says so.
+
+    Like /unlisted-variants, a well-formed request is answered 200 whatever the check
+    finds or fails at -- it never stops a run -- and "status" says whether it ran
+    ("done"), could not ("not_run", with the reason) or failed ("failed").
+    """
+    if (file is None) == (shared_input is None):
+        raise HTTPException(status_code=400, detail="Send the VCF as file, or its shared path as shared_input -- one of them.")
+    if not alignment_shared_input:
+        return {
+            "status": "not_run",
+            "reason": "The reads are not on the shared volume, so the arrangement "
+            "the call asserts was not checked against them.",
+        }
+    assembly = "GRCh37" if reference_genome in ("hg19", "GRCh37") else "GRCh38"
+    job_dir = job_work_dir(job_id, str(uuid.uuid4()))
+    os.makedirs(job_dir, exist_ok=True)
+    filename = file.filename if file is not None else os.path.basename(shared_input)
+    vcf_path = job_dir / safe_upload_name(filename, ".vcf")
+    alignment_path = job_dir / safe_upload_name(os.path.basename(alignment_shared_input), ".bam")
+    try:
+        if shared_input is not None:
+            try:
+                link_shared_input(shared_input, vcf_path)
+            except SharedInputRefused as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        else:
+            with open(vcf_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
+        try:
+            link_shared_input(alignment_shared_input, alignment_path)
+        except SharedInputRefused as exc:
+            return {"status": "not_run", "reason": str(exc)}
+        # No index is built: the check reads the VCF through once, start to end, and
+        # tabix would refuse an uncompressed .vcf -- which this endpoint accepts.
+        reference = _reference_fasta_for_assembly(assembly)
+        # In a thread: a pileup of a few hundred positions reads the disk.
+        return await asyncio.to_thread(
+            read_phase.check,
+            alignment_path,
+            vcf_path,
+            pypgx_gene_positions(assembly),
+            reference if reference.exists() else None,
+            assembly,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Read-phase check failed")
+        return {"status": "failed", "reason": f"The check failed: {exc}"[:500]}
+    finally:
+        # Links and the VCF copy, not results: the evidence goes back in the response.
         shutil.rmtree(job_dir, ignore_errors=True)
 
 

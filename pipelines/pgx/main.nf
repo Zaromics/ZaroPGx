@@ -24,8 +24,8 @@ nextflow.enable.dsl=2
   call while keeping the server's message, which the caller echoes to stderr. -sS
   replaces the old `2>service.log` redirect, which was swallowing curl's own diagnostic
   into a work-dir file nobody reads; on stderr it reaches .command.err and therefore
-  Nextflow's error report. Three call sites are deliberately exempt and say so inline:
-  PyPGxGenotypeAll, PharmCATRun and UnlistedVariants.
+  Nextflow's error report. Four call sites are deliberately exempt and say so inline:
+  PyPGxGenotypeAll, PharmCATRun, UnlistedVariants and PyPGxReadPhase.
 
   A 4xx is the service refusing this input (a CRAM compressed against another FASTA,
   a file too large, a malformed VCF), and the same input is refused again. Those calls
@@ -895,6 +895,54 @@ process UnlistedVariants {
     '''
 }
 
+// What the reads say about which chromosome each heterozygous defining variant sits
+// on (docker/pypgx's read_phase.py): the report compares that with the arrangement
+// each printed call asserts, and says so where they disagree. PyPGx phases with
+// Beagle, from a reference panel, so a pair of variants one fragment covers is
+// checkable without a phaser.
+//
+// Only for an alignment input, and only when the alignment is on the shared volume:
+// the check reads a few hundred positions and a 30x genome is tens of gigabytes, so
+// it is read in place or not at all.
+//
+// Never fails the run, like UnlistedVariants, and DELIBERATELY EXEMPT from the
+// --fail-with-body rule in the header for the same reason: the JSON says why.
+process PyPGxReadPhase {
+    tag "read_phase_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path vcf
+    path alignment
+    val patient_id
+    val reference
+    val outdir
+
+    output:
+    path "read_phase.json"
+
+    shell:
+    '''
+    set -uo pipefail
+    ALIGNMENT=$(shared-path "!{alignment}" || true)
+    if [ -z "$ALIGNMENT" ]; then
+      echo '{"status": "not_run", "reason": "The reads are not on the shared volume, so the arrangement the call asserts was not checked against them."}' > read_phase.json
+      exit 0
+    fi
+    input-args file shared_input "!{vcf}" > input.args
+    mapfile -d '' -t IN < input.args
+    CURL_ARGS=( -sS -X POST -F reference_genome=!{reference} "${IN[@]}" )
+    # --form-string: the path is sent as it is, never parsed for @, < or ;type=.
+    CURL_ARGS+=( --form-string "alignment_shared_input=$ALIGNMENT" )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} )
+    fi
+    if ! curl -f "${CURL_ARGS[@]}" -o read_phase.json http://pypgx:5000/read-phase; then
+      echo '{"status": "failed", "reason": "The PyPGx service did not answer the check."}' > read_phase.json
+    fi
+    '''
+}
+
 workflow {
     main:
     assert params.input : 'Missing --input path'
@@ -1164,6 +1212,21 @@ workflow {
 
     // Whether PyPGx runs or not: its allele definitions are read either way.
     UnlistedVariants(vcf_ch, patient_id_ch, reference_ch, outdir_ch)
+
+    // The reads' own view of each call's phase, for an alignment input only: a VCF
+    // carries no reads to check. The BAM is the one this pipeline already made or was
+    // given -- bam_ch for a converted cram/sam/fastq, input_ch for a BAM upload --
+    // both reusable (.first()) so this second consumer does not drain them, as the
+    // mtDNA wiring below reuses them too.
+    if (params.input_type in ['fastq', 'bam', 'cram', 'sam']) {
+        PyPGxReadPhase(
+            vcf_ch,
+            (params.input_type == 'bam') ? input_ch : bam_ch,
+            patient_id_ch,
+            reference_ch,
+            outdir_ch
+        )
+    }
 
     // Run PyPGx genotyping on VCF (if enabled)
     if (params.skip_pypgx) {

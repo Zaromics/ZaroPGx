@@ -374,6 +374,7 @@
         }
         .alt-locus-note,
         .copy-number-note,
+        .read-phase-note,
         .unlisted-note,
         .disagreement-note {
             color: #8a4b00;
@@ -1306,6 +1307,8 @@
     {% set summary_names_uncalled = summary_uncalled_rows|rejectattr('diplotype', 'a_call')|list|length > 0 %}
     {% set summary_beyond = diplotypes|rejectattr('gene', 'in_summary_panel')|selectattr('diplotype', 'a_call')|list %}
     {% set alt_locus_genes = diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {# A call the reads phase differently (read_phase_conflict). #}
+    {% set read_phase_genes = diplotypes|selectattr('read_phase_conflict')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {# The line under each such call in the summary: "⚠ Copy number not assessed",
        "⚠ PyPGx found a structural allele", or "⚠ Deletion found from read depth"
@@ -1332,6 +1335,9 @@
         {% endfor %}
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
+        {% endfor %}
+        {% for d in diplotypes|selectattr('read_phase_conflict')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.read_phase_conflict.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('unlisted_flag')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.unlisted_flag.note }}</p>
@@ -1378,7 +1384,7 @@
                     {% for r in rows %}
                     <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
-                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">⚠</span>{% elif r.gene in disagreement_genes %} <span class="alt-locus-note" title="PyPGx read the same data as a different call: see the notes">⚠</span>{% endif %}</td>
+                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">⚠</span>{% elif r.gene in disagreement_genes %} <span class="alt-locus-note" title="PyPGx read the same data as a different call: see the notes">⚠</span>{% elif r.gene in read_phase_genes %} <span class="alt-locus-note" title="The reads phase this call differently: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}{% set m = copy_number_markers[r.gene] %}{% if m.warn is sameas false %}<div class="copy-number-note plain-note">{{ m.marker }}: see the notes</div>{% else %}<div class="copy-number-note">⚠ {{ m.marker or 'Copy number not assessed' }}: see the notes</div>{% endif %}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">

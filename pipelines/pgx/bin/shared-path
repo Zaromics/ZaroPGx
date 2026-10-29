@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# FILE's canonical path when it is on the shared /data volume, and nothing when it is
+# not. For a service that must read a file in place or not at all: an alignment is
+# tens of gigabytes, and a step that only reads a few hundred positions of one is not
+# worth a copy of it.
+#
+#   ALIGNMENT=$(shared-path "$FILE")
+#   [ -n "$ALIGNMENT" ] || echo "not on the shared volume"
+#
+# Same roots, and the same canonicalisation, as bin/input-args and
+# app/utils/shared_input.py.
+set -euo pipefail
+file=$1
+real=$(readlink -f -- "$file")
+IFS=: read -r -a roots <<<"${SHARED_INPUT_ROOTS:-/data/uploads:/data/results}"
+for root in "${roots[@]}"; do
+  [[ -n "$root" ]] || continue
+  root=$(readlink -m -- "$root")
+  if [[ "$real" == "$root"/* ]]; then
+    printf '%s' "$real"
+    exit 0
+  fi
+done
