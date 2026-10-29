@@ -118,7 +118,9 @@ def pypgx_call(pypgx_results: Any, gene: str) -> Optional[str]:
     return None
 
 
-def _without_copies(reading: Tuple[Tuple[str, ...], ...]) -> Tuple[Tuple[str, ...], ...]:
+def _without_copies(
+    reading: Tuple[Tuple[str, ...], ...],
+) -> Tuple[Tuple[str, ...], ...]:
     """The same reading with each chromosome's repeats collapsed: "*1x2/*6" and
     "*1/*6" both become (("*1",), ("*6",))."""
     return tuple(sorted(tuple(sorted(set(side))) for side in reading))
