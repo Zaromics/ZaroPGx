@@ -753,3 +753,156 @@ def test_more_readings_than_can_be_read_say_what_they_agree_on():
     assert report_phase.arrangement_phrase(few) == (
         "their arrangement would be *1/*21 or *21/*39"
     )
+
+
+# --- what the reads could check, and what they could not -------------------
+#
+# The contradiction note is rare by construction, so without these counts a report
+# says nothing at all about phase whenever nothing was contradicted -- neither that
+# the check ran nor how much of it the reads could reach.
+
+
+def _agreeing_evidence():
+    evidence = json.loads(json.dumps(HG00589_EVIDENCE))
+    evidence["pairs"][0].update(cis=0, trans=7, shows="trans")
+    return evidence
+
+
+def test_a_call_the_reads_agree_with_is_counted_as_checked():
+    counts = report_phase.coverage([_row()], _agreeing_evidence(), HG00589_RESULTS)
+    assert counts == {"asserting": 1, "agree": 1, "conflict": 0, "unchecked": 0}
+
+
+def test_a_call_the_reads_contradict_is_counted_as_a_conflict():
+    counts = report_phase.coverage([_row()], HG00589_EVIDENCE, HG00589_RESULTS)
+    assert counts == {"asserting": 1, "agree": 0, "conflict": 1, "unchecked": 0}
+
+
+def test_a_call_no_fragment_reaches_is_counted_as_unchecked():
+    """The common case: the call asserts an arrangement and the reads cannot say."""
+    counts = report_phase.coverage(
+        [_row()], {"status": "done", "pairs": []}, HG00589_RESULTS
+    )
+    assert counts == {"asserting": 1, "agree": 0, "conflict": 0, "unchecked": 1}
+
+
+def test_a_pair_the_reads_did_not_decide_leaves_the_call_unchecked():
+    evidence = json.loads(json.dumps(HG00589_EVIDENCE))
+    evidence["pairs"][0].update(cis=1, trans=1, shows=None)
+    counts = report_phase.coverage([_row()], evidence, HG00589_RESULTS)
+    assert counts["unchecked"] == 1 and counts["agree"] == 0
+
+
+def test_a_pair_of_another_gene_does_not_check_this_call():
+    """A decided pair only counts for the call that asserts that pair."""
+    evidence = json.loads(json.dumps(HG00589_EVIDENCE))
+    evidence["pairs"][0]["gene"] = "CYP2C19"
+    counts = report_phase.coverage([_row()], evidence, HG00589_RESULTS)
+    assert counts["unchecked"] == 1
+
+
+def test_a_check_that_did_not_run_is_not_described():
+    assert (
+        report_phase.coverage([_row()], {"status": "not_run"}, HG00589_RESULTS) is None
+    )
+
+
+def test_only_calls_the_report_prints_from_pypgx_are_counted():
+    counts = report_phase.coverage(
+        [_row(tool="PHARMCAT")], HG00589_EVIDENCE, HG00589_RESULTS
+    )
+    assert counts is None
+
+
+def test_the_note_gives_the_counts_and_names_what_was_not_reached():
+    note = report_phase.coverage_note(
+        {"asserting": 10, "agree": 3, "conflict": 1, "unchecked": 6}
+    )
+    assert "10 calls here assert" in note
+    assert "both positions for 4 calls" in note
+    assert "agree with the call in 3 and contradict it in 1" in note
+    assert "the other 6 calls, no fragment covers two of the call's variants" in note
+    assert "Beagle" in note
+
+
+def test_the_note_does_not_report_a_contradiction_count_of_zero():
+    """How a counter talks, not how a report reads."""
+    note = report_phase.coverage_note(
+        {"asserting": 4, "agree": 4, "conflict": 0, "unchecked": 0}
+    )
+    assert "contradict" not in note
+    assert "cover both positions for all of them" in note
+    assert "agree with the call in every one" in note
+    # Nothing was out of reach, so the sentence about reach is not written either.
+    assert "no fragment covers" not in note
+
+
+def test_the_note_says_nothing_where_no_call_asserts_an_arrangement():
+    assert report_phase.coverage_note(None) is None
+    assert (
+        report_phase.coverage_note(
+            {"asserting": 0, "agree": 0, "conflict": 0, "unchecked": 0}
+        )
+        is None
+    )
+
+
+def test_a_report_with_no_contradiction_still_says_what_was_checked(
+    monkeypatch, tmp_path
+):
+    """The gap this closes: agreement used to leave the page silent about phase."""
+    page = _rendered(monkeypatch, tmp_path, _agreeing_evidence())
+    assert "The reads contradict how a call is phased" not in page
+    assert "phases against a reference panel and not against this sample" in page
+    assert "1 call here asserts such an arrangement" in page
+    assert "cover both positions for it, and agree with the call there" in page
+
+
+def test_a_report_whose_reads_reach_nothing_says_so(monkeypatch, tmp_path):
+    page = _rendered(monkeypatch, tmp_path, {"status": "done", "pairs": []})
+    assert "no fragment covers two of the call's variants" in page
+    # The count is not repeated when every one of them is out of reach.
+    assert "The reads do not reach it" in page
+    assert "For 1 call" not in page
+
+
+def test_the_note_does_not_repeat_the_count_when_nothing_was_reached():
+    note = report_phase.coverage_note(
+        {"asserting": 7, "agree": 0, "conflict": 0, "unchecked": 7}
+    )
+    assert "7 calls here assert" in note
+    assert "The reads reach none of them" in note
+    assert "For 7 calls" not in note
+
+
+def test_the_coverage_statement_survives_into_the_pdf(monkeypatch, tmp_path):
+    """The common case delivered: nothing contradicted, and the reader is still told
+    what the check could and could not reach. The paragraph sits in Methodology, not
+    the Executive Summary, which app/reports/pdf_fit.py lays out to one page."""
+    import app.reports.generator as generator_module
+
+    page = _rendered(monkeypatch, tmp_path, _agreeing_evidence())
+    document, _ = generator_module.render_pdf_document(page)
+    text = "\n".join(
+        "".join(
+            child.text
+            for line in box.children
+            for child in line.children
+            if hasattr(child, "text")
+        )
+        for pdf_page in document.pages
+        for box in pdf_page._page_box.descendants()
+        if getattr(box, "children", None) and getattr(box, "element_tag", "") == "p"
+    )
+    assert "reference panel" in text
+    summary = [
+        i
+        for i, pdf_page in enumerate(document.pages)
+        if any(
+            getattr(box, "element_tag", "") == "div"
+            and getattr(box, "element", None) is not None
+            and box.element.get("id") == "exec-summary"
+            for box in pdf_page._page_box.descendants()
+        )
+    ]
+    assert len(summary) == 1, f"the Executive Summary ran to {len(summary)} pages"

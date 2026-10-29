@@ -1267,6 +1267,13 @@
         {% if gvcf_provenance %}
             {{ gvcf_provenance|safe }}
         {% endif %}
+        {# The third member of the family above: those two say whether a genotype was
+           read from the data or filled in, and this says whether the pairing of a
+           call's variants across the two chromosomes was read from the data or taken
+           from a reference panel. Renders only for a run that had reads to check. #}
+        {% if read_phase_coverage %}
+            {{ read_phase_coverage|safe }}
+        {% endif %}
     </div>
 
     <div class="disclaimer">

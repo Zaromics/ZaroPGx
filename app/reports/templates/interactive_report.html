@@ -1265,6 +1265,11 @@
                     {% if gvcf_provenance %}
                         {{ gvcf_provenance|safe }}
                     {% endif %}
+                    {# Whether the pairing of a call's variants across the two
+                       chromosomes was read from the data or taken from a panel. #}
+                    {% if read_phase_coverage %}
+                        {{ read_phase_coverage|safe }}
+                    {% endif %}
                 </div>
                 <div class="card workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
                     <h4>Workflow</h4>
