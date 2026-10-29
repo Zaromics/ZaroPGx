@@ -68,7 +68,7 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
-from app.reports import unlisted
+from app.reports import caller_agreement, unlisted
 from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
@@ -4485,6 +4485,31 @@ def generate_report(
         workflow_warnings = list(workflow_warnings) + [
             alert for alert in _copy_number_alerts if alert
         ]
+        template_data["workflow_warnings"] = workflow_warnings
+
+    # Where PyPGx, which genotyped PharmCAT's genes too, named different alleles
+    # from the same reads (app/reports/caller_agreement.py): a note beside the
+    # printed call, one in the Executive Summary and one alert. The printed call
+    # does not change.
+    try:
+        _disagreements = caller_agreement.annotate_genes(
+            data.get("genes", []), pypgx_results
+        )
+    except Exception as e:  # a comparison must not cost the report
+        logger.warning("Caller disagreements not marked: %s", e, exc_info=True)
+        # Rows marked before it failed carry a note that sends the reader to an
+        # alert. The alert has to name them rather than vanish, or the note points
+        # at nothing.
+        _disagreements = {
+            str(_row.get("gene") or ""): str(
+                (_row.get("caller_disagreement") or {}).get("call") or ""
+            )
+            for _row in (data.get("genes") or [])
+            if isinstance(_row, dict) and _row.get("caller_disagreement")
+        }
+    _disagreement_alert = caller_agreement.alert(_disagreements)
+    if _disagreement_alert:
+        workflow_warnings = list(workflow_warnings) + [_disagreement_alert]
         template_data["workflow_warnings"] = workflow_warnings
 
     # Variants no allele definition lists (app/reports/unlisted.py, from the run's

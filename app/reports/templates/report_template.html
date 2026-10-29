@@ -374,7 +374,8 @@
         }
         .alt-locus-note,
         .copy-number-note,
-        .unlisted-note {
+        .unlisted-note,
+        .disagreement-note {
             color: #8a4b00;
         }
         /* The Executive Summary row's pointer to its note overleaf. */
@@ -1316,6 +1317,8 @@
     {% set positions_genes = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {# A call that does not account for a variant no definition lists (unlisted_flag). #}
     {% set unlisted_genes = diplotypes|selectattr('unlisted_flag')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
+    {# A call PyPGx read as different alleles (caller_disagreement). #}
+    {% set disagreement_genes = diplotypes|selectattr('caller_disagreement')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set summary_notes %}
         {{ pypgx.na_legend(called) }}
         {% if called|selectattr('phenotype', 'equalto', 'Possibly Wild Type')|list %}
@@ -1332,6 +1335,9 @@
         {% endfor %}
         {% for d in diplotypes|selectattr('unlisted_flag')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.unlisted_flag.note }}</p>
+        {% endfor %}
+        {% for d in diplotypes|selectattr('caller_disagreement')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
+        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.caller_disagreement.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') if not d.copy_number_not_assessed.listed %}
         <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
@@ -1372,7 +1378,7 @@
                     {% for r in rows %}
                     <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
-                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">⚠</span>{% endif %}</td>
+                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">⚠</span>{% elif r.gene in disagreement_genes %} <span class="alt-locus-note" title="PyPGx read the same data as a different call: see the notes">⚠</span>{% endif %}</td>
                         {% if r.called %}
                         <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}{% set m = copy_number_markers[r.gene] %}{% if m.warn is sameas false %}<div class="copy-number-note plain-note">{{ m.marker }}: see the notes</div>{% else %}<div class="copy-number-note">⚠ {{ m.marker or 'Copy number not assessed' }}: see the notes</div>{% endif %}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
