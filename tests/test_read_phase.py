@@ -687,7 +687,10 @@ def test_an_alignment_with_no_index_is_not_silence(tmp_path):
     "the reads reach nothing" -- a different claim from "they were never read"."""
     service = _service()
     pysam = pytest.importorskip("pysam")
-    header = {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chr22", "LN": CHR22}]}
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr22", "LN": CHR22}],
+    }
     path = tmp_path / "noindex.bam"
     with pysam.AlignmentFile(str(path), "wb", header=header) as out:
         out.write(_fragment(pysam, "r", 42_127_900, "A" * 50, "50M"))
