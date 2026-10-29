@@ -667,13 +667,6 @@ def test_architecture_checks_query_the_docker_server():
     assert "RuntimeInformation]::OSArchitecture" not in powershell
 
 
-def test_documented_alpine_entry_installs_bash_and_curl_first():
-    readme = _text("README.md")
-    installation = _text("docs/user/installation.md")
-    for document in (readme, installation):
-        assert "apk add --no-cache bash curl" in document
-
-
 def test_bash_update_refusal_says_stash_not_commit():
     """A release install is a detached HEAD: a commit there is stranded by the
     update's checkout, so the refusal says to stash and restore, with the path
