@@ -83,6 +83,10 @@ runner = _load_runner()
 #                                           bam/cram/fastq/sam/vcf path inputs above
 #                                           - Nextflow escapes path-typed inputs.
 #   params.pharmcat_absent_to_ref/...     - booleans rendered as "true"/"false"
+#   alignment                             - PyPGxReadPhase's own `path` input (audited
+#                                           2026-10-28): same class as the
+#                                           bam/cram/fastq/sam/vcf path inputs above
+#                                           - Nextflow escapes path-typed inputs.
 #   variants_file                         - MtdnaCall's own `path` input (audited
 #                                           2026-08-30, Task 9): same class as the
 #                                           bam/cram/fastq/sam/vcf path inputs above
@@ -137,6 +141,13 @@ EXPECTED_INTERPOLATIONS = {
     "sam",
     "vcf",
     "variants_file",
+    # Audited 2026-10-28: PyPGxReadPhase's own `path` input, the alignment this
+    # pipeline already made or was given (bam_ch or input_ch). Same class as the
+    # bam/cram/fastq/sam/vcf path inputs above -- Nextflow escapes path-typed inputs,
+    # and it is a server-side staged path. The process does not send it to the service
+    # as it stands either: bin/shared-path canonicalises it and prints it only when it
+    # resolves under a shared root, and it goes over the wire as --form-string.
+    "alignment",
     "patient_id",
     "report_id",
     "reference",

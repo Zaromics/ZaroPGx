@@ -39,6 +39,7 @@ sys.path.append('/job-client')
 from job_client import JobClient, create_job_client  # pyright: ignore[reportMissingImports]
 # Beside this file in the image (/app), and wherever the tests load it from.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import read_phase  # noqa: E402  # pyright: ignore[reportMissingImports]
 import unlisted_variants  # noqa: E402  # pyright: ignore[reportMissingImports]
 try:
     from shared_input import SharedInputRefused, link_shared_input  # pyright: ignore[reportMissingImports]
@@ -261,6 +262,10 @@ class GeneConfig:
     """Manages PyPGx supported genes configuration"""
 
     def __init__(self, config_path: Optional[str] = None):
+        # Why the built-in fallback is in use, when it is: an install without the
+        # ./config:/app/config mount otherwise looks like a healthy container that
+        # simply has no gene sets.
+        self._fallback_reason: Optional[str] = None
         if config_path:
             self.config_path = Path(config_path)
         else:
@@ -293,10 +298,15 @@ class GeneConfig:
             return self._config
         except FileNotFoundError:
             logger.warning(f"Gene configuration file not found at {self.config_path}, using fallback")
+            self._fallback_reason = (
+                f"no gene configuration at {self.config_path} -- the image carries "
+                "none, so it is the ./config:/app/config mount that is missing"
+            )
             self._config = self._get_fallback_config()
             return self._config
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in gene configuration: {e}")
+            self._fallback_reason = f"{self.config_path} is not valid JSON: {e}"
             self._config = self._get_fallback_config()
             return self._config
 
@@ -306,24 +316,78 @@ class GeneConfig:
             return self._supported_genes
 
         config = self.load_config()
-        if "sets" in config and "all" in config["sets"]:
-            self._supported_genes = config["sets"]["all"]
+        every = self._genes_of((config.get("sets") or {}).get("all"))
+        if every is not None:
+            self._supported_genes = every
         else:
             # Fallback to extracting from genes list
             self._supported_genes = [gene["name"] for gene in config.get("genes", [])]
 
         return self._supported_genes
 
+    @staticmethod
+    def _genes_of(entry: Any) -> Optional[List[str]]:
+        """The gene names in a "sets" or "categories" entry: a plain list, or the
+        "genes" of an entry that carries a name and a count beside them."""
+        if isinstance(entry, list):
+            return list(entry)
+        if isinstance(entry, dict) and isinstance(entry.get("genes"), list):
+            return list(entry["genes"])
+        return None
+
     def get_gene_set(self, set_name: str = "all") -> List[str]:
-        """Get a specific gene set"""
+        """The named gene set from the configuration; raises if it has no such set.
+
+        It used to answer an unknown name with *every* gene, which turned a missing
+        set into a different run rather than a failure. config/genes.json is a bind
+        mount (compose.yml, ./config:/app/config), so an install without it falls
+        back to _get_fallback_config(), which defines only "all" and "core" -- and
+        pharmcat_outside_call_genes, asking for "pharmcat_can_call", would have been
+        handed all 91 genes, found every gene to be "PharmCAT's own" and given
+        PharmCAT no outside call at all, CYP2D6 included, in a run that otherwise
+        looked normal. A name the configuration does not define is a fault in the
+        configuration or in the caller, and either way the run should say so.
+        """
         config = self.load_config()
-        if "sets" in config and set_name in config["sets"]:
-            return config["sets"][set_name]
-        elif set_name == "all":
+        sets = config.get("sets") or {}
+        genes = self._genes_of(sets.get(set_name))
+        if genes is not None:
+            return genes
+        if set_name == "all":
             return self.get_supported_genes()
-        else:
-            logger.warning(f"Gene set '{set_name}' not found, returning all genes")
-            return self.get_supported_genes()
+        self.load_config()
+        raise KeyError(
+            f"gene set '{set_name}' is not defined: "
+            + (
+                getattr(self, "_fallback_reason", None)
+                or f"{self.config_path} defines {', '.join(sorted(sets)) or 'none'}"
+            )
+        )
+
+    def fallback_reason(self) -> Optional[str]:
+        """Why the built-in fallback configuration is in use, or None when it is not."""
+        self.load_config()
+        return self._fallback_reason
+
+    def resolve_gene_selection(self, name: str) -> Optional[List[str]]:
+        """The genes a request's name asks for -- a set, else a category -- or None
+        when it names neither, which leaves it to be read as a list of genes.
+
+        Sets and categories are different things in config/genes.json and only
+        partly overlap: "phase2", "transporters", "other_enzymes", "receptors",
+        "blood_clotting" and "other" are categories and not sets, while
+        "neuropsychopharmacogenes" and "neuropsychopharmacogenes_panel_missing" are
+        sets and not categories. /genotype tested a name against the *categories*
+        and then asked get_gene_set for it, so a category genotyped all 91 genes
+        and a set that is not also a category was refused as an unsupported gene.
+        """
+        config = self.load_config()
+        # `is not None`, not truthiness: a set defined as empty is still that set,
+        # and must not fall through to a category or to being read as gene names.
+        in_sets = self._genes_of((config.get("sets") or {}).get(name))
+        if name == "all" or in_sets is not None:
+            return self.get_gene_set(name)
+        return self._genes_of((config.get("categories") or {}).get(name))
 
     def get_gene_info(self, gene_name: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a specific gene"""
@@ -775,14 +839,27 @@ def health_check():
         },
         'preference_config': {
             'pypgx_pharmcat_preference': PYPGX_PHARMCAT_PREFERENCE,
-            'available_gene_sets': {
-                'pypgx': len(gene_config.get_gene_set('pypgx')),
-                'pypgx_minus_pharmcat': len(gene_config.get_gene_set('pypgx_minus_pharmcat')),
-                'pharmcat_can_call': len(gene_config.get_gene_set('pharmcat_can_call'))
-            }
+            'available_gene_sets': _gene_set_sizes(),
+            'gene_config_fault': gene_config.fallback_reason(),
         },
         'timestamp': time.time()
     }
+
+def _gene_set_sizes() -> Dict[str, Any]:
+    """How big each gene set the preference uses is, or why it could not be read.
+
+    /health must answer: a set the configuration has no name for is a fault to
+    report, not an exception that makes the container look dead to the compose
+    healthcheck while saying nothing about the configuration.
+    """
+    sizes: Dict[str, Any] = {}
+    for name in ("pypgx", "pypgx_minus_pharmcat", "pharmcat_can_call"):
+        try:
+            sizes[name] = len(gene_config.get_gene_set(name))
+        except KeyError as exc:
+            sizes[name] = f"unavailable: {exc}"
+    return sizes
+
 
 @app.get("/")
 def root():
@@ -826,13 +903,13 @@ def get_gene_sets():
     """Get available gene sets"""
     config = gene_config.load_config()
     sets_info = {}
-    if "sets" in config:
-        for set_name, genes in config["sets"].items():
-            sets_info[set_name] = {
-                "count": len(genes),
-                "description": f"{set_name.title()} gene set",
-                "genes": genes[:10]  # Show first 10 genes as sample
-            }
+    for set_name, entry in (config.get("sets") or {}).items():
+        genes = GeneConfig._genes_of(entry) or []
+        sets_info[set_name] = {
+            "count": len(genes),
+            "description": f"{set_name.title()} gene set",
+            "genes": genes[:10]  # Show first 10 genes as sample
+        }
     return sets_info
 
 @app.post("/create-input-vcf")
@@ -3344,12 +3421,12 @@ async def genotype(
     # for a request that named its genes: the response then carries no list.
     outside_call_genes: Optional[List[str]] = None
 
-    # Check if genes parameter refers to a predefined gene set
+    # Check if genes parameter refers to a predefined gene set or category
     if genes and genes.strip().upper() != "ALL":
         potential_set = genes.strip().lower()
-        available_sets = gene_config.get_categories().keys()
-        if potential_set in ["core", "cyp450", "all"] or potential_set in available_sets:
-            requested_genes = gene_config.get_gene_set(potential_set)
+        named = gene_config.resolve_gene_selection(potential_set)
+        if named is not None:
+            requested_genes = named
         else:
             # Parse as comma-separated list. This is raw request text, so it
             # gets the same SUPPORTED_GENES membership check the legacy
@@ -3362,7 +3439,16 @@ async def genotype(
                 raise HTTPException(status_code=400, detail=f"Unsupported genes: {unsupported}. Supported genes: {SUPPORTED_GENES}")
     elif gene_set:
         # Use explicit gene set parameter
-        requested_genes = gene_config.get_gene_set(gene_set.lower())
+        named = gene_config.resolve_gene_selection(gene_set.strip().lower())
+        if named is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown gene set '{gene_set}'. Available: "
+                f"{sorted((gene_config.load_config().get('sets') or {}))}"
+                f"; categories: "
+                f"{sorted((gene_config.load_config().get('categories') or {}))}",
+            )
+        requested_genes = named
     elif genes and genes.strip().upper() == "ALL":
         # For "ALL", apply preference logic based on input file type
         # Use input_type from workflow data if available, otherwise fallback to detection
@@ -3385,7 +3471,15 @@ async def genotype(
         preferred_gene_set = determine_pypgx_gene_set(PYPGX_PHARMCAT_PREFERENCE, detected_input_type)
         logger.info(f"Using gene set: {preferred_gene_set} (preference: {PYPGX_PHARMCAT_PREFERENCE}, input_type: {detected_input_type})")
         
-        requested_genes = gene_config.get_gene_set(preferred_gene_set)
+        try:
+            requested_genes = gene_config.get_gene_set(preferred_gene_set)
+        except KeyError as exc:
+            # Without this the run degrades to PharmCAT-only on an unhandled 500
+            # (pipelines/pgx/main.nf) and says nothing about why.
+            raise HTTPException(
+                status_code=500,
+                detail=f"The gene configuration cannot answer this run: {exc}",
+            )
         outside_call_genes = pharmcat_outside_call_genes(
             PYPGX_PHARMCAT_PREFERENCE, requested_genes
         )
@@ -4207,6 +4301,75 @@ async def unlisted_variants_endpoint(
     finally:
         # The VCF (a link, for a shared input) and the check's files: nothing here
         # is a result, which goes back in the response.
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+@app.post("/read-phase")
+async def read_phase_endpoint(
+    file: Optional[UploadFile] = File(None),
+    shared_input: Optional[str] = Form(None),
+    alignment_shared_input: Optional[str] = Form(None),
+    reference_genome: str = Form("hg38"),
+    job_id: Optional[str] = Form(None),
+):
+    """What the reads say about which chromosome each heterozygous defining variant
+    sits on, for the VCF /genotype reads (read_phase.py).
+
+    The alignment is read in place from the shared volume and never copied: a 30x
+    genome is tens of gigabytes, and this reads a few hundred positions of it. An
+    alignment that is not on that volume is not read, and the answer says so.
+
+    Like /unlisted-variants, a well-formed request is answered 200 whatever the check
+    finds or fails at -- it never stops a run -- and "status" says whether it ran
+    ("done"), could not ("not_run", with the reason) or failed ("failed").
+    """
+    if (file is None) == (shared_input is None):
+        raise HTTPException(status_code=400, detail="Send the VCF as file, or its shared path as shared_input -- one of them.")
+    if not alignment_shared_input:
+        return {
+            "status": "not_run",
+            "reason": "The reads are not on the shared volume, so the arrangement "
+            "the call asserts was not checked against them.",
+        }
+    assembly = "GRCh37" if reference_genome in ("hg19", "GRCh37") else "GRCh38"
+    job_dir = job_work_dir(job_id, str(uuid.uuid4()))
+    os.makedirs(job_dir, exist_ok=True)
+    filename = file.filename if file is not None else os.path.basename(shared_input)
+    vcf_path = job_dir / safe_upload_name(filename, ".vcf")
+    alignment_path = job_dir / safe_upload_name(os.path.basename(alignment_shared_input), ".bam")
+    try:
+        if shared_input is not None:
+            try:
+                link_shared_input(shared_input, vcf_path)
+            except SharedInputRefused as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        else:
+            with open(vcf_path, "wb") as f:
+                while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                    f.write(chunk)
+        try:
+            link_shared_input(alignment_shared_input, alignment_path)
+        except SharedInputRefused as exc:
+            return {"status": "not_run", "reason": str(exc)}
+        # No index is built: the check reads the VCF through once, start to end, and
+        # tabix would refuse an uncompressed .vcf -- which this endpoint accepts.
+        reference = _reference_fasta_for_assembly(assembly)
+        # In a thread: a pileup of a few hundred positions reads the disk.
+        return await asyncio.to_thread(
+            read_phase.check,
+            alignment_path,
+            vcf_path,
+            pypgx_gene_positions(assembly),
+            reference if reference.exists() else None,
+            assembly,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Read-phase check failed")
+        return {"status": "failed", "reason": f"The check failed: {exc}"[:500]}
+    finally:
+        # Links and the VCF copy, not results: the evidence goes back in the response.
         shutil.rmtree(job_dir, ignore_errors=True)
 
 

@@ -68,7 +68,7 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
-from app.reports import unlisted
+from app.reports import caller_agreement, read_phase, unlisted
 from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
@@ -2539,6 +2539,7 @@ _EXPORT_FILES = (
     ("{report_id}_pgx_pharmcat.tsv", "PharmCAT report", "TSV"),
     ("{report_id}_pgx_pharmcat.html", "PharmCAT report", "HTML"),
     ("unlisted_variants.json", "Variants outside the allele definitions", "JSON"),
+    ("read_phase.json", "What the reads show about each call's phase", "JSON"),
     ("{report_id}_pgx_report.pdf", "This report", "PDF"),
 )
 
@@ -4071,6 +4072,7 @@ def generate_report(
     # is its software, which the workflow diagram labels its steps with.
     workflow_records = load_job_step_records(db_session, job_id)
     unlisted_result = unlisted.read_result(output_dir)
+    read_phase_result = read_phase.read_result(output_dir)
     credit_run = credit_run_for_job(
         workflow_records,
         load_job_file_type(db_session, job_id) or file_type,
@@ -4487,6 +4489,31 @@ def generate_report(
         ]
         template_data["workflow_warnings"] = workflow_warnings
 
+    # Where PyPGx, which genotyped PharmCAT's genes too, named different alleles
+    # from the same reads (app/reports/caller_agreement.py): a note beside the
+    # printed call, one in the Executive Summary and one alert. The printed call
+    # does not change.
+    try:
+        _disagreements = caller_agreement.annotate_genes(
+            data.get("genes", []), pypgx_results
+        )
+    except Exception as e:  # a comparison must not cost the report
+        logger.warning("Caller disagreements not marked: %s", e, exc_info=True)
+        # Rows marked before it failed carry a note that sends the reader to an
+        # alert. The alert has to name them rather than vanish, or the note points
+        # at nothing.
+        _disagreements = {
+            str(_row.get("gene") or ""): str(
+                (_row.get("caller_disagreement") or {}).get("call") or ""
+            )
+            for _row in (data.get("genes") or [])
+            if isinstance(_row, dict) and _row.get("caller_disagreement")
+        }
+    _disagreement_alert = caller_agreement.alert(_disagreements)
+    if _disagreement_alert:
+        workflow_warnings = list(workflow_warnings) + [_disagreement_alert]
+        template_data["workflow_warnings"] = workflow_warnings
+
     # Variants no allele definition lists (app/reports/unlisted.py, from the run's
     # unlisted_variants.json): the section, a note beside each flagged gene's call
     # (and its FHIR genotype), and one alert. Same new-list rule. A result that does
@@ -4501,6 +4528,22 @@ def generate_report(
             "flagged": {},
         }
     unlisted.annotate_genes(data.get("genes", []), unlisted_ctx)
+    # Where the reads put two of a call's variants on the other chromosome from the
+    # one the call asserts (app/reports/read_phase.py, from the run's
+    # read_phase.json): a note beside the call, one in the Executive Summary and one
+    # alert. The printed call does not change -- naming the right allele from a
+    # corrected arrangement needs the allele definition table.
+    try:
+        _read_phase_found = read_phase.annotate_genes(
+            data.get("genes", []), read_phase_result, pypgx_results
+        )
+    except Exception as e:  # reading the reads must not cost the report
+        logger.warning("Read phase not compared: %s", e, exc_info=True)
+        _read_phase_found = {}
+    _read_phase_alert = read_phase.alert(_read_phase_found)
+    if _read_phase_alert:
+        workflow_warnings = list(workflow_warnings) + [_read_phase_alert]
+        template_data["workflow_warnings"] = workflow_warnings
     template_data["unlisted"] = unlisted_ctx
     _unlisted_alert = unlisted.alert(unlisted_ctx)
     if _unlisted_alert:

@@ -149,22 +149,22 @@ def docs_page() -> str:
 
 
 def readme_block() -> str:
-    numbers, _ = _numbered()
+    """Each tool and source but ZaroPGx itself, with its papers; the docs page says
+    what each is used for."""
     lines = [README_START, ""]
-    for kind, title in (("software", "Software"), ("data", "Data and knowledge")):
+    for kind, title in (("software", "Software"), ("data", "Data")):
         lines += [f"**{title}**", ""]
         for credit in CREDITS:
-            if credit.kind != kind:
+            if credit.kind != kind or credit.key == "zaropgx":
                 continue
-            lines.append(f"- [{credit.name}]({credit.url}): {credit.used_for}.")
+            lines.append(f"- [{credit.name}]({credit.url})")
             for paper in credit.papers + tuple(p for _, p in credit.papers_when):
                 if paper.kind == "Software" and not paper.authors:
                     continue
                 lines.append(f"  - {_markdown(paper)}")
         lines.append("")
     lines += [
-        "Licences, terms of use and the platform's own components: "
-        "[Credits](docs/user/credits.md).",
+        "Licenses and terms of use: [Credits](docs/user/credits.md).",
         "",
         README_END,
     ]

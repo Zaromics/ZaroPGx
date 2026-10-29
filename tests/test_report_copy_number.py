@@ -764,7 +764,9 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
     measurement is said once."""
     pypgx = _wgs_run()
     pypgx["results"]["CYP2D6"] = _result("*1/*3", "Normal", cnv_model=True)
-    # PyPGx's own diplotypes differ from PharmCAT's (*1/*1 for both): not shown.
+    # PyPGx's own diplotypes differ from PharmCAT's (*1/*1 for both). PharmCAT's
+    # call still stands; that the two differ is caller_agreement's note, tested in
+    # tests/test_caller_agreement.py, and not a copy-number note.
     pypgx["results"]["CYP2B6"] = _result("*1/*6", "Normal", cnv_model=True)
     pypgx["results"]["CYP4F2"] = _result("*1/*3", "Normal", cnv_model=True)
     pypgx["results"]["CYP2C19"] = _result("*1/*2", cnv_model=False)
@@ -784,9 +786,9 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
     for gene in ("CYP2B6", "CYP4F2"):
         assert "copy_number_not_assessed" not in rows[gene]
         cell = results[results.index(f"<td>{gene}</td>") :]
-        assert "call-note" not in cell[: cell.index("</tr>")]
+        assert "copy-number-note" not in cell[: cell.index("</tr>")]
         row = page[page.index(f'id="summary-{gene}"') :]
-        assert "see the notes" not in row[: row.index("</tr>")]
+        assert "copy-number-note" not in row[: row.index("</tr>")]
     # A run without the deletion check (an older pypgx image, or the check failed):
     # CYP2C19, SLCO1B1 and DPYD still not assessed, and said so.
     for gene in ("CYP2C19", "SLCO1B1", "DPYD"):
@@ -1181,8 +1183,10 @@ def test_checked_genes_measured_normal_say_so_once(monkeypatch, tmp_path):
     page = (tmp_path / result["html_path"].split("/")[-1]).read_text()
     body = unescape(_clean(page.split("</style>")[-1]))
     for gene in ("CYP2C19", "SLCO1B1"):
+        # No copy-number marker. PyPGx's own call differs from PharmCAT's here, and
+        # that note is caller_agreement's (tests/test_caller_agreement.py).
         row = page[page.index(f'id="summary-{gene}"') :]
-        assert "see the notes" not in row[: row.index("</tr>")]
+        assert "copy-number-note" not in row[: row.index("</tr>")]
     alerts = body[: body.index("Executive Summary")]
     assert "not assessed" not in alerts
     assert (

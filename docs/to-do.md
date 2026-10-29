@@ -38,6 +38,12 @@ curated: true
   the file's own contig lengths or `##reference=` line and refused for now. A liftover
   lane for it has to solve two problems: the T2T chains exclude GRCh38's ALT contigs
   (GSTT1 lives on one), and CYP2D6's CHM13 representation is uncharacterised.
+- **Not accepted — long reads**: ONT and PacBio, in FASTQ (detected from the read
+  names) and refused. Accepting them is a lane, not a flag: bwa-mem has no long-read
+  preset, so alignment needs minimap2, and OptiType types HLA from short reads only.
+  PyPGx has a long-read mode with no structural-variant detection; pangu
+  (BSD-3-Clause-Clear) calls CYP2D6 from PacBio HiFi. See
+  `scripts/getrm/caller-augmentation.md`.
 - **Priority 3   (Research)**: Other sequencing/genotyping formats
 - **Priority 4   (Research)**: BED, TXT formats
 
@@ -120,15 +126,139 @@ curated: true
   - [DONE] Assume reference when missing: the upload page's two options (defaults from
     `.env`) for VCF and BCF; forced off for alignments and gVCFs, where ZaroPGx genotypes
     every PharmCAT position itself.
+  - Genes PharmCAT calls but cannot name. PharmCAT 3.4 has no NUDT15 *2, so every *2
+    carrier came back *3 — *2/*2 as *3/*3, *2/*5 as *3/*5: the phenotype was right and the
+    diplotype was not, on every sample carrying it. PyPGx names *2, and had NUDT15 right
+    10 times of 11 on the GeT-RM genomes against PharmCAT's 8, including every case
+    PharmCAT had right.
+    **Handing PyPGx's call over as an outside call does not work, and the branch that
+    did it (`fix/nudt15-prefer-pypgx`) is held.** PharmCAT has no *2 anywhere — not in
+    `NUDT15_translation.json`, not in its CPIC function data — so an outside call naming
+    *2 is accepted and given `Unassigned function`: the phenotype comes out `n/a`, and
+    no CPIC thiopurine recommendation matches. That trades a wrong diplotype with the
+    right phenotype for a right diplotype with no phenotype and no azathioprine or
+    mercaptopurine guidance, which is worse for the patient. Measured against the
+    shipped image, 2026-10-28.
+    What would work: `outside.tsv` already passes through `translate_outside_tsv_file`
+    (`docker/pharmcat/pharmcat.py`), and `lexicon/allele_map_pypgx_to_pharmcat.json`
+    maps NUDT15 *2 to *2 today. Mapping it to *3 — the same No function, so the same
+    phenotype — keeps the guidance, at the cost of printing *3/*5 rather than *2/*5.
+    Whether that is the right trade is a decision about what the report should say, not
+    one the measurement settles. Before adding any gene to a preference list, check that
+    PyPGx's allele names for it are a subset of PharmCAT's.
+  - CYP4F2 is the other gene PyPGx scored better on, 18 of 20 against 17, with no case
+    PharmCAT alone had right. One call is thin; held until more samples than GeT-RM's say
+    the same. `scripts/getrm/caller-augmentation.md` has the per-gene table.
+  - [DONE Oct 2026] Say on the call when the two callers disagree about a gene both of
+    them call (`app/reports/caller_agreement.py`). PharmCAT's was printed and PyPGx's
+    dropped, with nothing marking the difference: in NA19908 PharmCAT printed CYP4F2
+    `*1/*4` while PyPGx called `*2/*3`, which is what GeT-RM says. A difference in the
+    alleles is now a note beside the call, a note in the Executive Summary and one
+    alert; which call is printed does not change. Only star-allele calls are compared,
+    and NAT2 is left out because its two callers use different names — 14 notes over the
+    61 GeT-RM genomes, never more than one in a report.
 ### PyPGx
   - Batch execution (done) and advanced parallelization controls (CPU/RAM/storage)
   - BAM-to-VCF preprocessing check
   - Evaluate imputation options; expose via advanced settings
+  - CYP2D6 copy-number *arrangement*, not copy number. PyPGx calls `*5` well — right in
+    six of the seven GeT-RM genomes carrying one, and right on tandems like
+    `*1/*36x2 + *10` — and both of its structural misses have the total copy number right
+    with the copies assigned wrongly: `*5/*36x2+*10x2` as `*36 + *10/*36 + *10` (CNV state
+    `Tandem2B`, four copies split two and two rather than none and four) and `*10/*36x2`
+    as `*10/*36 + *10` (`Tandem2A`). No depth check reaches either; they are the limits of
+    the CNV-state vocabulary, and the published CYP2D6 leaders resolve them from CYP2D7
+    breakpoints or long reads. See `scripts/getrm/caller-augmentation.md`.
+  - Read-backed phasing for CYP2D6, which the reads support; not for CYP4F2, which they
+    do not. **Built 2026-10-27** on `feat/read-phase-adjudication`: the pypgx lane
+    counts the fragments carrying each pair of heterozygous defining variants within
+    1 kb (`docker/pypgx/read_phase.py`, `/read-phase`, published as `read_phase.json`)
+    and the report says where the reads contradict the arrangement a printed call
+    asserts (`app/reports/read_phase.py`): a note beside the call, one in the Executive
+    Summary, one alert. The call is printed unchanged — naming the right allele from a
+    corrected arrangement needs the allele definition table, which is the follow-up.
+    The built code reproduces the measurement on all 61 genomes (719 pairs, 415 the
+    reads decide against mpileup's 413 — it reads deletions mpileup drops — 413
+    agreeing, the same two contradictions). What follows is what was measured before it
+    was built. Phasing is Beagle's today: statistical, from a reference panel, with no
+    read evidence behind it, and two wrong calls are phasing errors. Measured on the cached
+    cuts (`scripts/getrm/phase-blocks.py`): CYP4F2's two `*4` variants are 17,957 bp
+    apart, and although 55 heterozygous sites lie between them the 2x150 reads leave
+    gaps no fragment bridges — 6 in HG00436, the widest 3,485 bp, 8 in NA19908 — so the
+    two fall in different read-backed phase blocks in both, and no short-read phaser can
+    decide `*4` against `*2/*3`. CYP2D6 is the opposite: in HG00589, called `*2/*21`
+    where GeT-RM says `*1/*21`, all three deciding positions are heterozygous and in one
+    block, and the pair that settles it (2850C>T and `*21`'s insertion, 270 bp apart) is
+    carried by 7 fragments that all put the two **together**, none apart — which makes
+    the call GeT-RM's `*1/*21`. Adjudicate, do not re-phase, and **check every call, not
+    the ones PyPGx flags**: keying the check to `alternative_phase` finds nothing (the
+    reads decide 3 of its 34 cases and confirm all three), and HG00589 carries
+    `alternative_phase: null` — Beagle was confident and wrong. Measured with
+    `scripts/getrm/arrangement.py` over all 61 genomes: 719 pairs within
+    1 kb, 413 the reads decide, 411 agreeing with the call. The yield is one corrected CYP2D6 call plus a
+    CYP2F1 call with no dosing guideline, so the case is cheapness and safety, not
+    volume. It must read indels (HG00589's `*21` is an insertion) and must not treat two
+    variants at one position as a phasing question (UGT1A1 `*28` and `*36` are competing
+    alleles of one repeat, and conflating them invents contradictions).
+    `scripts/getrm/phasing.md` has the measurements.
+    Only 51 of the 179 star alleles defined by two or more core variants have their
+    whole span inside one 2x150 fragment, so reads reach about 28% of the alleles where
+    phase decides anything (median span 2,422 bp, 90th percentile 24,242 bp), and
+    chaining through intervening heterozygous sites does not rescue the rest. What they
+    do reach is concentrated in PyPGx's genes — CYP2D6 15 of 49, CYP2A6 9 of 12,
+    UGT1A1 2 of 2 — not PharmCAT's, whose one plausibly reachable unresolved call
+    (CYP2B6 `*1/*6 or *1/*9`, 2,422 bp) is not reachable. PyPGx already names the
+    alternative reading on the 34 calls over 61 genomes that hang on phase
+    (`alternative_phase`), and deciding between two arrangements of two variants needs
+    no phaser: count the fragments covering both, as `scripts/getrm/phase-blocks.py`
+    does. Settled outright in the cuts: APOE rs429358/rs7412 138 bp apart, 9 fragments;
+    CYP1B1's `*2` pair 213 bp, 16; CYP2D6's 2850C>T and `*21` insertion 270 bp, 8.
+    Report the read evidence beside the call first, as the caller-disagreement note
+    does, and only decide the call once the agreement rate is measured. Upstream will
+    not do it for us: PyPGx has accepted a *fully* phased VCF since 0.10.0 (issue #32)
+    and every phasing change since is a Beagle bug fix, with no mention of read-backed
+    phasing; PharmCAT reads `FORMAT/PS` from 3.0 but its phase-sensitive genes are the
+    wide ones.
+  - [DONE Oct 2026] `GeneConfig.get_gene_set()` answered a name it did not know with
+    *every* gene (`docker/pypgx/pypgx_wrapper.py`). Reachable without a typo:
+    `_get_fallback_config()`, used when `config/genes.json` is not mounted, defines
+    only `all` and `core`, so `pharmcat_outside_call_genes` asked for
+    `pharmcat_can_call`, received all 91 genes, found every gene to be PharmCAT's own
+    and handed PharmCAT no outside call at all — CYP2D6 included — in a run that
+    otherwise looked normal. It now raises, naming the file and the sets it has, and a
+    test checks that every set the wrapper names is in `genes.json`. Sets and
+    categories were confused too: `/genotype` tested a requested name against the
+    *categories*, so `genes=phase2` genotyped all 91 instead of its 8 and
+    `genes=neuropsychopharmacogenes` was refused as an unsupported gene; a new
+    `resolve_gene_selection()` takes a set, else a category, else a 400. Found while
+    adding `pypgx_preferred_genes`, which reads `load_config()` directly.
+  - CYP2D6 and CYP2A6 have no second caller in the stack, so their seven wrong calls on
+    GeT-RM went unchallenged. Say so in the report when nothing corroborates a call,
+    rather than printing it as flatly as a corroborated one.
 ### HLA Typing
   - [DONE Sep 2026] ZaroHLA types HLA-A/B/C from the aligned BAM on every alignment lane, a
     FASTQ after its alignment to GRCh38; the raw-FASTQ OptiType route was removed (3f53a38).
 ### Ancillary and Future tools
   - Now included in Zaromics suite
+  - Star-allele callers surveyed Oct 2026, measured against where ZaroPGx actually loses
+    calls rather than against their published figures:
+    `scripts/getrm/caller-augmentation.md`. Cyrius (PolyForm Strict 1.0.0, which forbids
+    distributing or modifying it) and Aldy (Indiana University, noncommercial, no
+    third-party data processing) cannot go in the images we publish — a distribution
+    limit, not a commercial one. ursaPGx is MIT but hands CYP2D6 to Cyrius and scores
+    below us on everything else. StellarPGx was measured and not adopted
+    (`scripts/getrm/stellarpgx-comparison.md`).
+  - Cyrius as an opt-in CYP2D6 second opinion the operator installs themselves — measured
+    Oct 2026 on **all 31 GeT-RM genomes with a scored CYP2D6 call**, and **not worth
+    taking on**. It scores 28 of 31; so do we. It fixes the `*1/*21` call we print as
+    `*2/*21` — a phasing decision the reads settle on their own, 7 fragments to 0, so the
+    read-adjudication item above buys that call without naming a noncommercial licence in
+    our UI — and it loses NA19908's `*1/*46`, where it cannot choose between two
+    partitions of the same four variants and reports both. Of the two neither caller
+    gets right, one it gets wrong identically to us. The one thing it does better is
+    flag itself: the call it misses is the one call it does not mark `PASS`, which is an
+    argument for the uncertainty item, not for adopting it.
+    `scripts/getrm/caller-augmentation.md` has the table and the per-sample copy numbers.
 
 ## Reporting
 

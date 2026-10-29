@@ -10,10 +10,14 @@ samples, on the samples whose 1000 Genomes 30x genome is public: 208 of GeT-RM's
 | `core.txt` | The 60 samples run by default: every NUDT15 and TPMT variant carrier, the DPYD variants that change dosing, 27 CYP2D6 diplotypes with deletions, duplications and hybrids, and all five continental groups |
 | `pharmcat_alleles.tsv` | The alleles PharmCAT 3.4.0 defines, so the score can tell an allele PharmCAT cannot name from a wrong call |
 | `build_truth.py` | Writes `truth.tsv` and `samples.tsv` from the sources below |
-| `cut.sh` | Cuts each sample's CRAM to the reads ZaroPGx reads (`scripts/make-demo-cram.sh`, as the demo is made): about 30 MB and 10 minutes a sample, fetched by region |
+| `cut.sh` | Cuts each sample's CRAM to the reads ZaroPGx reads (`scripts/make-demo-cram.sh`, as the demo is made): about 30 MB and 10 minutes a sample, fetched by region from the AWS Open Data mirror, which carries every sample in `samples.tsv`, with `samples.tsv`'s archive URL as the fallback |
 | `run.py` | Runs each cut through a ZaroPGx instance and keeps the outputs the score reads |
 | `score.py` | Compares the calls with GeT-RM's |
 | `stellarpgx-comparison.md` | What a second caller, StellarPGx, scored on the same genomes, and why it is not in the pipeline |
+| `phasing.md` | What phasing would buy us: what short reads can reach, what upstream is doing, and where a fix belongs |
+| `phase-blocks.py` | Whether short reads can phase two variants at all: the read-backed phase blocks of a region, from a cut |
+| `arrangement.py` | Whether the arrangement each PyPGx call asserts matches the one the reads show, over a whole run |
+| `caller-augmentation.md` | What Cyrius, Aldy, ursaPGx and pangu would add, which of them can be shipped, and the three calls the stack already makes and discards |
 
 ## Running it
 
