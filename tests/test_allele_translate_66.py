@@ -123,3 +123,28 @@ def test_cyp2d6_tandem_gets_pharmcats_spaced_name():
 def test_plus_signs_elsewhere_keep_pharmcats_unspaced_spelling():
     text = "UGT1A1\t*1/*80+*28\t\t\nDPYD\tReference/c.1905+1G>A (*2A)\t\t\n"
     assert at.translate_outside_tsv_text(text, at.load_map()) == text
+
+
+def test_nudt15_star2_becomes_the_name_pharmcat_defines():
+    """PharmCAT 3.4 has no NUDT15 *2, and an outside call naming it gets
+    `Unassigned function` -- no phenotype, no thiopurine guidance.
+
+    Its *3 is defined as 48037782 "AGGAGTC or AGGAGTCGGAGTC" AND 48045719 "T", which
+    permits either state of the 6 bp duplication, so the haplotype PyPGx calls *2
+    (that duplication plus c.415C>T) is one PharmCAT itself calls *3. Uses the
+    shipped map, so it also proves the lexicon carries the translation.
+    """
+    text = "NUDT15\t*2/*5\t\t\nNUDT15\t*2/*2\t\t\n"
+    out = at.translate_outside_tsv_text(text, at.load_map()).splitlines()
+    assert out == ["NUDT15\t*3/*5\t\t", "NUDT15\t*3/*3\t\t"]
+
+
+def test_nudt15_names_pharmcat_already_has_are_left_alone():
+    text = "NUDT15\t*1/*3\t\t\nNUDT15\t*1/*6\t\t\nNUDT15\t*3/*9\t\t\n"
+    assert at.translate_outside_tsv_text(text, at.load_map()) == text
+
+
+def test_a_gene_outside_the_synonym_list_is_untouched():
+    """The gate is per gene: TPMT shares no names with PyPGx that need renaming."""
+    text = "TPMT\t*1/*3A\t\t\n"
+    assert at.translate_outside_tsv_text(text, at.load_map()) == text

@@ -203,14 +203,17 @@ built from the `.bai` rather than the `.bam`.
 
 ## What is worth building
 
-1. **Prefer PyPGx's NUDT15.** *Built and held.* genes.json's
+1. **Prefer PyPGx's NUDT15.** *Built.* genes.json's
    `pypgx_preferred_over_pharmcat`, honoured by `pharmcat_outside_call_genes` in the
-   wrapper and by main.nf's own fallback filter. +2 calls, no new dependency. But
-   PharmCAT 3.4 defines no NUDT15 `*2` at all, so the outside call it is handed is
-   given `Unassigned function`: the phenotype becomes `n/a` and no CPIC thiopurine
-   recommendation matches. It buys the diplotype at the price of the phenotype and
-   the dosing guidance, so `fix/nudt15-prefer-pypgx` is not merged. `docs/to-do.md`
-   has what would work instead. CYP4F2 held pending more samples.
+   wrapper and by main.nf's own fallback filter. +2 calls, no new dependency.
+   PharmCAT 3.4 defines no NUDT15 `*2` at all, so an outside call naming `*2` is given
+   `Unassigned function` and the phenotype becomes `n/a` — which held this branch for a
+   while. Resolved by comparing definitions: PharmCAT's `*3` is
+   `48037782 "AGGAGTC or AGGAGTCGGAGTC"` **and** `48045719 "T"`, permitting either state
+   of the 6 bp duplication, so the haplotype PyPGx calls `*2` is one PharmCAT itself
+   calls `*3`. NUDT15 is in `SYNONYM_GENES` and the lexicon maps `*2`→`*3`, so the
+   outside call arrives in PharmCAT's own nomenclature and `*3/*5` reads Poor
+   Metabolizer. CYP4F2 held pending more samples.
 2. **Say when the two callers disagree.** *Built*, `app/reports/caller_agreement.py`.
    For a gene both call, the report printed PharmCAT's and said nothing about PyPGx's.
    CYP4F2 in NA19908 was the case: PharmCAT printed `*1/*4`, PyPGx called `*2/*3` and
