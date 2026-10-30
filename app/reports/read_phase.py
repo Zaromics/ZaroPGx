@@ -339,3 +339,121 @@ def positions(found: Mapping[str, Mapping[str, Any]]) -> List[Tuple[str, str, st
         (str(gene), str(detail.get("a")), str(detail.get("b")))
         for gene, detail in found.items()
     ]
+
+
+def coverage(
+    genes: Sequence[Any], evidence: Mapping[str, Any], pypgx_results: Any
+) -> Optional[Dict[str, int]]:
+    """How many printed calls assert an arrangement, and how many the reads reach.
+
+    ``contradicted`` is rare by construction, so on its own it leaves a reader told
+    nothing at all about phase for the 59 of 61 GeT-RM genomes that have no
+    contradiction: not that the check ran, and not how much of it the reads could
+    reach. Measured over those genomes, well under half of the calls placing two
+    heterozygous variants had a pair close enough for one fragment to cover both. For
+    the rest these reads cannot check the arrangement either way, which is a fact
+    about what short fragments can span and not a doubt about the call.
+
+    Counted over the rows the report prints PyPGx's own call for, since a count that
+    included calls the reader cannot see would describe a different report.
+    """
+    if str(evidence.get("status")) != "done":
+        return None
+    decided: Dict[str, List[Tuple[frozenset, str]]] = {}
+    for row in evidence.get("pairs") or []:
+        if not isinstance(row, Mapping):
+            continue
+        shows = row.get("shows")
+        gene = str(row.get("gene") or "").strip().upper()
+        if shows not in ("cis", "trans") or not gene:
+            continue
+        decided.setdefault(gene, []).append(
+            (frozenset((str(row.get("a")), str(row.get("b")))), str(shows))
+        )
+
+    counts = {"asserting": 0, "agree": 0, "conflict": 0, "unchecked": 0}
+    for entry in genes or []:
+        if not isinstance(entry, dict) or not pypgx_called(entry):
+            continue
+        gene = str(entry.get("gene") or "").strip().upper()
+        if not gene:
+            continue
+        says = asserted(pypgx_results, gene)
+        if not says:
+            continue
+        counts["asserting"] += 1
+        seen = [(pair, shows) for pair, shows in decided.get(gene, ()) if pair in says]
+        if not seen:
+            counts["unchecked"] += 1
+        elif any(says[pair] != shows for pair, shows in seen):
+            counts["conflict"] += 1
+        else:
+            counts["agree"] += 1
+    return counts if counts["asserting"] else None
+
+
+def _calls(n: int) -> str:
+    return "1 call" if n == 1 else f"{n} calls"
+
+
+def coverage_note(counts: Optional[Mapping[str, int]]) -> Optional[str]:
+    """The Methodology paragraph: what the reads settled about phase, and what they
+    could not reach.
+
+    Counts, not a confidence: how many fragments stand behind an arrangement is a
+    measurement, and "no fragment covers both positions" is the most useful thing this
+    check can tell a reader about the calls it cannot speak for. A rating would have
+    to be calibrated against a truth set large enough to separate our error from the
+    reference's own uncertainty, and the one available cannot do that.
+    """
+    if not counts or not counts.get("asserting"):
+        return None
+    asserting = int(counts["asserting"])
+    agree = int(counts.get("agree") or 0)
+    conflict = int(counts.get("conflict") or 0)
+    unchecked = int(counts.get("unchecked") or 0)
+    checked = agree + conflict
+
+    out = [
+        "<p class='run-provenance'>Where a call places two of its heterozygous "
+        f"variants on particular chromosomes, that pairing comes from {PHASER}, which "
+        "phases against a reference panel and not against this sample's reads. "
+        f"{_calls(asserting).capitalize()} here "
+        f"{'asserts' if asserting == 1 else 'assert'} such an arrangement. "
+    ]
+    if checked and not conflict:
+        # "contradict it in 0" is how a counter talks, not how a report reads.
+        if checked != asserting:
+            where = _calls(checked)
+        else:
+            where = "it" if asserting == 1 else "all of them"
+        out.append(
+            f"The reads cover both positions for {where}, and agree with the call "
+            f"{'in every one' if checked > 1 else 'there'}. "
+        )
+    elif checked:
+        out.append(
+            f"The reads cover both positions for {_calls(checked)}: they agree with "
+            f"the call in {agree} and contradict it in {conflict}. "
+        )
+    if unchecked and checked:
+        out.append(
+            f"For the other {_calls(unchecked)}, no fragment covers two of the "
+            "call's variants, so these reads neither confirm nor contradict how it "
+            "is paired. "
+        )
+    elif unchecked:
+        # Every one of them is out of reach, so naming the count again only repeats
+        # the sentence before it.
+        out.append(
+            ("The reads do not reach it: " if asserting == 1 else "The reads reach ")
+            + ("" if asserting == 1 else "none of them: ")
+            + "no fragment covers two of the call's variants, so they neither "
+            "confirm nor contradict how it is paired. "
+        )
+    if unchecked:
+        out.append(
+            "A pairing the reads cannot reach is not a doubt about which alleles "
+            "were found, only about how they are placed. "
+        )
+    return "".join(out).rstrip() + "</p>"

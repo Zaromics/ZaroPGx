@@ -2567,6 +2567,7 @@ def create_interactive_html_report(
     pharmcat_assume_ref_methodology: str | None = None,
     liftover_provenance: str | None = None,
     gvcf_provenance: str | None = None,
+    read_phase_coverage: str | None = None,
     missing_positions_not_assumed: bool = False,
     downloads: Optional[List[Dict[str, str]]] = None,
     workflow_diagram: Optional[Dict[str, Any]] = None,
@@ -2690,6 +2691,7 @@ def create_interactive_html_report(
             "workflow_warnings": workflow_warnings or [],
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
             "gvcf_provenance": gvcf_provenance,
+            "read_phase_coverage": read_phase_coverage,
             "liftover_provenance": liftover_provenance,
             "missing_positions_not_assumed": missing_positions_not_assumed,
             # 159: run-derived provenance (each rendered only if resolved)
@@ -4544,6 +4546,17 @@ def generate_report(
     if _read_phase_alert:
         workflow_warnings = list(workflow_warnings) + [_read_phase_alert]
         template_data["workflow_warnings"] = workflow_warnings
+    # The alert above is rare by construction, so on its own it leaves a reader told
+    # nothing about phase whenever nothing was contradicted. This says how many of the
+    # printed calls assert an arrangement and how many of those the reads could reach.
+    try:
+        _read_phase_coverage = read_phase.coverage_note(
+            read_phase.coverage(data.get("genes", []), read_phase_result, pypgx_results)
+        )
+    except Exception as e:  # describing the check must not cost the report
+        logger.warning("Read phase coverage not described: %s", e, exc_info=True)
+        _read_phase_coverage = None
+    template_data["read_phase_coverage"] = _read_phase_coverage
     template_data["unlisted"] = unlisted_ctx
     _unlisted_alert = unlisted.alert(unlisted_ctx)
     if _unlisted_alert:
@@ -4736,6 +4749,7 @@ def generate_report(
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
                 "gvcf_provenance": gvcf_provenance,
+                "read_phase_coverage": _read_phase_coverage,
                 "liftover_provenance": liftover_provenance,
                 # 159: run-derived provenance (each rendered only if resolved).
                 # This dict rebinds `template_data` and is the one actually fed
@@ -5122,6 +5136,7 @@ def generate_report(
                 pharmcat_assume_ref_methodology=pharmcat_assume_ref_methodology,
                 liftover_provenance=liftover_provenance,
                 gvcf_provenance=gvcf_provenance,
+                read_phase_coverage=_read_phase_coverage,
                 missing_positions_not_assumed=missing_positions_not_assumed,
                 downloads=export_downloads(report_dir, report_id),
                 workflow_diagram=workflow_diagram,
