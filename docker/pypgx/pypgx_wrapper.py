@@ -506,19 +506,75 @@ def determine_pypgx_gene_set(preference: str, input_type: str) -> str:
     return 'pypgx_minus_pharmcat'
 
 
+def pypgx_preferred_genes() -> set:
+    """Genes PharmCAT calls itself whose PyPGx call is handed to it anyway, upper-cased.
+
+    PharmCAT's own call of such a gene is lost, so an entry needs a reason that holds
+    for every carrier, not a better score on one panel. genes.json's
+    `pypgx_preferred_over_pharmcat` holds them:
+
+    - NUDT15, because PharmCAT 3.4 has no *2 definition and PyPGx does. On the 61
+      GeT-RM genomes PyPGx had NUDT15 right 10 times of 11 against PharmCAT's 8,
+      including every case PharmCAT had right (scripts/getrm).
+
+      *2 is absent from PharmCAT's CPIC function data as well as its allele
+      definitions, so an outside call naming *2 is accepted and then given
+      `Unassigned function`: the phenotype comes out `n/a` and no CPIC thiopurine
+      recommendation matches (measured against the shipped image, 2026-10-28). The
+      call is therefore translated on the way in --
+      lexicon/allele_map_pypgx_to_pharmcat.json maps NUDT15 *2 to *3, applied to
+      outside.tsv by translate_outside_tsv_file (docker/pharmcat/pharmcat.py).
+
+      *3 is not an approximation of *2. Read the definitions:
+        PyPGx     *2 = 13-48037782-A-AGGAGTC + 13-48045719-C-T   (No function)
+                  *3 = 13-48045719-C-T                           (No function)
+                  *6 = 13-48037782-A-AGGAGTC                     (Uncertain)
+        PharmCAT  *3 = 48037782 "AGGAGTC or AGGAGTCGGAGTC" AND 48045719 "T"
+      PharmCAT's *3 is written to permit either state of the 6 bp duplication at
+      48037782, so the haplotype PyPGx calls *2 -- duplication plus c.415C>T -- is
+      one PharmCAT's own definition calls *3. Translating is a rename into PharmCAT's
+      nomenclature, not a loss: same variants, same No function, and the thiopurine
+      guidance works. PyPGx's own *2 is still shown in the PyPGx evidence panel.
+
+      Before adding any gene here, check that PyPGx's allele names for it are a
+      subset of PharmCAT's, or that the ones that are not can be translated as above.
+
+    Read straight from the config rather than through get_gene_set, which answers a
+    name it does not know with *every* gene -- here that would hand PharmCAT every
+    PyPGx call, silently turning `auto` into `pypgx`. Anything unreadable means nothing
+    is preferred, which is how the pipeline behaved before this existed.
+    """
+    try:
+        sets = gene_config.load_config().get('sets') or {}
+        listed = sets.get('pypgx_preferred_over_pharmcat')
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        logger.warning(f"pypgx_preferred_over_pharmcat not read ({exc}): PharmCAT keeps its own calls")
+        return set()
+    if not isinstance(listed, list):
+        return set()
+    return {str(gene).strip().upper() for gene in listed}
+
+
 def pharmcat_outside_call_genes(preference: str, genes: List[str]) -> List[str]:
     """The genes whose PyPGx call main.nf hands PharmCAT as an outside call.
 
     PharmCAT takes an outside call over its own call of the gene ("PharmCAT would have
     called ... based on the VCF but it has been ignored in favor of the outside call",
     PharmCAT 3.4.0). So only under pypgx does every call go. Otherwise PharmCAT
-    keeps its call for the genes it calls itself ("pharmcat_can_call"): auto has PyPGx
-    genotype them from reads for their copy number, which the report gives beside
-    PharmCAT's call (app/reports/copy_number.py), not to replace it.
+    keeps its call for the genes it calls itself ("pharmcat_can_call") -- bar
+    pypgx_preferred_genes(), whose allele it cannot name: auto has PyPGx genotype them
+    from reads for their copy number, which the report gives beside PharmCAT's call
+    (app/reports/copy_number.py), not to replace it.
+
+    Only a gene PyPGx was asked for can be handed over, so a preferred gene reaches
+    alignment runs: from a VCF, BCF or gVCF, `auto` leaves PharmCAT's genes to PharmCAT
+    (determine_pypgx_gene_set) and there is no PyPGx call to hand over. `pharmcat` is
+    left as it was, an explicit "PharmCAT's genes are PharmCAT's", and asks PyPGx for
+    none of them either.
     """
     if str(preference or "").strip().lower() == 'pypgx':
         return list(genes)
-    own = set(gene_config.get_gene_set('pharmcat_can_call'))
+    own = set(gene_config.get_gene_set('pharmcat_can_call')) - pypgx_preferred_genes()
     return [gene for gene in genes if gene not in own]
 
 

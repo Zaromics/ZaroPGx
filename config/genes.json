@@ -291,6 +291,9 @@
     "pharmcat_outside_callers": [
       "CYP2D6", "HLA-A", "HLA-B", "MT-RNR1"
     ],
+    "pypgx_preferred_over_pharmcat": [
+      "NUDT15"
+    ],
     "pharmcat_all": [
       "ABCG2", "CACNA1S", "CFTR", "CYP2B6", "CYP2C19", "CYP2C9", "CYP3A4", "CYP3A5", "CYP4F2",
       "CYP2D6", "DPYD", "F2", "F5", "G6PD", "HLA-A", "HLA-B", "IFNL3", "MT-RNR1", "NAT2", "NUDT15", "RYR1",
