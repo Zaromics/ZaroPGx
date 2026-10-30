@@ -906,3 +906,127 @@ def test_the_coverage_statement_survives_into_the_pdf(monkeypatch, tmp_path):
         )
     ]
     assert len(summary) == 1, f"the Executive Summary ran to {len(summary)} pages"
+
+
+# --- the alternative, where the reads reach nothing -------------------------
+#
+# The commonest case by far: two defining variants further apart than a fragment is
+# long. The reads constrain nothing, the printed call is the phaser's alone, and the
+# other arrangement is a different diplotype 92% of the time in the two-variant case.
+
+OPEN_EVIDENCE = {
+    "status": "done",
+    "pairs": [],
+    "names": {
+        "CYP2D6": {
+            "open": ["*1/*21", "*2/*21"],
+            "phenotypes": ["Normal Metabolizer", "Intermediate Metabolizer"],
+        }
+    },
+}
+
+
+def test_the_one_alternative_is_named_beside_the_printed_call():
+    answer = report_phase.unreached_alternative(OPEN_EVIDENCE, "CYP2D6", "*2/*21")
+    assert answer is not None
+    alternative, phenotypes = answer
+    assert alternative == "*1/*21"
+    # The printed call's phenotype first, the alternative's second.
+    assert phenotypes == ["Intermediate Metabolizer", "Normal Metabolizer"]
+
+
+def test_nothing_is_named_when_the_printed_call_is_not_one_of_them():
+    """An alternative to a call this module could not reproduce is the wrong thing."""
+    assert report_phase.unreached_alternative(OPEN_EVIDENCE, "CYP2D6", "*4/*5") is None
+
+
+def test_identical_phenotypes_are_not_contrasted():
+    evidence = json.loads(json.dumps(OPEN_EVIDENCE))
+    evidence["names"]["CYP2D6"]["phenotypes"] = ["Normal Metabolizer"] * 2
+    _, phenotypes = report_phase.unreached_alternative(evidence, "CYP2D6", "*2/*21")
+    assert phenotypes == []
+
+
+def test_more_than_one_alternative_is_not_named():
+    evidence = json.loads(json.dumps(OPEN_EVIDENCE))
+    evidence["names"]["CYP2D6"]["open"] = ["*1/*21", "*2/*21", "*21/*39"]
+    assert report_phase.unreached_alternative(evidence, "CYP2D6", "*2/*21") is None
+
+
+def test_the_note_names_the_alternative_and_contrasts_the_phenotype():
+    note = report_phase.open_note(
+        "*1/*21", ["Intermediate Metabolizer", "Normal Metabolizer"]
+    )
+    assert "No fragment covers two of this call's variants" in note
+    assert "would read *1/*21" in note
+    assert "would be Normal Metabolizer rather than Intermediate Metabolizer" in note
+    assert "Beagle" in note
+
+
+def test_a_row_is_marked_with_the_alternative():
+    row = _row(diplotype="*2/*21")
+    found = report_phase.annotate_open([row], OPEN_EVIDENCE)
+    assert set(found) == {"CYP2D6"}
+    assert row["read_phase_open"]["alternative"] == "*1/*21"
+
+
+def test_a_contradiction_wins_over_an_alternative():
+    """Evidence beats the absence of it, and two notes would contradict each other."""
+    row = _row(diplotype="*2/*21")
+    row["read_phase_conflict"] = {"call_note": "already said"}
+    assert report_phase.annotate_open([row], OPEN_EVIDENCE) == {}
+    assert "read_phase_open" not in row
+
+
+def test_a_call_not_of_pypgx_own_is_left_alone():
+    row = _row(tool="PHARMCAT", diplotype="*2/*21")
+    assert report_phase.annotate_open([row], OPEN_EVIDENCE) == {}
+
+
+def test_the_alternative_reaches_the_page(monkeypatch, tmp_path):
+    page = _rendered(monkeypatch, tmp_path, OPEN_EVIDENCE)
+    assert "No fragment covers two of this call" in page
+    assert "would read *1/*21" in page
+    # The printed call is untouched, as ever.
+    assert "*2/*21" in page
+
+
+def test_the_contradiction_note_is_not_shown_beside_the_alternative(
+    monkeypatch, tmp_path
+):
+    page = _rendered(monkeypatch, tmp_path, OPEN_EVIDENCE)
+    assert "which this call does not" not in page
+
+
+def test_the_alternative_does_not_cost_the_one_page_summary(monkeypatch, tmp_path):
+    """The note sits beside the call, not in the Executive Summary, which
+    app/reports/pdf_fit.py lays out to one page. Checked in the PDF, which is what is
+    delivered."""
+    import app.reports.generator as generator_module
+
+    page = _rendered(monkeypatch, tmp_path, OPEN_EVIDENCE)
+    document, _ = generator_module.render_pdf_document(page)
+    text = "\n".join(
+        "".join(
+            child.text
+            for line in box.children
+            for child in line.children
+            if hasattr(child, "text")
+        )
+        for pdf_page in document.pages
+        for box in pdf_page._page_box.descendants()
+        if getattr(box, "children", None)
+        and getattr(box, "element_tag", "") in ("p", "div")
+    )
+    assert "would read *1/*21" in text
+    summary = [
+        i
+        for i, pdf_page in enumerate(document.pages)
+        if any(
+            getattr(box, "element_tag", "") == "div"
+            and getattr(box, "element", None) is not None
+            and box.element.get("id") == "exec-summary"
+            for box in pdf_page._page_box.descendants()
+        )
+    ]
+    assert len(summary) == 1, f"the Executive Summary ran to {len(summary)} pages"
