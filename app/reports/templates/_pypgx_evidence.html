@@ -18,6 +18,8 @@
     of them into a diplotype is. #}
 {%- if d.read_phase_conflict and d.diplotype is a_call %}
 <div class="call-note read-phase-note">⚠ {{ d.read_phase_conflict.call_note }}</div>
+{%- elif d.read_phase_open and d.diplotype is a_call %}
+<div class="call-note read-phase-note">{{ d.read_phase_open.call_note }}</div>
 {%- endif %}
 {#- A call on a gene with SV-defined alleles made without copy number
     (app/reports/copy_number.py): what it cannot show, marked. A call whose copy

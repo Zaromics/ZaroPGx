@@ -333,12 +333,84 @@ def alert(found: Mapping[str, Mapping[str, Any]]) -> Optional[str]:
     )
 
 
-def positions(found: Mapping[str, Mapping[str, Any]]) -> List[Tuple[str, str, str]]:
-    """(gene, variant, variant) for each contradiction, for a provenance line."""
-    return [
-        (str(gene), str(detail.get("a")), str(detail.get("b")))
-        for gene, detail in found.items()
-    ]
+def unreached_alternative(
+    evidence: Mapping[str, Any], gene: str, printed: Any
+) -> Optional[Tuple[str, List[str]]]:
+    """(the one diplotype the reads leave open beside the printed call, phenotypes).
+
+    Only where the printed call is itself one of the two the service named: an
+    alternative to a call this module could not reproduce would be an alternative to
+    the wrong thing, which is worse than silence.
+    """
+    entry = ((evidence.get("names") or {}).get(gene)) or {}
+    open_names = [str(name) for name in (entry.get("open") or [])]
+    if len(open_names) != 2:
+        return None
+    shown = str(printed or "").replace(" ", "")
+    if not any(_same(name, shown) for name in open_names):
+        return None
+    others = [name for name in open_names if not _same(name, shown)]
+    if len(others) != 1:
+        return None
+    phenotypes = [str(p) for p in (entry.get("phenotypes") or [])]
+    if len(phenotypes) != len(open_names):
+        phenotypes = []
+    else:
+        by_name = dict(zip(open_names, phenotypes))
+        mine = next(by_name[n] for n in open_names if _same(n, shown))
+        theirs = by_name[others[0]]
+        phenotypes = [mine, theirs] if mine != theirs else []
+    return others[0], phenotypes
+
+
+def open_note(alternative: str, phenotypes: Sequence[str] = ()) -> str:
+    """The line beside a call whose arrangement no fragment reaches."""
+    note = (
+        "No fragment covers two of this call's variants, so these reads cannot check "
+        f"how it is paired; phased by {PHASER}, against a reference panel. The other "
+        f"arrangement would read {alternative}"
+    )
+    if len(phenotypes) == 2:
+        note += f", and would be {phenotypes[1]} rather than {phenotypes[0]}"
+    return (
+        note
+        + ". Which alleles were found is not in question, only how they are paired."
+    )
+
+
+def annotate_open(genes: Sequence[Any], evidence: Mapping[str, Any]) -> Dict[str, dict]:
+    """Mark every row whose printed call is PyPGx's own, whose arrangement no fragment
+    reaches, and for which exactly one alternative exists; returns {gene: detail}.
+
+    Takes no ``pypgx_results``: unlike ``annotate_genes`` it asks nothing of what the
+    call asserts, only what the service already named.
+
+    Left alone where ``annotate_genes`` already marked a contradiction: a note built
+    from evidence beats one built from its absence, and two notes on one call would
+    say the reads both did and did not reach it.
+    """
+    found: Dict[str, dict] = {}
+    for row in genes or []:
+        if not isinstance(row, dict) or not pypgx_called(row):
+            continue
+        if row.get("read_phase_conflict"):
+            continue
+        gene = str(row.get("gene") or "").strip().upper()
+        if not gene:
+            continue
+        answer = unreached_alternative(evidence, gene, row.get("diplotype"))
+        if not answer:
+            continue
+        alternative, phenotypes = answer
+        detail = {
+            "phaser": PHASER,
+            "alternative": alternative,
+            "phenotypes": phenotypes,
+            "call_note": open_note(alternative, phenotypes),
+        }
+        row["read_phase_open"] = detail
+        found[str(row.get("gene") or gene)] = detail
+    return found
 
 
 def coverage(
