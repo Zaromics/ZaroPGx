@@ -364,18 +364,22 @@ def unreached_alternative(
 
 
 def open_note(alternative: str, phenotypes: Sequence[str] = ()) -> str:
-    """The line beside a call whose arrangement no fragment reaches."""
-    note = (
-        "No fragment covers two of this call's variants, so these reads cannot check "
-        f"how it is paired; phased by {PHASER}, against a reference panel. The other "
-        f"arrangement would read {alternative}"
-    )
+    """The line beside a call whose arrangement no fragment reaches.
+
+    One sentence, because it prints inside the gene table's narrowest column: at 19%
+    of the width the longer wording stood 21 lines tall against a four-line row, on
+    about three rows of every report. Nothing is lost by cutting it, because every
+    clause removed is still said where it has room. ``coverage_note``'s Methodology
+    paragraph attributes the pairing to the phaser ("phases against a reference panel
+    and not against this sample's reads") and carries the reassurance ("not a doubt
+    about which alleles were found, only about how they are placed"); the printed
+    call's own phenotype is in the same row's Phenotype cell, so only the
+    alternative's is named here.
+    """
+    note = f"Reads cannot check this pairing; the other reading is {alternative}"
     if len(phenotypes) == 2:
-        note += f", and would be {phenotypes[1]} rather than {phenotypes[0]}"
-    return (
-        note
-        + ". Which alleles were found is not in question, only how they are paired."
-    )
+        note += f", {phenotypes[1]}"
+    return note + "."
 
 
 def annotate_open(genes: Sequence[Any], evidence: Mapping[str, Any]) -> Dict[str, dict]:
