@@ -267,8 +267,32 @@ curated: true
 - [DONE Oct 2026] Unified report: PharmCAT's recommendations with PyPGx's calls for the
   genes PharmCAT does not call ("P" in the Call column), and PyPGx's per-gene evidence
   (fix/pypgx-full-record).
-- Variant rarity context (no allele frequencies are shown). The mitochondrial haplogroup
-  and its quality are in the report's mtDNA section (Aug 2026).
+- [DONE Nov 2026, feat/variant-rarity] Variant rarity context. Every variant behind a
+  call carries its gnomAD frequency in the interactive report's evidence table -- the
+  frequency in the genetic ancestry group that carries it most, that group named,
+  because an overall figure hides an allele common in one group and absent from the
+  rest (CYP2C19 *2 is 32% in sas against 16% overall). The Methodology paragraph of
+  both reports names the calls resting on a variant seen in under 1% of people in
+  every group: a median of one per report over the 61 GeT-RM genomes, four at most,
+  none in 28 of them, so naming them stays short enough to print and the PDF gains no
+  page. Read at report time from the annotation bundle rather than written by the
+  pipeline, since a frequency is a property of the variant and not of the sample: an
+  older run re-rendered gains the context, and the change needs no image rebuild.
+  The mitochondrial haplogroup and its quality are in the report's mtDNA section
+  (Aug 2026).
+  - Remaining, and its own piece of work: the bundle covers the pharmacogenes' coding
+    exons and splice sites, which reaches 195 of the 306 distinct variants behind
+    PyPGx's calls over those 61 genomes. The rest are promoter or intronic core
+    variants (CYP2C19 *17's -806C>T, CYP3A5 *3's 6986A>G) and read "No frequency
+    data", which is deliberately not "Not in gnomAD" -- none of the 306 is inside the
+    regions yet missing from gnomAD. Widening the builder's regions to every position
+    PharmCAT genotypes and every position in PyPGx's variant table would take it to
+    about all of them: a change to docker/genome-downloader/annotation_bundle.py, a
+    rebuild of that baked image and a new bundle.
+  - Also remaining: PharmCAT's own per-gene `variants` (chromosome, position, rsID,
+    call, reference allele) are in its report JSON, but no report surface lists them,
+    so none of its 25 genes shows a variant or a frequency. Giving them one means a
+    new table, which is a layout decision, not just a lookup.
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
 - [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
