@@ -1,3 +1,4 @@
+import asyncio
 import gzip
 import html
 import logging
@@ -43,6 +44,7 @@ from app.api.utils.fastq_platform import (
     mate_names_agree,
 )
 from app.api.utils.file_utils import (
+    bam_index_mismatch,
     has_index_file,
     index_names,
     is_compressed_file,
@@ -464,36 +466,70 @@ def _detect_consumer_array(file_path: Path) -> Optional[FileType]:
     return None
 
 
-# Companion index files. The upload form invites one alongside the data file, and
-# process_files does not use it yet (see the TODO there) - but it is not a second
-# dataset either, so it must not raise the "extra files were not analysed" warning.
+# Companion index files. The upload form invites one alongside the data file. It is
+# not a second dataset, so it must not raise the "extra files were not analysed"
+# warning.
 INDEX_FILE_SUFFIXES = (".bai", ".crai", ".csi", ".tbi", ".idx")
 
 
+def uses_uploaded_index(data_name: str) -> bool:
+    """Whether an index uploaded with this file is used: a BAM's is.
+
+    Every step reads a BAM upload in place and is handed the index beside it
+    (app/utils/shared_input.py), so one uploaded with it spares the run indexing the
+    whole file. A CRAM, SAM or FASTQ becomes a BAM that gatk-api indexes, and a VCF
+    is indexed in moments.
+    """
+    return data_name.lower().endswith(".bam")
+
+
 def uploaded_index_messages(
-    data_name: str, index_files: List[str]
+    data_name: str,
+    index_files: List[str],
+    checked: bool = False,
+    refusal: Optional[str] = None,
 ) -> Tuple[Optional[str], List[str], List[str]]:
     """What to say about the index files chosen with a data file: (the one that
     indexes it, if any; recommendations; warnings).
 
     An index was accepted with the upload and then dropped without a word, so the
-    page said the file had none. The pipeline makes its own index from the data, so
-    a matching one is named and not used. One that indexes some other file is named
-    as a warning: it can mean the wrong data file was chosen. Names are escaped: the
-    panel renders these with innerHTML.
+    page said the file had none. A BAM's is used once the upload has read it against
+    the data (``checked``; ``refusal`` says why it does not index the file, which
+    makes it a warning instead). Any other format's is named and not used: the
+    pipeline makes its own index from the data. One that indexes some other file is
+    named as a warning: it can mean the wrong data file was chosen. Names are
+    escaped: the panel renders these with innerHTML.
     """
-    paired = matching_index(data_name, index_files)
+    named = matching_index(data_name, index_files)
     data = html.escape(data_name)
     recommendations: List[str] = []
     warnings: List[str] = []
-    if paired:
+    paired = named
+    if named and not uses_uploaded_index(data_name):
         recommendations.append(
-            f"<p>Index {html.escape(paired)} matches {data}. The pipeline indexes "
+            f"<p>Index {html.escape(named)} matches {data}. The pipeline indexes "
             "the data itself, so this index is not used.</p>"
+        )
+    elif named and not checked:
+        recommendations.append(
+            f"<p>Index {html.escape(named)} matches {data}. It is used if it "
+            f"indexes {data}, which is checked when the file is uploaded.</p>"
+        )
+    elif named and refusal is None:
+        recommendations.append(
+            f"<p>Index {html.escape(named)} matches {data} and is used.</p>"
+        )
+    elif named:
+        # Named as its index, and does not index it.
+        paired = None
+        warnings.append(
+            f"<p>⚠️ {html.escape(named)} does not index {data} "
+            f"({html.escape(refusal or '')}) and was not used. The pipeline indexes "
+            "the data itself.</p>"
         )
     names = index_names(data_name)
     for name in index_files:
-        if name == paired:
+        if name == named:
             continue
         if names:
             expected = " or ".join(html.escape(n) for n in names[:2])
@@ -2312,6 +2348,37 @@ class FileProcessor:
 
         return workflow
 
+    async def _save_uploaded_index(
+        self, files, primary_file, index_files, data_path, saved_paths
+    ) -> Optional[str]:
+        """Save a BAM's uploaded index beside it; why not, if it does not index it.
+
+        It goes where app/utils/shared_input.py looks, <upload>.bai or <upload>.csi,
+        newer than the upload, so every step is handed it. It is registered in
+        saved_paths before it is written, as a mate is, so it is released with the
+        upload. One that does not index the file is removed, since every step would
+        read through it (bam_index_mismatch).
+        """
+        data_name = str(primary_file.filename or "")
+        named = matching_index(data_name, index_files)
+        if not named or not uses_uploaded_index(data_name):
+            return None
+        upload = next(
+            f for f in files if f is not primary_file and str(f.filename or "") == named
+        )
+        suffix = ".csi" if named.lower().endswith(".csi") else ".bai"
+        index_path = Path(f"{data_path}{suffix}")
+        saved_paths.append(str(index_path))
+        with open(index_path, "wb") as handle:
+            while chunk := await upload.read(8 * 1024 * 1024):
+                handle.write(chunk)
+        refusal = await asyncio.to_thread(bam_index_mismatch, data_path, index_path)
+        if refusal is not None:
+            logger.warning("Not using %s with %s: %s", named, data_name, refusal)
+            index_path.unlink(missing_ok=True)
+            saved_paths.remove(str(index_path))
+        return refusal
+
     async def _accept_fastq_mate(
         self, mates, r1_path, workflow, result, upload_id
     ) -> bool:
@@ -2429,7 +2496,7 @@ class FileProcessor:
 
             # Only one file is analysed.
             # TODO: Support multiple files in the future
-            # 2 files can now be uploaded, but the use of the index file needs work.
+            # A data file can come with its index; a BAM's is used (_save_uploaded_index).
             #
             # It is the first file that is not an index, rather than files[0]: a browser
             # FileList is commonly alphabetical, so selecting sample.bam + sample.bai put
@@ -2485,6 +2552,12 @@ class FileProcessor:
 
                 logger.info(f"Saved uploaded file to: {temp_file_path}")
 
+                # A BAM's index, saved beside it before the analysis looks for one, so
+                # every step is handed it and none indexes the whole file again.
+                index_refusal = await self._save_uploaded_index(
+                    files, primary_file, index_files, temp_file_path, saved_paths
+                )
+
                 # Process the file
                 result = await self.process_upload(str(temp_file_path))
 
@@ -2539,7 +2612,10 @@ class FileProcessor:
                     )
 
                 paired, notes, index_warnings = uploaded_index_messages(
-                    str(primary_file.filename or ""), index_files
+                    str(primary_file.filename or ""),
+                    index_files,
+                    checked=True,
+                    refusal=index_refusal,
                 )
                 if paired:
                     file_analysis = result.get("file_analysis")
