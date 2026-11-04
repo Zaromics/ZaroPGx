@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -953,14 +954,44 @@ def test_more_than_one_alternative_is_not_named():
     assert report_phase.unreached_alternative(evidence, "CYP2D6", "*2/*21") is None
 
 
-def test_the_note_names_the_alternative_and_contrasts_the_phenotype():
+def test_the_note_names_the_alternative_and_its_phenotype():
     note = report_phase.open_note(
         "*1/*21", ["Intermediate Metabolizer", "Normal Metabolizer"]
     )
-    assert "No fragment covers two of this call's variants" in note
-    assert "would read *1/*21" in note
-    assert "would be Normal Metabolizer rather than Intermediate Metabolizer" in note
-    assert "Beagle" in note
+    assert note == (
+        "Reads cannot check this pairing; the other reading is *1/*21, "
+        "Normal Metabolizer."
+    )
+
+
+def test_the_note_stays_short_enough_for_the_column_it_prints_in():
+    """It renders inside the gene table's 19%-wide Diplotype column, so length is a
+    layout constraint, not a style preference: the wording it replaced ran 21 lines
+    there against a four-line row."""
+    note = report_phase.open_note(
+        "*1/*21", ["Intermediate Metabolizer", "Normal Metabolizer"]
+    )
+    assert len(note) <= 120, note
+
+
+def test_the_note_omits_what_the_methodology_paragraph_already_says():
+    """Each clause cut from this note is still in the report, with room to read."""
+    note = report_phase.open_note(
+        "*1/*21", ["Intermediate Metabolizer", "Normal Metabolizer"]
+    )
+    for said_elsewhere in ("Beagle", "reference panel", "alleles were found"):
+        assert said_elsewhere not in note
+    methodology = report_phase.coverage_note(
+        {"asserting": 1, "agree": 0, "conflict": 0, "unchecked": 1}
+    )
+    assert "Beagle" in methodology
+    assert "reference panel" in methodology
+    assert "alleles were found" in methodology
+
+
+def test_the_note_names_no_phenotype_when_both_readings_share_one():
+    note = report_phase.open_note("*1/*21")
+    assert note == "Reads cannot check this pairing; the other reading is *1/*21."
 
 
 def test_a_row_is_marked_with_the_alternative():
@@ -985,8 +1016,8 @@ def test_a_call_not_of_pypgx_own_is_left_alone():
 
 def test_the_alternative_reaches_the_page(monkeypatch, tmp_path):
     page = _rendered(monkeypatch, tmp_path, OPEN_EVIDENCE)
-    assert "No fragment covers two of this call" in page
-    assert "would read *1/*21" in page
+    assert "Reads cannot check this pairing" in page
+    assert "the other reading is *1/*21" in page
     # The printed call is untouched, as ever.
     assert "*2/*21" in page
 
@@ -1006,8 +1037,12 @@ def test_the_alternative_does_not_cost_the_one_page_summary(monkeypatch, tmp_pat
 
     page = _rendered(monkeypatch, tmp_path, OPEN_EVIDENCE)
     document, _ = generator_module.render_pdf_document(page)
+    # Joined with a space and collapsed: in the narrow Diplotype column a sentence
+    # wraps, and weasyprint hands back one text box per line with no separator
+    # between them, so joining with "" welds the last word of a line to the first
+    # word of the next.
     text = "\n".join(
-        "".join(
+        " ".join(
             child.text
             for line in box.children
             for child in line.children
@@ -1018,7 +1053,8 @@ def test_the_alternative_does_not_cost_the_one_page_summary(monkeypatch, tmp_pat
         if getattr(box, "children", None)
         and getattr(box, "element_tag", "") in ("p", "div")
     )
-    assert "would read *1/*21" in text
+    flat = re.sub(r"\s+", " ", text)
+    assert "the other reading is *1/*21" in flat
     summary = [
         i
         for i, pdf_page in enumerate(document.pages)
