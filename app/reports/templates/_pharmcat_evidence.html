@@ -1,0 +1,58 @@
+{# The positions behind each call PharmCAT made itself (app/reports/pharmcat_variants.py).
+   Interactive only, like the PyPGx evidence panel it sits beside: the PDF carries
+   the calls and what they mean, not the genotypes under them. #}
+
+{% macro section(pc) -%}
+{%- if pc and pc.status == 'done' and pc.genotyped %}
+<div class="pharmcat-evidence">
+    <h4>PharmCAT evidence</h4>
+    <p>What PharmCAT read at the positions it genotypes: a diplotype is what those
+       genotypes add up to. It read {{ '{:,}'.format(pc.genotyped) }}
+       {{ 'position' if pc.genotyped == 1 else 'positions' }} here{% if pc.differing %};
+       {{ pc.differing }} of them {{ 'carries' if pc.differing == 1 else 'carry' }} something
+       other than two copies of the reference base, and {{ 'that is the one' if pc.differing == 1 else 'those are the ones' }}
+       listed below{% if pc.priced %}, with how common the base found is{% endif %}. The rest
+       matched the reference, which is what leaves the reference allele standing at each of
+       them{% else %}, and every one matched the reference: nothing below the calls sets them
+       apart from it{% endif %}{% if pc.unread %}. {{ pc.unread }} of them
+       could not be read at all, and a call cannot use what it could not read{% endif %}.</p>
+    {%- for g in pc.genes %}
+    <details class="pharmcat-gene">
+        <summary><strong>{{ g.gene }}</strong> &middot; {{ g.rows|length }} of {{ g.genotyped }}
+            {{ 'position' if g.genotyped == 1 else 'positions' }}
+            {{ 'differs' if g.rows|length == 1 else 'differ' }} from the reference{% if g.unread %}, {{ g.unread }}
+            could not be read{% endif %}</summary>
+        <table class="evidence-table">
+            <thead><tr><th>Position</th><th>Variant</th><th>Genotype</th><th>Defines</th>{% if pc.priced %}<th>Population frequency</th>{% endif %}</tr></thead>
+            <tbody>
+            {%- for r in g.rows %}
+            <tr>
+                <td>{{ r.position|code_breaks }}</td>
+                <td>{{ r.rsid or '–' }}</td>
+                <td>{{ r.call }}{% if r.zygosity %}<div class="call-note">{{ r.zygosity }}{% if r.phased %}, phased{% endif %}</div>{% endif %}</td>
+                <td>{{ r.defines or '–' }}</td>
+                {%- if pc.priced %}<td>{{ r.frequency or '–' }}</td>{% endif %}
+            </tr>
+            {%- if r.warnings %}
+            <tr class="pharmcat-variant-note"><td colspan="{{ 5 if pc.priced else 4 }}">{% for w in r.warnings %}<div class="call-note">⚠ {{ w }}</div>{% endfor %}</td></tr>
+            {%- endif %}
+            {%- endfor %}
+            </tbody>
+        </table>
+    </details>
+    {%- endfor %}
+    <p class="header-note">Reference is GRCh38. &ldquo;Defines&rdquo; is which of the
+       gene&rsquo;s star alleles the position helps tell apart, as PharmCAT&rsquo;s own
+       allele definitions name them; a position can bear on many, and the call is the
+       best fit across all of them rather than any one line here.{% if pc.priced %}
+       Population frequency: how often the base found is seen in the gnomAD genetic
+       ancestry group that carries it most, that group named
+       ({{ pc.release or 'gnomAD v4.1, joint release' }}). The highest group rather than
+       an overall frequency, because an overall figure hides a base that is common in
+       one group and absent from the rest, as several of these are.{% endif %} These are PharmCAT&rsquo;s own
+       readings, whichever tool&rsquo;s call this report prints for the gene. Genes
+       PharmCAT did not call itself are not here &mdash; CYP2D6 and HLA come from other
+       tools, and their evidence is shown with them.</p>
+</div>
+{%- endif %}
+{%- endmacro %}

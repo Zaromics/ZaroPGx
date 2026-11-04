@@ -80,6 +80,28 @@ NO_DATA = "No frequency data"
 RARE_BELOW = 0.01
 
 
+def minimal(pos: int, ref: str, alt: str) -> Tuple[int, str, str]:
+    """The same change written as few bases as it takes, which is how gnomAD writes it.
+
+    One event has several spellings at one position. PharmCAT writes UGT1A1 *28's
+    TA insertion as ``CAT -> CATAT`` and gnomAD as ``C -> CAT``; both put two bases
+    into the same repeat at the same place, and an exact-key lookup of the first
+    finds nothing. Trimming the shared bases off the end, and then off the front,
+    gives the minimal representation both agree on (Tan et al. 2015, as bcftools
+    norm and gnomAD's own pipeline produce it).
+
+    Three of the 111 variants PharmCAT reads as other than reference over the 61
+    GeT-RM genomes need this: UGT1A1 *28 and *37, and a NUDT15 insertion. Without it
+    the report says "Not in gnomAD" of an allele a third of the world carries, which
+    is worse than saying nothing.
+    """
+    while len(ref) > 1 and len(alt) > 1 and ref[-1] == alt[-1]:
+        ref, alt = ref[:-1], alt[:-1]
+    while len(ref) > 1 and len(alt) > 1 and ref[0] == alt[0]:
+        ref, alt, pos = ref[1:], alt[1:], pos + 1
+    return pos, ref, alt
+
+
 def variant_key(text: Any) -> Optional[Key]:
     """``chrom-pos-ref-alt`` as the bundle keys it.
 
@@ -87,7 +109,9 @@ def variant_key(text: Any) -> Optional[Key]:
     has one. Bases are upper-cased because a VCF called against a soft-masked
     reference can carry them in lower case, which is a real bug we reported upstream
     (dev-notes/upstream/pypgx-lowercase-alleles.md) and which would silently cost
-    every indel its frequency here too.
+    every indel its frequency here too. The alleles are reduced to the minimal
+    representation gnomAD stores, which is a no-op for every variant PyPGx names and
+    is not for some of PharmCAT's indels.
     """
     if not isinstance(text, str):
         return None
@@ -98,7 +122,9 @@ def variant_key(text: Any) -> Optional[Key]:
     if not pos.isdigit():
         return None
     chrom = chrom if chrom.lower().startswith("chr") else f"chr{chrom}"
-    return (chrom, int(pos), ref.upper(), alt.upper())
+    if not ref or not alt:
+        return None
+    return (chrom, *minimal(int(pos), ref.upper(), alt.upper()))
 
 
 def frequency_text(gnomad: Optional[Mapping[str, Any]], covered: bool = True) -> str:
@@ -441,7 +467,8 @@ def note(summary: Optional[Mapping[str, Any]]) -> Optional[str]:
             "genetic ancestry group."
         )
     out.append(
-        " The genes PharmCAT called itself name no variants in this report, so none "
-        "of those is counted here.</p>"
+        " The genes PharmCAT called itself are not counted here: the positions"
+        " behind those calls, and how common each base found is, are in the"
+        " interactive report's PharmCAT evidence table.</p>"
     )
     return "".join(out)
