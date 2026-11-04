@@ -221,6 +221,14 @@ curated: true
     and every phasing change since is a Beagle bug fix, with no mention of read-backed
     phasing; PharmCAT reads `FORMAT/PS` from 3.0 but its phase-sensitive genes are the
     wide ones.
+  - [DONE Nov 2026, fix/bam-upload-index] The read-phase check never ran on a BAM
+    upload: it builds no index, and nothing indexed a BAM uploaded alone where it is
+    read (each step indexed its own link to it), so every BAM report said nothing about
+    phase, `read_phase.json` reading `not_run: the alignment has no index beside it`.
+    The app now indexes a BAM once beside the upload in header analysis (134 s on
+    NA12878's 30x BAM), and every step is handed that index: on the same BAM the check
+    ran (29 pairs, 11 decided), and PyPGx, ZaroHLA and mtDNA no longer index it
+    themselves.
   - [DONE Oct 2026] `GeneConfig.get_gene_set()` answered a name it did not know with
     *every* gene (`docker/pypgx/pypgx_wrapper.py`). Reachable without a typo:
     `_get_fallback_config()`, used when `config/genes.json` is not mounted, defines

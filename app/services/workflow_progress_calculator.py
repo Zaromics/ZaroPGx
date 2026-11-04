@@ -134,6 +134,16 @@ class WorkflowProgressCalculator:
     }
     # mtDNA from a variant file reads only its chrM records: 27 s on the WGS VCF.
     VARIANT_INPUT_MTDNA_SECONDS = 30
+    # A BAM upload is indexed in header analysis, once for every step (upload_router's
+    # index_bam_upload), and the steps after it no longer index it themselves. On
+    # NA12878's 30x BAM, 2026-11-04, against the same BAM before: header analysis 134 s
+    # (1), ZaroHLA 54 (239), mtDNA 42 (240), bam2vcf 197 (688); 752 s in all (1,304).
+    BAM_STEP_SECONDS: Dict[str, int] = {
+        "header_analysis": 135,
+        "hla_typing": 55,
+        "mtdna_analysis": 45,
+        "pypgx_bam2vcf": 200,
+    }
     _ALIGNMENT_FILE_TYPES = frozenset(
         {"bam", "cram", "sam", "fastq", "fq", "fastq.gz", "fq.gz"}
     )
@@ -166,15 +176,17 @@ class WorkflowProgressCalculator:
     def _expected_seconds(
         self, step_name: str, workflow_config: Optional[Dict] = None
     ) -> int:
+        cfg = workflow_config or {}
+        file_type = str(
+            (cfg.get("file_analysis") or {}).get("file_type")
+            or cfg.get("file_type")
+            or ""
+        ).lower()
         if step_name == "mtdna_analysis":
-            cfg = workflow_config or {}
-            file_type = str(
-                (cfg.get("file_analysis") or {}).get("file_type")
-                or cfg.get("file_type")
-                or ""
-            ).lower()
             if file_type and file_type not in self._ALIGNMENT_FILE_TYPES:
                 return self.VARIANT_INPUT_MTDNA_SECONDS
+        if file_type == "bam" and step_name in self.BAM_STEP_SECONDS:
+            return self.BAM_STEP_SECONDS[step_name]
         return self.STEP_EXPECTED_SECONDS.get(step_name, self.DEFAULT_STEP_SECONDS)
 
     def _step_fraction(self, step: Dict, expected: int, now: datetime) -> float:
