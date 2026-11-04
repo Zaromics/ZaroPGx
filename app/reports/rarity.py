@@ -20,19 +20,24 @@ that answers "is this rare?" -- an overall frequency can hide an allele that is 
 in one group and absent from the rest, and several pharmacogene alleles are exactly
 that.
 
-The bundle was built for the coding exons of the pharmacogenes and their splice sites,
-with 20 bases of flank, because that is where unlisted.py needed it. Star-allele core
-variants are often elsewhere: CYP2C19 \\*17's -806C>T is promoter, CYP3A5 \\*3's
-6986A>G is intronic. Measured over the 61 GeT-RM genomes, 195 of the 306 distinct
-variants behind PyPGx's calls are in the extract and 111 are outside its regions --
-and none is inside them yet missing from gnomAD. So "no number" has one cause in
-practice, the extract's extent, and saying "not in gnomAD" instead would assert
-something this bundle cannot support. ``regions.bed`` is read to tell the two cases
-apart rather than inferring it.
+The frequency table is cut over the pharmacogenes' coding exons and their splice
+sites, where unlisted.py needs it, and -- from bundle version 3 -- over every position
+PharmCAT's positions VCF or PyPGx's allele table names as well. Both sets are needed,
+because a star allele's core variant is as often outside an exon as in one: CYP2C19
+\\*17's -806C>T is in the promoter, CYP3A5 \\*3's 6986A>G in an intron, VKORC1's
+-1639G>A in the promoter. Measured over the 61 GeT-RM genomes, the exons alone reached
+195 of the 306 distinct variants behind PyPGx's calls; with the called positions it is
+306 of 306, and all 111 of the variants PharmCAT reads as something other than
+reference as well.
 
-Widening the regions to every position PharmCAT genotypes and every position in
-PyPGx's variant table would lift the 64% to about all of it; that is a change to the
-bundle builder and a rebuild of a baked image, so it is its own piece of work.
+``gnomad_regions.bed`` is the table's own extent, and is read to tell a position the
+data does not reach from a variant gnomAD has never seen: none of the 306 is inside
+the regions yet missing from gnomAD, so "not in gnomAD" in that case would assert
+something the bundle cannot support. A bundle already in place is not rebuilt until
+the downloader sees a new version, so a version 2 bundle is still live somewhere: it
+has no such file, its table was cut over the exons alone, and ``regions.bed``
+describes it exactly. Both are read, the table's own file first, and ``wider`` says
+which answered, because what a missing number means depends on it.
 """
 
 import bisect
@@ -55,6 +60,11 @@ DEFAULT_BUNDLE = Path(
 )
 
 GNOMAD_FILE = "gnomad.tsv.gz"
+#: The intervals the frequency table was cut over: the pharmacogenes' coding exons
+#: and every position PharmCAT's or PyPGx's own definitions name. Bundle version 3
+#: and later write it; before that the table was cut over the exons alone, and
+#: regions.bed described both, so an older bundle still answers with that.
+GNOMAD_REGIONS_FILE = "gnomad_regions.bed"
 REGIONS_FILE = "regions.bed"
 MANIFEST_FILE = "manifest.json"
 
@@ -190,6 +200,17 @@ def _gnomad(row: Mapping[str, str]) -> Dict[str, Any]:
     }
 
 
+def wider(bundle: Optional[Path] = None) -> bool:
+    """Whether this bundle's frequency table was cut wider than the coding exons.
+
+    True when it carries its own region file, which bundle version 3 and later write
+    (annotation_bundle.called_regions): then a position the data does not reach is
+    neither a coding exon nor one either caller's definitions name, and calling it a
+    promoter or intronic core variant would be a guess.
+    """
+    return (Path(bundle or DEFAULT_BUNDLE) / GNOMAD_REGIONS_FILE).exists()
+
+
 def release(bundle: Optional[Path] = None) -> Optional[str]:
     """Which gnomAD release the bundle holds, for the report to name."""
     path = Path(bundle or DEFAULT_BUNDLE) / MANIFEST_FILE
@@ -226,7 +247,9 @@ def resolve(
     if not keys:
         return {}
     rows = _rows(table, keys.values())
-    regions = Regions(directory / REGIONS_FILE)
+    regions = Regions(directory / GNOMAD_REGIONS_FILE)
+    if not regions:
+        regions = Regions(directory / REGIONS_FILE)
     out: Dict[str, Dict[str, Any]] = {}
     for text, key in keys.items():
         row = rows.get(key)
@@ -328,6 +351,10 @@ def annotate_genes(
         "shown": shown,
         "total": len(texts),
         "release": release(bundle),
+        # Whether the frequency table reaches past the coding exons: the wording of
+        # what a missing number means turns on it, in the note below and in the
+        # evidence table's footnote.
+        "wider": wider(bundle),
         # The template prints this phrase in its footnote; one spelling, here.
         "no_data": NO_DATA,
         "rare": sorted(rare, key=lambda r: (r["gene"], r["allele"])),
@@ -377,14 +404,25 @@ def note(summary: Optional[Mapping[str, Any]]) -> Optional[str]:
         f"{reached}"
     ]
     if shown != total:
-        out.append(
-            ": the rest sit outside the regions it covers, which are the "
-            "pharmacogenes' coding exons and their splice sites, and a core variant "
-            "is often in a promoter or an intron instead"
-            if shown
-            else ", which cover the pharmacogenes' coding exons and their splice "
-            "sites: a core variant is often in a promoter or an intron instead"
-        )
+        # Why a variant has no number. Said only where it is true: a bundle whose
+        # table reaches every position either caller can name (``wider``) leaves out
+        # nothing that could be explained by the exons, and over the 61 GeT-RM
+        # genomes it leaves out nothing at all.
+        if shown:
+            out.append(": the rest sit outside the regions it covers")
+            if not summary.get("wider"):
+                out.append(
+                    ", which are the pharmacogenes' coding exons and their splice "
+                    "sites, and a core variant is often in a promoter or an intron "
+                    "instead"
+                )
+        else:
+            out.append(
+                ", whose regions do not reach them"
+                if summary.get("wider")
+                else ", which cover the pharmacogenes' coding exons and their splice "
+                "sites: a core variant is often in a promoter or an intron instead"
+            )
     if not shown:
         out.append(".</p>")
         return "".join(out)

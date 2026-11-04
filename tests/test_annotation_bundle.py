@@ -158,6 +158,112 @@ def test_every_gene_pharmcat_reports_is_checked_but_those_no_exon_scan_can_read(
         assert gene not in bundle.GENES, gene
 
 
+# --- the positions the callers can name, for the frequency table ----------
+#
+# The exons above answer "what else is in this gene"; these answer "how common is
+# the variant behind this call", and the answer is often not in an exon. The two
+# region sets are written to different files for that reason.
+
+PHARMCAT_VCF = """##fileformat=VCFv4.2
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr16\t31096368\trs9923231\tC\tT\t.\tPASS\tPX=VKORC1
+chr10\t94775367\trs12769205\tA\tG\t.\tPASS\tPX=CYP2C19
+"""
+
+# A quoted cell holding several variants, a cell with none, and a mitochondrial
+# position gnomAD's joint release has no file for.
+PYPGX_CSV = (
+    "Gene,StarAllele,ActivityScore,Function,GRCh37Core,GRCh37Tag,GRCh38Core,GRCh38Tag,SV\n"
+    'CYP3A5,*3,0.0,No Function,N/A,N/A,"7-99672916-T-C,7-99652770-T-C",N/A,FALSE\n'
+    "CYP2D6,*1,1.0,Normal Function,N/A,N/A,N/A,N/A,FALSE\n"
+    "MT-RNR1,*1,N/A,Normal Function,N/A,N/A,M-1555-A-G,N/A,FALSE\n"
+)
+
+
+def test_pharmcat_positions_come_from_its_own_panel(bundle, tmp_path):
+    path = tmp_path / "pharmcat_positions.vcf"
+    path.write_text(PHARMCAT_VCF)
+    assert bundle.pharmcat_positions(path) == {
+        "chr16": [31096368],
+        "chr10": [94775367],
+    }
+
+
+def test_pypgx_positions_come_from_its_allele_table(bundle, tmp_path):
+    """Core and tag columns, several to a cell, and N/A for none."""
+    path = tmp_path / "allele-table.csv"
+    path.write_text(PYPGX_CSV)
+    assert bundle.pypgx_positions(path) == {
+        "chr7": [99672916, 99652770],
+        "chrM": [1555],
+    }
+
+
+def test_a_called_position_is_kept_with_a_few_bases_either_side(bundle):
+    """Enough for an indel whose anchor sits a base off between two normalisations,
+    and no more: the position is where the caller's own definition puts it."""
+    called = bundle.called_regions({"chr16": [31096368]})
+    assert called == {
+        "chr16": [(31096368 - bundle.CALLED_FLANK, 31096368 + bundle.CALLED_FLANK)]
+    }
+    assert bundle.CALLED_FLANK < bundle.FLANK
+
+
+def test_positions_on_a_chromosome_gnomad_has_no_file_for_are_dropped(bundle):
+    """PyPGx types MT-RNR1; the joint release has no chrM, and asking for one would
+    fail the build rather than leave a gap."""
+    assert "chrM" not in bundle.called_regions({"chrM": [1555], "chr7": [99672916]})
+    assert "chrM" not in bundle.GNOMAD_CHROMS
+    assert {"chr1", "chr22", "chrX", "chrY"} <= bundle.GNOMAD_CHROMS
+
+
+def test_positions_a_few_bases_apart_become_one_interval(bundle):
+    assert bundle.called_regions({"chr1": [1000, 1003, 1200]}) == {
+        "chr1": [(995, 1008), (1195, 1205)]
+    }
+
+
+def test_the_frequency_table_is_cut_wider_than_the_unlisted_check_reads(bundle):
+    """The union keeps every exon interval and adds the called positions outside them.
+
+    Both sets are written: regions.bed is the unlisted check's scope and must not
+    move (docker/pypgx/unlisted_variants.py passes it to bcftools as its target
+    list), while gnomad_regions.bed describes the frequency table.
+    """
+    exons = bundle.coding_regions([{"chrom": "chr7", "cds": [[99660000, 99660100]]}])
+    called = bundle.called_regions({"chr7": [99672916], "chr16": [31096368]})
+    priced = bundle.merge_regions(exons, called)
+    inside = bundle.Regions(priced)
+    assert ("chr7", 99660050) in inside  # the exon
+    assert ("chr7", 99672916) in inside  # CYP3A5 *3, in an intron
+    assert ("chr16", 31096368) in inside  # VKORC1 -1639, in the promoter
+    assert ("chr7", 99665000) not in inside  # between them, still out
+    # Nothing is lost from the exons.
+    assert bundle.Regions(exons).regions["chr7"][0] in priced["chr7"]
+
+
+def test_the_pharmcat_pin_matches_the_one_the_downloader_fetches(bundle, downloader):
+    """Two pins of the same asset: a bundle cut at one release's positions while the
+    matcher genotypes another's would disagree silently, gene by gene."""
+    assert bundle.PHARMCAT_VERSION == downloader.PHARMCAT_VERSION
+    url, sha256 = bundle.SOURCES["pharmcat_positions"][:2]
+    assert (
+        sha256
+        == downloader.PHARMCAT_SHA256[bundle.PHARMCAT_VERSION]["pharmcat_positions"]
+    )
+    assert bundle.PHARMCAT_VERSION in url
+
+
+def test_the_pypgx_pin_matches_the_version_the_image_installs(bundle):
+    """The table is read at the tag of the release PyPGx runs from, not whatever is
+    newest: its positions are the ones the calls in this report were made at."""
+    dockerfile = (
+        Path(__file__).resolve().parents[1] / "docker" / "pypgx" / "Dockerfile.pypgx"
+    ).read_text()
+    assert f"pypgx=={bundle.PYPGX_VERSION}" in dockerfile
+    assert f"/pypgx/{bundle.PYPGX_VERSION}/" in bundle.SOURCES["pypgx_alleles"][0]
+
+
 def test_a_bundle_of_another_version_is_not_current(bundle, tmp_path):
     (tmp_path / "manifest.json").write_text('{"bundle_version": "0"}')
     assert bundle.current(tmp_path) is None

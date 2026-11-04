@@ -128,12 +128,12 @@
        ({{ rarity.release or 'gnomAD v4.1, joint release' }}). The highest group rather
        than an overall frequency, because an overall figure hides an allele that is
        common in one group and absent from the rest, as several of these are.
-       {{ rarity.shown }} of the {{ rarity.total }} variants above have one;
+       {% if rarity.shown == rarity.total %}Every variant above has one.{% else %}{{ rarity.shown }} of the {{ rarity.total }} variants above have one;
        &ldquo;{{ rarity.no_data }}&rdquo; marks a position this run&rsquo;s annotation data does
-       not reach, which is not a statement that gnomAD has never seen the variant. That
+       not reach, which is not a statement that gnomAD has never seen the variant.{% if not rarity.wider %} That
        data was built over the pharmacogenes&rsquo; coding exons and splice sites, and a
        core variant is often elsewhere &mdash; CYP2C19 *17&rsquo;s is in the promoter,
-       CYP3A5 *3&rsquo;s in an intron.</p>
+       CYP3A5 *3&rsquo;s in an intron.{% endif %}{% endif %}</p>
     {%- endif %}
 </div>
 {%- endif %}
