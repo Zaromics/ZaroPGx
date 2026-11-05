@@ -261,20 +261,28 @@ curated: true
     flag itself: the call it misses is the one call it does not mark `PASS`, which is an
     argument for the uncertainty item, not for adopting it.
     `scripts/getrm/caller-augmentation.md` has the table and the per-sample copy numbers.
-  - Trial BWA-FastAlign (https://github.com/zzhofict/BWA-FastAlign, bioconda
-    `bwa-fastalign` 1.0.0), which claims output identical to `bwa mem` 0.7.17 at 2.3 to
-    3.3 times its speed on AVX2. It would replace BwaSpark only where we align reads: the
-    FASTQ lane, where whole-genome input is the only real gain, and not the ALT-locus
-    re-alignment, where loading the index takes most of the time. Measure on NA12878: the
-    CYP2D6 FASTQ pair, then the ~1 GB pair, then the 30x genome reverted to FASTQ. Record
-    index build time, size and peak memory; `mem` wall time and peak memory over a thread
-    sweep that includes 14 (its issue #8 reports a segfault at exactly 14); a record-level
-    diff against plain `bwa mem`; whether it still reads the `.alt` file and sets MAPQ and
-    XA as bwa does; and the PyPGx and PharmCAT calls against the BwaSpark run. Adopt it only
-    if the calls are identical, no thread count crashes, it fits the 16 GB floor, and the
-    speedup is worth a second index and a rewritten alignment step (read groups, sorting
-    and the report's credits all change). Also list which other Zaromics tools align short
-    reads to a whole genome.
+  - BWA-FastAlign (https://github.com/zzhofict/BWA-FastAlign, bioconda `bwa-fastalign`
+    1.0.0) trialled Nov 2026 and **not adopted**: it cannot run on the 16 GB machine we
+    tell people is enough. Its identity claim does hold. At 8 threads on 4,000,000
+    NA12878 pairs against our own `pypgx_grch38.fasta`, all 8,053,056 records are
+    field-for-field identical to `bwa mem` 0.7.17 — the only differences anywhere in the
+    file are an `@HD` line bwa omits and an `MQ:i:` mate-MAPQ tag it adds — and it is
+    1.9 to 2.3 times faster (2.19x at 1 thread, 1.94x at 8, 1.92x at 14, 2.30x at 20),
+    which is under its claimed 2.3 to 3.3x at every thread count a deployment would use.
+    But it holds its whole index resident: **17.5 GB to align, flat from 1 thread to 20**,
+    against bwa's 5.2 GB, and under a 14 GB address-space cap it exits without aligning a
+    read (`[fmt_restore_sa] Failed to allocate 6370217992 bytes`). Building the index
+    takes 21.9 GB of RAM and 1 h 17 m and leaves 23.09 GB on disk, against bwa's 4.53 GB,
+    54 m and 5.41 GB, and `scripts/build-align-index.sh` is a documented host-side
+    prerequisite. Adopting it would mean raising the stated minimum to about 32 GB in
+    exchange for roughly 2x on one step of one input lane, with byte-identical calls, so
+    there is no accuracy to set against the cost. Two findings are worth keeping anyway:
+    its `.alt` handling is bwa's unchanged, so the ALT-locus advice above is not specific
+    to bwa's implementation; and `fastalign index` aborts outright on references below
+    about 50 MB (`[create_fmt_from_bwt] inconsistent fmt_size`, signal 6), leaving an
+    index with no `.fmt` — a bug worth reporting upstream, since a small test contig is
+    how anyone would first try it. Its issue #8 segfault at exactly 14 threads did not
+    reproduce here. Re-measure only if a release stops holding the suffix array resident.
 
 ## Reporting
 
