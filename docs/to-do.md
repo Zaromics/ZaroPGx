@@ -261,6 +261,20 @@ curated: true
     flag itself: the call it misses is the one call it does not mark `PASS`, which is an
     argument for the uncertainty item, not for adopting it.
     `scripts/getrm/caller-augmentation.md` has the table and the per-sample copy numbers.
+  - Trial BWA-FastAlign (https://github.com/zzhofict/BWA-FastAlign, bioconda
+    `bwa-fastalign` 1.0.0), which claims output identical to `bwa mem` 0.7.17 at 2.3 to
+    3.3 times its speed on AVX2. It would replace BwaSpark only where we align reads: the
+    FASTQ lane, where whole-genome input is the only real gain, and not the ALT-locus
+    re-alignment, where loading the index takes most of the time. Measure on NA12878: the
+    CYP2D6 FASTQ pair, then the ~1 GB pair, then the 30x genome reverted to FASTQ. Record
+    index build time, size and peak memory; `mem` wall time and peak memory over a thread
+    sweep that includes 14 (its issue #8 reports a segfault at exactly 14); a record-level
+    diff against plain `bwa mem`; whether it still reads the `.alt` file and sets MAPQ and
+    XA as bwa does; and the PyPGx and PharmCAT calls against the BwaSpark run. Adopt it only
+    if the calls are identical, no thread count crashes, it fits the 16 GB floor, and the
+    speedup is worth a second index and a rewritten alignment step (read groups, sorting
+    and the report's credits all change). Also list which other Zaromics tools align short
+    reads to a whole genome.
 
 ## Reporting
 
@@ -441,6 +455,9 @@ curated: true
 - [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
+- The lint gate covers `app` and `tests` only, so `docker/` goes unchecked. flake8 F824 on
+  `docker/genome-downloader/downloader_api.py:879`: `global download_status` is never
+  assigned in `_download_genomes`, only mutated, so the statement does nothing.
 
 ## Documentation
 
