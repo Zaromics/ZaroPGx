@@ -283,6 +283,27 @@ curated: true
     index with no `.fmt` — a bug worth reporting upstream, since a small test contig is
     how anyone would first try it. Its issue #8 segfault at exactly 14 threads did not
     reproduce here. Re-measure only if a release stops holding the suffix array resident.
+  - Consider BWA-FastAlign as an opt-in aligner for the FASTQ lane on Acceptable (64 GB)
+    and Preferred (128 GB) hardware, never as the default. It fits there: 17.5 GB resident
+    to align, plus the run's Java heaps (Nextflow 4 GB, HAPI 2 GB) and about 2 GB idle,
+    is about 26 GB. The gain is speed only, since the output is identical. It is about 2x
+    on the alignment step of one lane, and that lane takes 20 GB of reads by default
+    (`FASTQ_MAX_UPLOAD_BYTES`), which is a panel or an exome. It would matter only for
+    whole-genome FASTQs with the cap raised. Decide after two measurements on the 30x
+    NA12878 reverted to FASTQ:
+    - what share of the lane's wall time BwaSpark actually takes, beside
+      MarkDuplicatesSpark, sorting and indexing;
+    - whether the calls match the BwaSpark run, not only plain `bwa mem`.
+
+    If it is adopted, it needs:
+    - an explicit setting, not a guess from the host's RAM;
+    - its index built by an opt-in script (21.9 GB RAM, 1 h 17 m, 23 GB beside the
+      5 GB `.img`, which the ALT re-alignment still needs);
+    - gatk-api's memory limit raised;
+    - read groups set with `-R`, and sorting done outside GATK;
+    - a credit in the report;
+    - a fallback to BwaSpark on any non-zero exit, since upstream has no release and open
+      segfault reports.
 
 ## Reporting
 
