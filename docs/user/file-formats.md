@@ -15,8 +15,12 @@ title: Input formats
 | 23andMe, AncestryDNA, BED, FASTA, T2T-CHM13 | refused, with the reason | |
 
 One data file per analysis; a FASTQ's two mates count as one. A VCF, BCF or gVCF must hold
-one sample. Index files (`.bai`, `.crai`, `.csi`, `.tbi`, `.idx`) may be added; the
-pipeline makes its own. Only FASTQ has a size limit.
+one sample. Index files (`.bai`, `.crai`, `.csi`, `.tbi`, `.idx`) may be added. A `.bai` or
+`.csi` uploaded with a BAM is read against the data and kept beside it if it
+indexes that file; if it does not, the page says so and the pipeline indexes the
+BAM itself. For every other input the pipeline makes its own index — a CRAM, SAM
+or FASTQ becomes a BAM that is indexed as it is written, and a VCF is indexed in
+moments. Only FASTQ has a size limit.
 
 Every input then runs the same steps: PyPGx, mitochondrial calling (unless switched off),
 PharmCAT with PyPGx's and the other tools' calls as outside calls, and the reports.
