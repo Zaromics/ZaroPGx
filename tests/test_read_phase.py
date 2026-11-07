@@ -203,7 +203,8 @@ def test_the_note_says_which_way_the_reads_read_and_keeps_the_call():
     rows = [_row()]
     report_phase.annotate_genes(rows, HG00589_EVIDENCE, HG00589_RESULTS)
     note = rows[0]["read_phase_conflict"]
-    assert "same chromosome" in note["call_note"]
+    assert note["call_note"] == "Reads contradict this pairing (see Alerts)."
+    assert "same chromosome" in note["note"]
     assert "7 fragments" in note["note"]
     # The call itself is untouched: naming the right allele needs the definitions.
     assert rows[0]["diplotype"] == "*2/*21"
@@ -452,7 +453,8 @@ def _rendered(monkeypatch, tmp_path, evidence, results=None):
 def test_the_note_and_the_alert_reach_the_page(monkeypatch, tmp_path):
     # The page is escaped, so the note is matched on a stretch without an apostrophe.
     page = _rendered(monkeypatch, tmp_path, HG00589_EVIDENCE)
-    assert "variants on the same chromosome, which this call does not" in page
+    assert "Reads contradict this pairing" in page
+    assert "put them on the same chromosome" in page
     assert "The reads contradict how a call is phased" in page
     assert "only how they are paired" in page
     # The call is printed as it was called.
@@ -545,7 +547,68 @@ def test_a_run_without_names_still_gets_the_note():
     rows = [_row()]
     report_phase.annotate_genes(rows, HG00589_EVIDENCE, HG00589_RESULTS)
     assert rows[0]["read_phase_conflict"]["allows"] == []
-    assert "same chromosome" in rows[0]["read_phase_conflict"]["call_note"]
+    assert "Reads contradict this pairing" in (
+        rows[0]["read_phase_conflict"]["call_note"]
+    )
+
+
+def _worst_case_note():
+    """The longest the note beside a contradicted call gets: the most readings it
+    will name, and a phenotype that changes."""
+    rows = [_row_with_phenotype()]
+    evidence = json.loads(json.dumps(NAMED_EVIDENCE))
+    evidence["names"]["CYP2D6"]["allows"] = ["*1/*21", "*21/*39", "*21/*41"]
+    evidence["names"]["CYP2D6"]["phenotypes"] = ["Poor Metabolizer"]
+    report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
+    return rows[0]["read_phase_conflict"]["call_note"]
+
+
+def test_the_contradiction_note_stays_short_enough_for_its_column():
+    """It renders inside the gene table's 19%-wide Diplotype column, the same cell
+    open_note was cut out of for #213. The wording it replaced measured 213
+    characters here and 268 where the readings cannot be named."""
+    assert len(_worst_case_note()) <= 120, _worst_case_note()
+
+
+def test_the_contradiction_note_omits_what_the_rest_of_the_report_says():
+    """Each clause cut from the row is still printed where it has room to read."""
+    note = _worst_case_note()
+    for said_elsewhere in (
+        "same chromosome",
+        "not in question",
+        "reference panel",
+        "would make the phenotype",
+    ):
+        assert said_elsewhere not in note, said_elsewhere
+    found = report_phase.annotate_genes([_row()], HG00589_EVIDENCE, HG00589_RESULTS)
+    summary = report_phase.summary_note(found["CYP2D6"])
+    alert = report_phase.alert(found)
+    assert "same chromosome" in summary and "same chromosome" in alert
+    assert "not in question" in summary and "not in question" in alert
+    assert "reference panel" in alert
+    assert "would make the phenotype Poor Metabolizer" in report_phase.phenotype_note(
+        {"names": {"CYP2D6": {"phenotypes": ["Poor Metabolizer"]}}},
+        "CYP2D6",
+        "Intermediate Metabolizer",
+    )
+
+
+def test_more_readings_than_the_note_names_fall_back_to_what_they_agree_on():
+    rows = [_row()]
+    evidence = json.loads(json.dumps(NAMED_EVIDENCE))
+    evidence["names"]["CYP2D6"]["allows"] = [
+        "*1/*21",
+        "*21/*39",
+        "*21/*41",
+        "*21/*4",
+    ]
+    report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
+    note = rows[0]["read_phase_conflict"]["call_note"]
+    assert "every reading they allow carries *21" in note
+    # The long form, with the reason it cannot name the pair, is in the summary.
+    assert "do not reach enough of its variants" in (
+        rows[0]["read_phase_conflict"]["note"]
+    )
 
 
 def test_naming_reproduces_what_pypgx_itself_would_print():
@@ -610,7 +673,7 @@ def test_a_wrongly_paired_call_whose_phenotype_is_unchanged_says_so():
     rows = [_row_with_phenotype()]
     report_phase.annotate_genes(rows, NAMED_EVIDENCE, HG00589_RESULTS)
     note = rows[0]["read_phase_conflict"]
-    assert "the phenotype above is the same either way" in note["call_note"]
+    assert "same phenotype" in note["call_note"]
     assert "the phenotype above is the same either way" in note["note"]
 
 
@@ -620,7 +683,8 @@ def test_a_phasing_error_that_would_change_the_phenotype_says_that_instead():
     rows = [_row_with_phenotype()]
     report_phase.annotate_genes(rows, evidence, HG00589_RESULTS)
     note = rows[0]["read_phase_conflict"]
-    assert "would make the phenotype Poor Metabolizer" in note["call_note"]
+    assert note["call_note"].endswith(", Poor Metabolizer (see Alerts).")
+    assert "would make the phenotype Poor Metabolizer" in note["note"]
 
 
 def test_nothing_is_said_about_a_phenotype_pypgx_has_no_rule_for():
