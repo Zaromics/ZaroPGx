@@ -184,6 +184,25 @@ def _same(left: str, right: str) -> bool:
     return sorted(left.split("/")) == sorted(right.split("/"))
 
 
+def _phenotypes_for(
+    evidence: Mapping[str, Any], gene: str, printed: Any
+) -> Optional[Tuple[bool, List[str]]]:
+    """(whether the reads' reading keeps the printed phenotype, the phenotypes).
+
+    ``None`` when there is nothing to say either way: PyPGx has no phenotype for the
+    gene, or the row prints none to compare against.
+    """
+    entry = ((evidence.get("names") or {}).get(gene)) or {}
+    phenotypes = [str(p) for p in (entry.get("phenotypes") or []) if p]
+    if not phenotypes:
+        return None
+    shown = str(printed or "").strip()
+    if not shown:
+        return None
+    same = len(phenotypes) == 1 and phenotypes[0].casefold() == shown.casefold()
+    return same, phenotypes
+
+
 def phenotype_note(
     evidence: Mapping[str, Any], gene: str, printed: Any
 ) -> Optional[str]:
@@ -195,16 +214,29 @@ def phenotype_note(
     is the difference between a note a reader must act on and one they need only
     know about.
     """
-    entry = ((evidence.get("names") or {}).get(gene)) or {}
-    phenotypes = [str(p) for p in (entry.get("phenotypes") or []) if p]
-    if not phenotypes:
+    answer = _phenotypes_for(evidence, gene, printed)
+    if answer is None:
         return None
-    shown = str(printed or "").strip()
-    if not shown:
-        return None
-    if len(phenotypes) == 1 and phenotypes[0].casefold() == shown.casefold():
+    same, phenotypes = answer
+    if same:
         return "the phenotype above is the same either way"
     return "this would make the phenotype " + _names_phrase(phenotypes)
+
+
+def phenotype_tag(
+    evidence: Mapping[str, Any], gene: str, printed: Any
+) -> Optional[str]:
+    """``phenotype_note``'s answer in the words the row beside the call has for it.
+
+    The sentence form is still printed, in the Executive Summary's note, which has
+    the width of the page; this prints in a cell 19% of the table wide. See
+    ``call_note``.
+    """
+    answer = _phenotypes_for(evidence, gene, printed)
+    if answer is None:
+        return None
+    same, phenotypes = answer
+    return "same phenotype" if same else _names_phrase(phenotypes)
 
 
 # More readings than this is a list rather than a statement. The service already
@@ -233,6 +265,22 @@ def arrangement_phrase(found: Mapping[str, Any]) -> str:
     return ""
 
 
+def arrangement_tag(found: Mapping[str, Any]) -> str:
+    """``arrangement_phrase`` in the words the row beside the call has for it.
+
+    The long form explains why it cannot name the pair; the row has no space for the
+    explanation, and ``summary_note`` gives it under the same call in the Executive
+    Summary. See ``call_note``.
+    """
+    names = [str(n) for n in (found.get("allows") or []) if n]
+    if 0 < len(names) <= MAX_NAMES:
+        return f"they read {_names_phrase(names)}"
+    settles = [str(a) for a in (found.get("settles") or []) if a]
+    if names and settles:
+        return f"every reading they allow carries {_names_phrase(settles)}"
+    return ""
+
+
 def settled_names(evidence: Mapping[str, Any], gene: str) -> List[str]:
     """The alleles every arrangement the reads allow agrees on, from the service."""
     entry = ((evidence.get("names") or {}).get(gene)) or {}
@@ -248,16 +296,24 @@ def _names_phrase(names: Sequence[str]) -> str:
 
 
 def call_note(found: Mapping[str, Any]) -> str:
-    """The line beside the call."""
-    note = (
-        "The reads place two of this call's variants on "
-        f"{_where(str(found.get('shows')))}, which this call does not"
-    )
-    phrase = arrangement_phrase(found)
-    if phrase:
-        note += f"; {phrase}"
-    if found.get("phenotype_note"):
-        note += f", and {found['phenotype_note']}"
+    """The line beside the call, in one short sentence.
+
+    It prints inside the gene table's Diplotype column, 19% of the table's width,
+    where the wording it replaced ran 213 characters with the readings named and 268
+    with them unreachable -- the same ribbon of text in the narrowest column that
+    ``open_note`` was cut out of for #213. Nothing it said is lost. ``summary_note``
+    prints the whole of it under the same call in the Executive Summary; the Alerts
+    entry names the gene, the number of fragments and which chromosomes they put the
+    variants on; and ``coverage_note``'s Methodology paragraph attributes the pairing
+    to the phaser. The printed call's own phenotype is in the same row's Phenotype
+    cell, two columns over, so the tag here is the reads' reading, not that one.
+    """
+    note = "Reads contradict this pairing"
+    tag = arrangement_tag(found)
+    if tag:
+        note += f"; {tag}"
+    if found.get("phenotype_tag"):
+        note += f", {found['phenotype_tag']}"
     return note + " (see Alerts)."
 
 
@@ -299,6 +355,9 @@ def annotate_genes(
         detail["settles"] = settled_names(evidence, gene) if detail["allows"] else []
         if detail["allows"]:
             detail["phenotype_note"] = phenotype_note(
+                evidence, gene, row.get("phenotype")
+            )
+            detail["phenotype_tag"] = phenotype_tag(
                 evidence, gene, row.get("phenotype")
             )
         row["read_phase_conflict"] = {
