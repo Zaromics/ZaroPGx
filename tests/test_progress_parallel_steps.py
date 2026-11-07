@@ -15,6 +15,9 @@ It is now a weighted sum over the job's steps: each weighs what it takes on a wh
 genome (STEP_EXPECTED_SECONDS); a finished one counts in full; a running one counts
 by its own reported progress, else by its elapsed time against its expectation, up
 to PACED_CEILING.
+
+The BAM replay is a 2026-11-04 job: a BAM upload is now indexed once in header
+analysis and the steps after it no longer index it themselves (BAM_STEP_SECONDS).
 """
 
 from __future__ import annotations
@@ -31,13 +34,13 @@ T0 = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
 BAM = (
     {"file_type": "bam", "needs_hla": True, "needs_mtdna": True},
     [
-        ("header_analysis", 0, 2, False),
-        ("hla_typing", 12, 258, False),
-        ("pypgx_bam2vcf", 259, 845, False),
-        ("pypgx_analysis", 846, 1163, True),
-        ("mtdna_analysis", 12, 253, False),
-        ("pharmcat_analysis", 1163, 1168, False),
-        ("report_generation", 1174, 1188, False),
+        ("header_analysis", 0, 134, False),
+        ("hla_typing", 141, 194, False),
+        ("pypgx_bam2vcf", 195, 391, False),
+        ("pypgx_analysis", 391, 718, True),
+        ("mtdna_analysis", 140, 183, False),
+        ("pharmcat_analysis", 718, 723, False),
+        ("report_generation", 725, 752, False),
     ],
 )
 CRAM = (
@@ -116,7 +119,8 @@ def _longest_flat_seconds(curve):
 @pytest.mark.parametrize(
     "job, label, flat_s, off_by",
     [
-        # Was 15.1 minutes flat at 65%, 44 points from elapsed time.
+        # On 2026-10-07's BAM, was 15.1 minutes flat at 65%, 44 points from elapsed
+        # time.
         (BAM, "replay-bam", 60, 15),
         # Was 4.8 minutes flat at 51%, 44 points off.
         (VCF, "replay-vcf", 60, 15),
@@ -200,7 +204,8 @@ def test_a_step_s_own_progress_wins_over_its_clock():
 
 
 def test_mtdna_from_a_variant_file_weighs_what_it_takes():
-    """27 s from the WGS VCF, against 4 minutes from reads."""
+    """27 s from the WGS VCF, against 4 minutes from reads (42 s from a BAM, whose
+    index is now made before the step: BAM_STEP_SECONDS)."""
     calc = WorkflowProgressCalculator()
     assert calc._expected_seconds("mtdna_analysis", {"file_type": "vcf"}) == 30
     assert (
@@ -209,7 +214,8 @@ def test_mtdna_from_a_variant_file_weighs_what_it_takes():
         )
         == 30
     )
-    assert calc._expected_seconds("mtdna_analysis", {"file_type": "bam"}) == 240
+    assert calc._expected_seconds("mtdna_analysis", {"file_type": "cram"}) == 240
+    assert calc._expected_seconds("mtdna_analysis", {"file_type": "bam"}) == 45
 
 
 def test_a_step_the_table_does_not_name_still_counts():

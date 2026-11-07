@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 import uuid
@@ -64,6 +65,7 @@ from app.api.utils.header_inspector import (
     header_cut_short,
     inspect_header,
 )
+from app.genome.alignment_index import index_bam
 from app.genome.contig_names import (
     RenamedCopyNotIndexed,
     rename_plan,
@@ -1462,6 +1464,50 @@ async def use_ucsc_contig_names(
     return renamed
 
 
+async def index_bam_upload(
+    job_service: JobService, job_id: str, file_path: str, input_type: str
+) -> Optional[str]:
+    """Index a BAM upload beside itself, once, before any step reads it; the index.
+
+    Every step then finds it (app/genome/alignment_index.py says why it is needed).
+    None when the input is not a BAM or already has a current index (a renamed copy
+    is indexed when it is made). A BAM that cannot be indexed is left as it was: the
+    steps meet it as they did before, and the log says why.
+    """
+    if str(input_type).lower() != "bam" or current_index(Path(file_path)) is not None:
+        return None
+    job_service.log_job_event(
+        job_id,
+        JobLogCreate(
+            step_name="header_analysis",
+            log_level=LogLevel.INFO,
+            message="Indexing the alignment once for every step that reads it",
+        ),
+    )
+    try:
+        index = await asyncio.to_thread(index_bam, file_path)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode(errors="replace").strip()[-500:]
+        job_service.log_job_event(
+            job_id,
+            JobLogCreate(
+                step_name="header_analysis",
+                log_level=LogLevel.WARN,
+                message=(
+                    "The alignment could not be indexed, so each step indexes it "
+                    f"itself and the reads' phase is not checked: {detail}"
+                ),
+            ),
+        )
+        return None
+    # Registered with the job, so it is released with the upload when the job ends.
+    job = job_service.get_job(job_id)
+    metadata = dict(getattr(job, "job_metadata", None) or {})
+    metadata["file_paths"] = [*(metadata.get("file_paths") or []), str(index)]
+    job_service.update_job(job_id, JobUpdate(metadata=metadata))
+    return str(index)
+
+
 async def process_file_nextflow_background(
     file_path: str,
     patient_id: str,
@@ -1573,6 +1619,10 @@ async def process_file_nextflow_background(
             if renamed:
                 file_path = renamed
                 output_data["contigs_renamed"] = "NCBI accessions to UCSC names"
+            if await index_bam_upload(
+                job_service, job_id, file_path, workflow.get("file_type", "vcf")
+            ):
+                output_data["alignment_indexed"] = True
 
             # Complete header analysis step
             step_update = JobStepUpdate(
