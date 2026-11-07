@@ -308,7 +308,14 @@ def test_a_frequency_too_small_to_print_is_not_called_zero():
 # per report and four at most, which is why naming them stays short enough to print.
 
 
-def test_the_note_names_the_calls_that_rest_on_a_rare_variant(bundle):
+def test_the_alert_names_the_calls_that_rest_on_a_rare_variant(bundle):
+    """The naming is an Alerts and Warnings entry, not a Methodology sentence.
+
+    It qualifies particular calls, which is what that section is for, and the
+    Methodology paragraph beside it describes the run. read_phase splits its alert
+    from its coverage paragraph the same way. The Methodology paragraph still says
+    the question was asked, and points at the alert.
+    """
     genes = [
         {
             "gene": "CYP2D6",
@@ -339,13 +346,21 @@ def test_the_note_names_the_calls_that_rest_on_a_rare_variant(bundle):
     ]
     summary = rarity.annotate_genes(genes, bundle)
     assert [r["allele"] for r in summary["rare"]] == ["*21"]
-    text = rarity.note(summary)
+    text = rarity.alert(summary)
     assert "CYP2D6 *21" in text
     assert "1 person in 100" in text
     # The common one is not named as rare.
     assert "CYP2C19" not in text
     # A reader is told what rarity does and does not mean.
     assert "not that it is less" in text
+    # Shaped like the other entries in that section (read_phase.alert).
+    assert text.startswith("<p>\u26a0\ufe0f <strong>") and text.endswith("</p>")
+
+    # The Methodology paragraph no longer carries the naming, but does not leave a
+    # reader of that page thinking the question was never asked.
+    note = rarity.note(summary)
+    assert "CYP2D6 *21" not in note
+    assert "named under Alerts and Warnings" in note
 
 
 def test_the_note_says_plainly_when_nothing_is_rare(bundle):
@@ -400,10 +415,12 @@ def test_the_note_counts_one_allele_in_the_singular(bundle):
             },
         }
     ]
-    text = rarity.note(rarity.annotate_genes(genes, bundle))
-    assert "1 of the alleles PyPGx called rests on" in text
+    summary = rarity.annotate_genes(genes, bundle)
+    assert "1 of the alleles PyPGx called rests on" in rarity.alert(summary)
     # "the 1 variants that define" is how a counter talks, not how a report reads.
-    assert "the one variant PyPGx reports behind an allele it called" in text
+    assert "the one variant PyPGx reports behind an allele it called" in rarity.note(
+        summary
+    )
 
 
 def test_the_note_reads_a_frequency_as_a_reader_would_say_it(bundle):
@@ -634,3 +651,59 @@ def test_the_note_does_not_claim_the_genes_pharmcat_called(bundle):
     assert "PharmCAT evidence table" in text
     # Never the unscoped phrasing.
     assert "the alleles called here" not in text
+
+
+def test_no_alert_when_nothing_rests_on_a_rare_variant(bundle):
+    """Rare by construction: none in 28 of the 61 GeT-RM genomes. A section whose
+    own words say its entries "qualify and significantly alter the interpretation"
+    must not carry an entry saying everything is ordinary."""
+    genes = [
+        {
+            "gene": "CYP2C19",
+            "pypgx": {
+                "supporting_variants": [
+                    {
+                        "allele": "*2",
+                        "variants": [{"variant": "10-94781859-G-A"}],
+                    }
+                ]
+            },
+        }
+    ]
+    summary = rarity.annotate_genes(genes, bundle)
+    assert summary["rare"] == []
+    assert rarity.alert(summary) is None
+    # The reassurance stays in Methodology, where it describes the run.
+    assert "none of the alleles PyPGx called rests on a rare variant" in rarity.note(
+        summary
+    )
+
+
+@pytest.mark.parametrize(
+    "summary", [None, {}, {"status": "failed"}, {"status": "done", "rare": []}]
+)
+def test_no_alert_without_something_to_qualify(summary):
+    assert rarity.alert(summary) is None
+
+
+def test_the_pointer_to_the_alert_agrees_with_its_count(bundle):
+    """One allele reads "rests ... it is", several "rest ... they are"."""
+
+    def _genes(*alleles):
+        return [
+            {
+                "gene": "CYP2D6",
+                "pypgx": {
+                    "supporting_variants": [
+                        {"allele": a, "variants": [{"variant": v}]} for a, v in alleles
+                    ]
+                },
+            }
+        ]
+
+    one = rarity.note(
+        rarity.annotate_genes(_genes(("*21", "22-42128241-CT-C")), bundle)
+    )
+    assert "1 of the alleles PyPGx called rests on" in one
+    assert "it is named under Alerts and Warnings" in one
+    assert "they are named" not in one

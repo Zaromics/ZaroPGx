@@ -2681,6 +2681,11 @@ def create_interactive_html_report(
             except Exception as _e:  # a missing frequency must not cost the report
                 logger.warning("Variant frequencies not read: %s", _e, exc_info=True)
                 rarity_context = {"status": "failed", "shown": 0, "total": 0}
+        # A call resting on a variant almost nobody carries qualifies that call, so it
+        # goes with the other qualifications in Alerts and Warnings, not into the
+        # Methodology paragraph beside it; rarity.note points at it from there. The
+        # split read_phase makes between its alert and its coverage paragraph.
+        _rarity_alert = rarity.alert(rarity_context)
         # The positions behind PharmCAT's own calls: the PDF lane's context, else
         # read from PharmCAT's report JSON beside this one, the file
         # probe_pharmcat_report already finds for its messages.
@@ -2722,7 +2727,8 @@ def create_interactive_html_report(
             **report_branding_context(),
             "header_text": header_text,
             # Add workflow warnings/alerts for report display
-            "workflow_warnings": workflow_warnings or [],
+            "workflow_warnings": list(workflow_warnings or [])
+            + ([_rarity_alert] if _rarity_alert else []),
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
             "gvcf_provenance": gvcf_provenance,
             "read_phase_coverage": read_phase_coverage,
@@ -4586,6 +4592,14 @@ def generate_report(
     # The PDF carries no evidence table, so this paragraph is where it says which of
     # its calls rest on a variant almost nobody has.
     template_data["rarity_note"] = rarity.note(_rarity)
+    # A call resting on a variant almost nobody carries qualifies that call, so it
+    # belongs with the other qualifications in Alerts and Warnings rather than in the
+    # Methodology paragraph beside it -- the split read_phase makes above. Rare by
+    # construction: a median of one allele per report over the 61 GeT-RM genomes.
+    _rarity_alert = rarity.alert(_rarity)
+    if _rarity_alert:
+        workflow_warnings = list(workflow_warnings) + [_rarity_alert]
+        template_data["workflow_warnings"] = workflow_warnings
     # Where the reads put two of a call's variants on the other chromosome from the
     # one the call asserts (app/reports/read_phase.py, from the run's
     # read_phase.json): a note beside the call, one in the Executive Summary and one

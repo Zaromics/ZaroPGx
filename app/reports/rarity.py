@@ -401,6 +401,40 @@ def _named(rare: Sequence[Mapping[str, str]]) -> str:
     )
 
 
+def _calls(n: int) -> str:
+    return (
+        "1 of the alleles PyPGx called"
+        if n == 1
+        else f"{n} of the alleles PyPGx called"
+    )
+
+
+def alert(summary: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """Alerts and Warnings' entry: the calls resting on a variant almost nobody has.
+
+    ``note`` is provenance -- what this run's frequency data reached, true of the run
+    as a whole and said of every run. This qualifies particular calls, which is what
+    Alerts and Warnings is for ("their implications can qualify and significantly
+    alter the interpretation of result data"), and it is rare by construction: over
+    the 61 GeT-RM genomes a median of one allele per report, four at most, none in 28
+    of them. The same split ``read_phase`` makes between ``alert`` and the phase
+    coverage paragraph, for the same reason.
+    """
+    if not summary or summary.get("status") != "done":
+        return None
+    rare = list(summary.get("rare") or [])
+    if not rare:
+        return None
+    one = len(rare) == 1
+    return (
+        f"<p>⚠️ <strong>{'A call rests' if one else 'Calls rest'} on a rare "
+        f"variant:</strong> {_calls(len(rare))} {'rests' if one else 'rest'} on a "
+        "variant seen in fewer than 1 person in 100 in every gnomAD genetic ancestry "
+        f"group: {_named(rare)}. A rare defining variant means the call is uncommon, "
+        "not that it is less certain.</p>"
+    )
+
+
 def note(summary: Optional[Mapping[str, Any]]) -> Optional[str]:
     """The Methodology paragraph: how common the variants behind the calls are.
 
@@ -453,12 +487,16 @@ def note(summary: Optional[Mapping[str, Any]]) -> Optional[str]:
         out.append(".</p>")
         return "".join(out)
     if rare:
+        # The naming itself is an Alerts and Warnings entry (``alert`` below): it
+        # qualifies particular calls, where the sentences around it describe the run.
+        # Said here only as a pointer, so a reader of this page is not left thinking
+        # the question was never asked. read_phase splits its alert from its coverage
+        # paragraph the same way.
+        one = len(rare) == 1
         out.append(
-            f". {len(rare)} of the alleles PyPGx called "
-            f"{'rests' if len(rare) == 1 else 'rest'} on a variant seen in fewer than "
-            f"1 person in 100 in every gnomAD genetic ancestry group: {_named(rare)}. "
-            "A rare defining variant means the call is uncommon, not that it is less "
-            "certain."
+            f". {_calls(len(rare))} {'rests' if one else 'rest'} on a variant almost "
+            f"nobody carries; {'it is' if one else 'they are'} named under Alerts and "
+            "Warnings."
         )
     else:
         out.append(
