@@ -71,9 +71,14 @@ curated: true
   been running, so it reaches 100% across any input type; it used to freeze for minutes
   when steps ran in parallel.
 - Accept uploads by URL (streamed). The upload takes files only.
-- Use the index uploaded with its data file. Multi-file selects work: an index chosen with
-  its file is paired by name and named on the page, FASTQ R1/R2 pairs are paired, but the
-  index itself is not used (`app/api/utils/file_processor.py`).
+- [DONE Nov 2026, feat/use-uploaded-bam-index] A BAM's index uploaded with it is used:
+  saved beside the upload, where every step that reads the BAM is handed it, once it has
+  been read against the data (`bam_index_mismatch` in `app/api/utils/file_utils.py`; 0.6 s
+  on NA12878's 30x BAM). An index of another file, or of an earlier version of the same
+  one under the same name, would send htslib to offsets that are not this file's, so one
+  that fails the check is dropped with a warning naming why. Other formats' indexes are
+  still named and not used: a CRAM, SAM or FASTQ becomes a BAM gatk-api indexes, and a
+  VCF is indexed in moments.
 - [DONE Oct 2026] Index files: a current index beside an alignment is reused, otherwise the
   service indexes it (`app/utils/shared_input.py`). Unaligned reads (FASTQ) are aligned to
   GRCh38's main contigs plus chr22_KI270879v1_alt, cut from the hg38 FASTA the genome
@@ -457,7 +462,8 @@ curated: true
 
 - Where should indexing responsibility live (always regenerate vs recognize existing)?
   (Answered in practice, Oct 2026: a current index beside the file is reused, otherwise
-  made. Open: using the index uploaded with the file, above.)
+  made. A BAM's uploaded index is used once it has been checked against the data, Nov
+  2026, above.)
 - How to unify pipeline progress across heterogeneous inputs (FASTQ/BAM/VCF)? (In
   part answered Oct 2026: steps weighted by measured duration per input path.)
 - Which schema to implement, ultimately?
