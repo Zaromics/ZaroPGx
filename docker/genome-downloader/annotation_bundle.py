@@ -1,11 +1,24 @@
-"""Build the annotation the unlisted-variant check reads: what is known about each
-position of the pharmacogenes' coding exons, cut from public sources to those exons.
+"""Build the annotation two report-time checks read: what is known about each
+position of the pharmacogenes' coding exons, and how common every variant either
+caller can name is, cut from public sources.
 
-The check (docker/pypgx/unlisted_variants.py) looks at every variant a run finds in
-these genes that no PharmCAT or PyPGx allele definition lists, and says what it does
-to the protein, how common it is and what ClinVar says of it. It runs offline: this
-bundle is all it reads. The genome downloader builds it once, into
-/reference/annotation (ANNOTATION_DIR), after the reference files.
+The first check (docker/pypgx/unlisted_variants.py) looks at every variant a run
+finds in these genes that no PharmCAT or PyPGx allele definition lists, and says what
+it does to the protein, how common it is and what ClinVar says of it. It reads
+regions.bed as its scope: the coding exons and their splice sites.
+
+The second (app/reports/rarity.py) asks the opposite question -- how common are the
+variants behind the calls themselves -- and the answer is not in the exons. A core
+variant is as often in a promoter or an intron: CYP2C19 *17's -806C>T, CYP3A5 *3's
+6986A>G, VKORC1's -1639G>A, IFNL3's rs12979860. Over the 61 GeT-RM genomes 111 of the
+306 distinct variants behind PyPGx's calls sit outside the coding exons, and so do 12
+of the 111 PharmCAT reads as anything but reference. So the frequency table is cut
+over a wider set: the exons, plus every position either caller's own definitions name
+(called_regions), written beside it as gnomad_regions.bed. regions.bed itself is
+unchanged, because the first check's scope is a different question from the second's.
+
+Both run offline: this bundle is all they read. The genome downloader builds it once,
+into /reference/annotation (ANNOTATION_DIR), after the reference files.
 
 Every source is free to use, commercial use included, so a company running ZaroPGx
 can use it as it is:
@@ -38,6 +51,7 @@ Standard library only: gnomAD's ranges are read through its tabix index (remote_
 from __future__ import annotations
 
 import argparse
+import csv
 import gzip
 import hashlib
 import json
@@ -54,7 +68,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 # Bump when the genes, a source or a file below changes: the downloader rebuilds a
 # bundle whose manifest names another version.
-BUNDLE_VERSION = "2"
+BUNDLE_VERSION = "3"
 
 # The genes checked: every gene PharmCAT 3.4 has allele definitions for, and the
 # drug-metabolising enzymes and transporters PyPGx types. PharmCAT's include genes
@@ -81,6 +95,31 @@ GENES = (
 # Each coding exon is read this far either side: the splice region (8 bp into the
 # intron) and the splice sites inside it.
 FLANK = 20
+# A called position is kept with this much either side. It is small on purpose: the
+# position is where the caller's own definition puts the variant, and the few bases
+# are for an indel whose anchor sits a base off between two normalisations of the
+# same change. Over 1,687 positions this adds about 18 kb of span.
+CALLED_FLANK = 5
+# The chromosomes gnomAD's joint release has a file for. PyPGx's table names 22
+# mitochondrial positions (MT-RNR1), which it has none for: the mitochondrial calls
+# are reported from the mtDNA lane, with their own frequencies, and a position asked
+# for here would only fail the build.
+GNOMAD_CHROMS = frozenset(f"chr{c}" for c in (*(str(n) for n in range(1, 23)), "X", "Y"))
+
+# Every position the two callers can name, for the frequency table (see the module
+# docstring). PharmCAT's positions VCF is the panel its matcher reads, 1,226
+# positions; PyPGx's allele table names the core and tag variants of every star
+# allele it calls, 1,205 positions. Together 1,687, of which 260 lie outside the
+# coding exons.
+#
+# PHARMCAT_VERSION is pinned here as well as in downloader_api.py, which fetches the
+# same asset into /reference/pharmcat: a test asserts the two agree, because a bundle
+# cut at one release's positions and a matcher genotyping another's would disagree
+# silently. PyPGx's table is read at the version docker/pypgx/Dockerfile.pypgx
+# installs, from the repository tag of that release rather than the wheel, and the
+# two are byte-identical (checked 2026-11-04).
+PHARMCAT_VERSION = "3.4.0"
+PYPGX_VERSION = "0.27.0"
 
 ENSEMBL = "https://ftp.ensembl.org/pub/release-116/gff3/homo_sapiens"
 GIAB = (
@@ -137,6 +176,20 @@ SOURCES = {
         "dfcfbbe52e10daa94522087f0e7c4d183da5595379c47845e2c38e594bcb9252",
         "GIAB stratifications v3.6",
         "NIST: public domain",
+    ),
+    "pharmcat_positions": (
+        f"https://github.com/PharmGKB/PharmCAT/releases/download/"
+        f"v{PHARMCAT_VERSION}/pharmcat_positions_{PHARMCAT_VERSION}.vcf",
+        "63f49b9004b6a5ca921deebe8ec59f8e45f6990543e07b7890c0d6201f5e69fc",
+        f"PharmCAT {PHARMCAT_VERSION}",
+        "MPL-2.0",
+    ),
+    "pypgx_alleles": (
+        f"https://raw.githubusercontent.com/sbslee/pypgx/{PYPGX_VERSION}/"
+        f"pypgx/api/data/allele-table.csv",
+        "140193fd106f0cd9826435702e5aadf7347de8e064c3bbc9444d0f56ede012d0",
+        f"PyPGx {PYPGX_VERSION}",
+        "MIT",
     ),
 }
 GNOMAD_SOURCE = {
@@ -247,6 +300,77 @@ def coding_regions(models: List[dict]) -> Dict[str, List[Tuple[int, int]]]:
         for start, end in m["cds"]:
             spans.setdefault(m["chrom"], []).append((start - FLANK, end + FLANK))
     merged = {}
+    for chrom, items in spans.items():
+        out: List[List[int]] = []
+        for start, end in sorted(items):
+            if out and start <= out[-1][1] + 1:
+                out[-1][1] = max(out[-1][1], end)
+            else:
+                out.append([start, end])
+        merged[chrom] = [tuple(x) for x in out]
+    return merged
+
+
+def pharmcat_positions(path: Path) -> Dict[str, List[int]]:
+    """Every position PharmCAT's matcher reads, from its positions VCF."""
+    found: Dict[str, List[int]] = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            col = line.split("\t", 2)
+            if len(col) > 1 and col[1].isdigit():
+                chrom = col[0] if col[0].startswith("chr") else f"chr{col[0]}"
+                found.setdefault(chrom, []).append(int(col[1]))
+    return found
+
+
+def pypgx_positions(path: Path) -> Dict[str, List[int]]:
+    """Every position PyPGx's allele table names, core and tag.
+
+    The table writes a variant as ``22-42128211-C-CG``, several to a cell, in the
+    GRCh38Core and GRCh38Tag columns; a cell with none says ``N/A``. Read with the
+    csv module because a cell holding several is quoted.
+    """
+    found: Dict[str, List[int]] = {}
+    with open(path, newline="", encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            for column in ("GRCh38Core", "GRCh38Tag"):
+                cell = (row.get(column) or "").strip()
+                if not cell or cell == "N/A":
+                    continue
+                for item in cell.split(","):
+                    part = item.strip().split("-")
+                    if len(part) == 4 and part[1].isdigit():
+                        chrom = part[0] if part[0].startswith("chr") else f"chr{part[0]}"
+                        found.setdefault(chrom, []).append(int(part[1]))
+    return found
+
+
+def called_regions(*positions: Dict[str, List[int]]) -> Dict[str, List[Tuple[int, int]]]:
+    """CALLED_FLANK either side of each position given, merged: 1-based, inclusive.
+
+    Only the chromosomes gnomAD has a file for (GNOMAD_CHROMS); the rest are dropped
+    here rather than at the fetch, where the miss would be a 404 and not a decision.
+    """
+    spans: Dict[str, List[Tuple[int, int]]] = {}
+    for part in positions:
+        for chrom, items in part.items():
+            if chrom not in GNOMAD_CHROMS:
+                continue
+            spans.setdefault(chrom, []).extend(
+                (pos - CALLED_FLANK, pos + CALLED_FLANK) for pos in items
+            )
+    return merge_regions(spans)
+
+
+def merge_regions(*parts: Dict[str, List[Tuple[int, int]]]) -> Dict[str, List[Tuple[int, int]]]:
+    """The union of the given region sets, merged per chromosome and sorted."""
+    spans: Dict[str, List[Tuple[int, int]]] = {}
+    for part in parts:
+        for chrom, items in part.items():
+            spans.setdefault(chrom, []).extend(items)
+    merged: Dict[str, List[Tuple[int, int]]] = {}
     for chrom, items in spans.items():
         out: List[List[int]] = []
         for start, end in sorted(items):
@@ -500,11 +624,21 @@ def build(out_dir: Path, cache: Path) -> dict:
         regions = coding_regions(models)
         inside = Regions(regions)
         write_regions_bed(regions, staging / "regions.bed")
+        # The frequency table's own scope: the exons, and every position either
+        # caller's definitions name. regions.bed above is left as it was, because
+        # the unlisted-variant check reads it as the scope of a different question.
+        called = called_regions(
+            pharmcat_positions(paths["pharmcat_positions"]),
+            pypgx_positions(paths["pypgx_alleles"]),
+        )
+        priced = merge_regions(regions, called)
+        write_regions_bed(priced, staging / "gnomad_regions.bed")
         counts = {
             "transcripts": len(models),
+            "called_positions": sum(len(v) for v in called.values()),
             "alphamissense": cut_alphamissense(paths["alphamissense"], inside, staging / "alphamissense.tsv.gz"),
             "clinvar": cut_clinvar(paths["clinvar"], inside, staging / "clinvar.tsv.gz"),
-            "gnomad": cut_gnomad(regions, staging / "gnomad.tsv.gz"),
+            "gnomad": cut_gnomad(priced, staging / "gnomad.tsv.gz"),
         }
         with gzip.open(staging / "lowconf.bed.gz", "wt") as w:
             counts["segdups"] = cut_bed(paths["segdups"], inside, "segmental duplication", w)
@@ -517,6 +651,7 @@ def build(out_dir: Path, cache: Path) -> dict:
             "genes": list(GENES),
             "genes_without_transcript": sorted(set(GENES) - {m["gene"] for m in models}),
             "flank": FLANK,
+            "called_flank": CALLED_FLANK,
             "counts": counts,
             "sources": {
                 name: {"url": url, "sha256": sha, "version": version, "licence": licence}

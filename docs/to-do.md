@@ -280,19 +280,54 @@ curated: true
   older run re-rendered gains the context, and the change needs no image rebuild.
   The mitochondrial haplogroup and its quality are in the report's mtDNA section
   (Aug 2026).
-  - Remaining, and its own piece of work: the bundle covers the pharmacogenes' coding
-    exons and splice sites, which reaches 195 of the 306 distinct variants behind
-    PyPGx's calls over those 61 genomes. The rest are promoter or intronic core
-    variants (CYP2C19 *17's -806C>T, CYP3A5 *3's 6986A>G) and read "No frequency
-    data", which is deliberately not "Not in gnomAD" -- none of the 306 is inside the
-    regions yet missing from gnomAD. Widening the builder's regions to every position
-    PharmCAT genotypes and every position in PyPGx's variant table would take it to
-    about all of them: a change to docker/genome-downloader/annotation_bundle.py, a
-    rebuild of that baked image and a new bundle.
-  - Also remaining: PharmCAT's own per-gene `variants` (chromosome, position, rsID,
-    call, reference allele) are in its report JSON, but no report surface lists them,
-    so none of its 25 genes shows a variant or a frequency. Giving them one means a
-    new table, which is a layout decision, not just a lookup.
+  - [DONE Nov 2026, feat/bundle-called-positions] Every variant behind a call now has
+    a frequency. The bundle covered the pharmacogenes' coding exons and splice sites,
+    which reached 195 of the 306 distinct variants behind PyPGx's calls over those 61
+    genomes; the rest were promoter or intronic core variants (CYP2C19 *17's -806C>T,
+    CYP3A5 *3's 6986A>G, VKORC1's -1639G>A) and read "No frequency data". The builder
+    now cuts the frequency table over those exons and over every position PharmCAT's
+    positions VCF or PyPGx's allele table names -- 1,687 positions, 260 of them
+    outside the exons -- and writes that wider set as gnomad_regions.bed, which
+    rarity.py reads in preference to regions.bed. regions.bed itself is byte-identical,
+    because the unlisted-variant check passes it to bcftools as its scope and that is
+    a different question. Measured against a bundle built by the real builder from the
+    pinned sources: PyPGx 195 of 306 to 306 of 306, PharmCAT's non-reference positions
+    99 of 111 to 111 of 111, every variant on every one of the 60 runs priced (was
+    2,284 of 5,038 occurrences), gnomAD rows 104,808 to 107,390, gnomad.tsv.gz 1.23 MB
+    to 1.26 MB, and the Methodology paragraph shorter by the clause it no longer needs
+    (median 642 to 470 characters). The two position lists are pinned sources like the
+    rest, at the PharmCAT and PyPGx versions the images install, with a test that the
+    pins cannot drift from them. Three runs now name a rare allele whose defining
+    variant had no frequency before, so the parent bullet's "none in 28" becomes
+    "none in 25"; the median is still one allele named per report and the most is
+    still four, and the PDF gains no page.
+    - To deploy: the bundle builder is baked into the genome-downloader image, so that
+      image has to be rebuilt, and the bundle itself rebuilt (BUNDLE_VERSION 3 makes
+      the downloader do it). The app side needs no image: rarity.py is on the bind
+      mount. Until the new bundle is in place rarity.py reads regions.bed as before,
+      and the report says what a version 2 bundle can support.
+  - [DONE Nov 2026, feat/pharmcat-variant-table] PharmCAT's own per-gene `variants`
+    (chromosome, position, rsID, call, reference allele, which alleles the position
+    defines) were in its report JSON and on no report surface, so none of the 23 genes
+    its matcher calls showed a variant or a frequency. The interactive report's Genes
+    tab now carries a PharmCAT evidence table beside the PyPGx one, gene by gene,
+    behind a disclosure each. Only the positions read as something other than
+    homozygous reference: it genotypes 1,066 positions over those genes and a median
+    of 14 of them differ (5 to 23 over the 61 GeT-RM genomes, across a median of 9
+    genes), so the table is a dozen rows and not a thousand. A position read as
+    reference is what leaves the reference allele standing there and adds nothing a
+    reader can weigh; the count of those, and of the positions it could not read at
+    all (median 2), is in the paragraph above the table. Interactive only, like the
+    PyPGx evidence panel: the PDF stays at its page count, and the Methodology
+    paragraph now says where these are instead of saying PharmCAT's genes name no
+    variants.
+    - Found in QA and fixed with it: 3 of the 111 variants PharmCAT reads as other
+      than reference over those genomes are indels it writes differently from gnomAD
+      (UGT1A1 *28 as `CAT>CATAT` against gnomAD's `C>CAT`), and the lookup said "Not
+      in gnomAD" of an allele a third of the world carries. rarity.variant_key now
+      reduces alleles to the minimal representation gnomAD stores, which is a no-op
+      for all 5,038 variant occurrences PyPGx names and makes all 111 of PharmCAT's
+      resolve.
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
 - [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context
