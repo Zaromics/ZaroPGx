@@ -261,6 +261,49 @@ curated: true
     flag itself: the call it misses is the one call it does not mark `PASS`, which is an
     argument for the uncertainty item, not for adopting it.
     `scripts/getrm/caller-augmentation.md` has the table and the per-sample copy numbers.
+  - BWA-FastAlign (https://github.com/zzhofict/BWA-FastAlign, bioconda `bwa-fastalign`
+    1.0.0) trialled Nov 2026 and **not adopted**: it cannot run on the 16 GB machine we
+    tell people is enough. Its identity claim does hold. At 8 threads on 4,000,000
+    NA12878 pairs against our own `pypgx_grch38.fasta`, all 8,053,056 records are
+    field-for-field identical to `bwa mem` 0.7.17 — the only differences anywhere in the
+    file are an `@HD` line bwa omits and an `MQ:i:` mate-MAPQ tag it adds — and it is
+    1.9 to 2.3 times faster (2.19x at 1 thread, 1.94x at 8, 1.92x at 14, 2.30x at 20),
+    which is under its claimed 2.3 to 3.3x at every thread count a deployment would use.
+    But it holds its whole index resident: **17.5 GB to align, flat from 1 thread to 20**,
+    against bwa's 5.2 GB, and under a 14 GB address-space cap it exits without aligning a
+    read (`[fmt_restore_sa] Failed to allocate 6370217992 bytes`). Building the index
+    takes 21.9 GB of RAM and 1 h 17 m and leaves 23.09 GB on disk, against bwa's 4.53 GB,
+    54 m and 5.41 GB, and `scripts/build-align-index.sh` is a documented host-side
+    prerequisite. Adopting it would mean raising the stated minimum to about 32 GB in
+    exchange for roughly 2x on one step of one input lane, with byte-identical calls, so
+    there is no accuracy to set against the cost. Two findings are worth keeping anyway:
+    its `.alt` handling is bwa's unchanged, so the ALT-locus advice above is not specific
+    to bwa's implementation; and `fastalign index` aborts outright on references below
+    about 50 MB (`[create_fmt_from_bwt] inconsistent fmt_size`, signal 6), leaving an
+    index with no `.fmt` — a bug worth reporting upstream, since a small test contig is
+    how anyone would first try it. Its issue #8 segfault at exactly 14 threads did not
+    reproduce here. Re-measure only if a release stops holding the suffix array resident.
+  - Consider BWA-FastAlign as an opt-in aligner for the FASTQ lane on Acceptable (64 GB)
+    and Preferred (128 GB) hardware, never as the default. It fits there: 17.5 GB resident
+    to align, plus the run's Java heaps (Nextflow 4 GB, HAPI 2 GB) and about 2 GB idle,
+    is about 26 GB. The gain is speed only, since the output is identical. It is about 2x
+    on the alignment step of one lane, and that lane takes 20 GB of reads by default
+    (`FASTQ_MAX_UPLOAD_BYTES`), which is a panel or an exome. It would matter only for
+    whole-genome FASTQs with the cap raised. Decide after two measurements on the 30x
+    NA12878 reverted to FASTQ:
+    - what share of the lane's wall time BwaSpark actually takes, beside
+      MarkDuplicatesSpark, sorting and indexing;
+    - whether the calls match the BwaSpark run, not only plain `bwa mem`.
+
+    If it is adopted, it needs:
+    - an explicit setting, not a guess from the host's RAM;
+    - its index built by an opt-in script (21.9 GB RAM, 1 h 17 m, 23 GB beside the
+      5 GB `.img`, which the ALT re-alignment still needs);
+    - gatk-api's memory limit raised;
+    - read groups set with `-R`, and sorting done outside GATK;
+    - a credit in the report;
+    - a fallback to BwaSpark on any non-zero exit, since upstream has no release and open
+      segfault reports.
 
 ## Reporting
 
@@ -441,6 +484,9 @@ curated: true
 - [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
+- The lint gate covers `app` and `tests` only, so `docker/` goes unchecked. flake8 F824 on
+  `docker/genome-downloader/downloader_api.py:879`: `global download_status` is never
+  assigned in `_download_genomes`, only mutated, so the statement does nothing.
 
 ## Documentation
 
