@@ -117,6 +117,33 @@ def test_without_regions_the_weaker_answer_is_given(bundle):
     assert found["10-94762874-G-A"] == rarity.NO_DATA
 
 
+def test_the_frequency_tables_own_regions_are_the_ones_read(bundle):
+    """From bundle version 3 the table is cut wider than the coding exons.
+
+    The promoter position below is outside regions.bed, which is the unlisted
+    check's scope, and inside gnomad_regions.bed, which is the table's own: with the
+    wider file there, absence is gnomAD's and not the bundle's, and the report says
+    so. CYP3A5 *3's 6986A>G is the real case -- an intronic core variant of an allele
+    carried by most of the world.
+    """
+    (bundle / "gnomad_regions.bed").write_text(
+        (bundle / "regions.bed").read_text() + "chr7\t99672910\t99672920\n"
+    )
+    assert (
+        rarity.lookup(["7-99672916-T-C"], bundle)["7-99672916-T-C"] == "Not in gnomAD"
+    )
+
+
+def test_an_older_bundle_is_read_through_the_only_file_it_has(bundle):
+    """Version 2 and earlier wrote regions.bed alone, and cut the table over it, so
+    that file describes the table there. A bundle in place is not rebuilt until the
+    downloader sees a new version, so both shapes are live at once."""
+    assert not (bundle / "gnomad_regions.bed").exists()
+    found = rarity.lookup(["10-94762874-G-A", "7-99672916-T-C"], bundle)
+    assert found["10-94762874-G-A"] == "Not in gnomAD"
+    assert found["7-99672916-T-C"] == rarity.NO_DATA
+
+
 def _genes():
     return [
         {
@@ -505,6 +532,44 @@ def test_a_position_covered_by_an_earlier_interval_is_still_covered(tmp_path):
     # And through the public path: inside the regions, so absence means gnomAD's.
     assert rarity.lookup(["1-8999-G-A"], tmp_path)["1-8999-G-A"] == "Not in gnomAD"
     assert rarity.lookup(["1-9500-G-A"], tmp_path)["1-9500-G-A"] == rarity.NO_DATA
+
+
+def test_the_note_blames_the_exons_only_where_they_are_to_blame(bundle):
+    """CYP3A5 *3's variant is intronic and outside this fixture's exons.
+
+    With a version 2 bundle that is the whole explanation and the paragraph gives it.
+    With version 3 the table reaches every position either caller can name, so a
+    variant it still misses is neither an exon nor a named position, and naming the
+    exons would be a guess. Over the 61 GeT-RM genomes version 3 misses none.
+    """
+    text = rarity.note(rarity.annotate_genes(_genes(), bundle))
+    assert "the rest sit outside the regions it covers" in text
+    assert "coding exons and their splice sites" in text
+
+    (bundle / "gnomad_regions.bed").write_text((bundle / "regions.bed").read_text())
+    wider = rarity.note(rarity.annotate_genes(_genes(), bundle))
+    assert "the rest sit outside the regions it covers" in wider
+    assert "coding exons" not in wider
+    assert "promoter" not in wider and "intron" not in wider
+
+
+def test_a_run_that_reaches_nothing_says_so_either_way(bundle):
+    """The same choice where no variant has a number at all."""
+    genes = [_genes()[1]]
+    assert "which cover the pharmacogenes' coding exons" in rarity.note(
+        rarity.annotate_genes(genes, bundle)
+    )
+    (bundle / "gnomad_regions.bed").write_text((bundle / "regions.bed").read_text())
+    text = rarity.note(rarity.annotate_genes([_genes()[1]], bundle))
+    assert "whose regions do not reach them." in text
+    assert "coding exons" not in text
+
+
+def test_the_table_s_own_regions_are_what_wider_asks_about(bundle):
+    assert rarity.wider(bundle) is False
+    (bundle / rarity.GNOMAD_REGIONS_FILE).write_text("chr1\t0\t1\n")
+    assert rarity.wider(bundle) is True
+    assert rarity.annotate_genes(_genes(), bundle)["wider"] is True
 
 
 def test_the_note_does_not_claim_the_genes_pharmcat_called(bundle):
