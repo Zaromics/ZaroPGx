@@ -60,6 +60,53 @@ def test_lower_case_bases_still_match():
     assert rarity.variant_key("15-74747271-at-a") == ("chr15", 74747271, "AT", "A")
 
 
+def test_one_change_written_two_ways_becomes_one_key():
+    """PharmCAT writes UGT1A1 *28 as CAT -> CATAT, gnomAD as C -> CAT.
+
+    Both put the same two bases into the same repeat at the same position. Without
+    reducing to the representation gnomAD stores, the lookup misses and the report
+    says "Not in gnomAD" of an allele about a third of the world carries.
+    """
+    assert rarity.variant_key("2-233760233-CAT-CATAT") == (
+        "chr2",
+        233760233,
+        "C",
+        "CAT",
+    )
+    assert rarity.variant_key("2-233760233-CAT-CATATAT") == (
+        "chr2",
+        233760233,
+        "C",
+        "CATAT",
+    )
+    # NUDT15's rs746071566, the third of the three real cases.
+    assert rarity.variant_key("13-48037782-AGGAGTC-AGGAGTCGGAGTC") == (
+        "chr13",
+        48037782,
+        "A",
+        "AGGAGTC",
+    )
+
+
+def test_a_variant_already_written_as_few_bases_as_it_takes_is_untouched():
+    """Every variant PyPGx names is already minimal: 5,038 of 5,038 occurrences over
+    the 61 GeT-RM genomes matched before this existed, and must still."""
+    for text, key in (
+        ("19-40991369-C-T", ("chr19", 40991369, "C", "T")),
+        ("22-42128211-C-CG", ("chr22", 42128211, "C", "CG")),
+        ("22-42128241-CT-C", ("chr22", 42128241, "CT", "C")),
+        ("15-74747271-at-a", ("chr15", 74747271, "AT", "A")),
+    ):
+        assert rarity.variant_key(text) == key, text
+
+
+def test_a_substitution_written_with_an_anchor_base_moves_to_its_own_position():
+    """The prefix trim, which the suffix trim cannot do for it: AG -> AC is a change
+    at the second base, and that is the position gnomAD files it under."""
+    assert rarity.minimal(100, "AG", "AC") == (101, "G", "C")
+    assert rarity.minimal(100, "A", "A") == (100, "A", "A")
+
+
 @pytest.mark.parametrize(
     "text", ["", "nonsense", "19-40991369-C", "19-x-C-T", "19-40991369-C-T-G", None, 7]
 )
@@ -581,6 +628,9 @@ def test_the_note_does_not_claim_the_genes_pharmcat_called(bundle):
     """
     text = rarity.note(rarity.annotate_genes(_genes(), bundle))
     assert "PyPGx reports behind the alleles it called" in text
-    assert "The genes PharmCAT called itself name no variants" in text
+    assert "The genes PharmCAT called itself are not counted here" in text
+    # And it says where theirs are, which is the table app/reports/pharmcat_variants.py
+    # builds: saying they name no variants was true only until that table existed.
+    assert "PharmCAT evidence table" in text
     # Never the unscoped phrasing.
     assert "the alleles called here" not in text

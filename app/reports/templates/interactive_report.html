@@ -162,8 +162,9 @@
         .disagreement-note {
             color: #8a4b00;
         }
-        .pypgx-evidence details { margin: 6px 0; }
-        .pypgx-evidence .evidence-table { width: auto; margin: 6px 0; font-size: 0.9em; }
+        .pypgx-evidence details, .pharmcat-evidence details { margin: 6px 0; }
+        .pypgx-evidence .evidence-table,
+        .pharmcat-evidence .evidence-table { width: auto; margin: 6px 0; font-size: 0.9em; }
         .pypgx-evidence .evidence-plots { display: flex; flex-wrap: wrap; gap: 12px; }
         .pypgx-evidence .evidence-plots img { max-width: 100%; height: auto; }
         .pypgx-evidence figure { margin: 0; max-width: 480px; }
@@ -889,6 +890,7 @@
 {% import "_unresolved_calls.html" as unresolved %}
 {% import "_pharmcat_messages.html" as pcmsg %}
 {% import "_unlisted_variants.html" as unlisted_variants %}
+{% import "_pharmcat_evidence.html" as pcvariants %}
     <header>
         <!-- <img class="logo" src="logo.png" alt="ZaroPGx Logo"> -->
         <h1>Individual Pharmacogenomic Report</h1>
@@ -1062,6 +1064,8 @@
         {{ pcmsg.gene_notes(diplotypes|sort(attribute='gene'), (pharmcat_notes or {}).general or [], (pharmcat_notes or {}).strand or []) }}
                 {{ unresolved.summary_uncalled(diplotypes, missing_positions_not_assumed) }}
                 {{ pypgx.evidence_panel(diplotypes, rarity) }}
+
+                {{ pcvariants.section(pharmcat_variants) }}
 
                 {{ pypgx.call_key(diplotypes) }}
 
