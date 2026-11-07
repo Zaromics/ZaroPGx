@@ -1095,7 +1095,7 @@
                     color: #888;
                 }
             }
-            .workflow-section {
+            .workflow-section:not(.workflow-flowed) {
                 page: workflow-page;
                 page-break-before: always !important;
                 page-break-after: always !important;
@@ -1105,7 +1105,7 @@
                 width: 200mm !important; /* A4 width (210mm) minus minimal margins (5mm × 2) */
                 height: 287mm !important; /* A4 height (297mm) minus minimal margins (5mm × 2) */
             }
-            .workflow-figure {
+            .workflow-section:not(.workflow-flowed) .workflow-figure {
                 margin: 0 !important;
                 padding: 0 !important;
                 background: #ffffff !important;
@@ -1121,7 +1121,7 @@
             /* The title where every other page has its heading, 16mm from the
                paper's edges (this page's margin is 5mm), in the same style; the
                diagram is placed under it (generator.workflow_pdf_style). */
-            .workflow-section > h2 {
+            .workflow-section:not(.workflow-flowed) > h2 {
                 position: absolute !important;
                 top: 11mm !important;
                 left: 11mm !important;
@@ -1130,6 +1130,27 @@
                 text-align: left !important;
                 /* Above the figure, whose white box covers the page. */
                 z-index: 2 !important;
+            }
+            /* No diagram: an ordinary section. The heading stays in flow, the note
+               sits under it, and one sentence does not claim a page of its own. The
+               note carries its own box, so the figure must not draw a second one
+               around it. */
+            .workflow-section.workflow-flowed {
+                page-break-before: auto !important;
+                page-break-after: auto !important;
+                width: auto !important;
+                height: auto !important;
+                position: static !important;
+            }
+            .workflow-section.workflow-flowed .workflow-figure {
+                width: auto !important;
+                height: auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: transparent !important;
+                border: none !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
             }
             /* The image's size and place come from its own style attribute
                (generator.workflow_pdf_style): as large as the page allows, in its
@@ -1708,7 +1729,14 @@
        PDF it fills a page of its own, and after the citations it left their tail
        on a mostly empty page and the closing licence lines alone on another. Now
        the licence closes the citations' last page. #}
-    <div class="section workflow-section" style="page-break-inside: avoid; break-inside: avoid;">
+    {# The print lane gives this section its own page and overlays the heading on the
+       diagram (@page workflow-page below). That layout assumes a diagram covers the
+       page: the heading is positioned absolutely over it. With only the HTML fallback --
+       a step list, or the note that the steps were not recorded -- there is nothing to
+       overlay, and the heading lands on top of the fallback's own box. So say which
+       case this is, and let the fallback render as an ordinary section. #}
+    {% set has_diagram = workflow_png_data_uri or workflow_png_file_url or workflow_kroki_svg %}
+    <div class="section workflow-section{% if not has_diagram %} workflow-flowed{% endif %}" style="page-break-inside: avoid; break-inside: avoid;">
         <h2>Workflow Diagram</h2>
         
         <!-- Primary Workflow Diagram (PNG preferred for PDF, SVG for screen) -->

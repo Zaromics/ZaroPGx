@@ -4,6 +4,11 @@ The workflow diagram fills a PDF page of its own. Placed after the citations, it
 left their tail on a mostly empty page and the closing licence lines alone on the
 last one (a real VCF report: pages 47 and 49 of 49, 31% and 22% used). It now
 comes before Platform and Citations, and the licence closes the citations' page.
+
+A run with no diagram is a different case: the section is then a heading and one
+sentence, which flows with its neighbours instead of taking a page of its own
+(test_report_workflow_fallback_page.py), so it may share the citations' page. The
+order is what this pins, not the page break.
 """
 
 from __future__ import annotations
@@ -60,7 +65,11 @@ def test_the_licence_closes_the_citations_page(monkeypatch, tmp_path):
     pages = _pages(monkeypatch, tmp_path)
     diagram = _page_of(pages, "Workflow Diagram")
     citations = _page_of(pages, "Platform and Citations")
-    assert diagram < citations
+    # Not strict: this fixture has no diagram, so the section is a heading and one
+    # sentence and shares the citations' page. What must never return is the old
+    # order -- the diagram after the citations -- which left their tail on a mostly
+    # empty page and the licence alone on the last one.
+    assert diagram <= citations
     # The licence lines follow the last citation on its page, not alone after
     # a page-filling diagram.
     licence = _page_of(pages, "ZaroPGx is distributed under the")
