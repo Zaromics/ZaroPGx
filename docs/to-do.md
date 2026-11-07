@@ -306,10 +306,28 @@ curated: true
       the downloader do it). The app side needs no image: rarity.py is on the bind
       mount. Until the new bundle is in place rarity.py reads regions.bed as before,
       and the report says what a version 2 bundle can support.
-  - Also remaining: PharmCAT's own per-gene `variants` (chromosome, position, rsID,
-    call, reference allele) are in its report JSON, but no report surface lists them,
-    so none of its 25 genes shows a variant or a frequency. Giving them one means a
-    new table, which is a layout decision, not just a lookup.
+  - [DONE Nov 2026, feat/pharmcat-variant-table] PharmCAT's own per-gene `variants`
+    (chromosome, position, rsID, call, reference allele, which alleles the position
+    defines) were in its report JSON and on no report surface, so none of the 23 genes
+    its matcher calls showed a variant or a frequency. The interactive report's Genes
+    tab now carries a PharmCAT evidence table beside the PyPGx one, gene by gene,
+    behind a disclosure each. Only the positions read as something other than
+    homozygous reference: it genotypes 1,066 positions over those genes and a median
+    of 14 of them differ (5 to 23 over the 61 GeT-RM genomes, across a median of 9
+    genes), so the table is a dozen rows and not a thousand. A position read as
+    reference is what leaves the reference allele standing there and adds nothing a
+    reader can weigh; the count of those, and of the positions it could not read at
+    all (median 2), is in the paragraph above the table. Interactive only, like the
+    PyPGx evidence panel: the PDF stays at its page count, and the Methodology
+    paragraph now says where these are instead of saying PharmCAT's genes name no
+    variants.
+    - Found in QA and fixed with it: 3 of the 111 variants PharmCAT reads as other
+      than reference over those genomes are indels it writes differently from gnomAD
+      (UGT1A1 *28 as `CAT>CATAT` against gnomAD's `C>CAT`), and the lookup said "Not
+      in gnomAD" of an allele a third of the world carries. rarity.variant_key now
+      reduces alleles to the minimal representation gnomAD stores, which is a no-op
+      for all 5,038 variant occurrences PyPGx names and makes all 111 of PharmCAT's
+      resolve.
 - Standardize folder naming of generated reports (timestamp-based) and place logs under `data/logs/`
 - [DONE] Display workflow ID specific Kroki/Mermaid workflow diagram in both HTML and PDF outputs
 - Add clear wording: sample vs patient terminology; avoid assumptions of medical context

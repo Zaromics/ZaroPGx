@@ -68,7 +68,13 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
-from app.reports import caller_agreement, rarity, read_phase, unlisted
+from app.reports import (
+    caller_agreement,
+    pharmcat_variants,
+    rarity,
+    read_phase,
+    unlisted,
+)
 from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
@@ -2574,6 +2580,7 @@ def create_interactive_html_report(
     pharmcat_notes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     unlisted_context: Optional[Dict[str, Any]] = None,
     rarity_context: Optional[Dict[str, Any]] = None,
+    pharmcat_variants_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -2674,6 +2681,19 @@ def create_interactive_html_report(
             except Exception as _e:  # a missing frequency must not cost the report
                 logger.warning("Variant frequencies not read: %s", _e, exc_info=True)
                 rarity_context = {"status": "failed", "shown": 0, "total": 0}
+        # The positions behind PharmCAT's own calls: the PDF lane's context, else
+        # read from PharmCAT's report JSON beside this one, the file
+        # probe_pharmcat_report already finds for its messages.
+        if pharmcat_variants_context is None:
+            try:
+                pharmcat_variants_context = pharmcat_variants.collect(
+                    probe_pharmcat_report(report_dir, str(report_id))
+                )
+            except Exception as _e:
+                logger.warning(
+                    "PharmCAT's own positions not tabled: %s", _e, exc_info=True
+                )
+                pharmcat_variants_context = {"status": "failed"}
 
         # Prepare the report data
         report_data = {
@@ -2690,6 +2710,7 @@ def create_interactive_html_report(
             "unlisted": unlisted_context,
             "rarity": rarity_context,
             "rarity_note": rarity.note(rarity_context),
+            "pharmcat_variants": pharmcat_variants_context,
             "pharmcat_notes": pharmcat_notes or {"general": [], "drugs": []},
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
@@ -4552,6 +4573,16 @@ def generate_report(
         logger.warning("Variant frequencies not read: %s", e, exc_info=True)
         _rarity = {"status": "failed", "shown": 0, "total": 0}
     template_data["rarity"] = _rarity
+    # The positions behind the calls PharmCAT made itself
+    # (app/reports/pharmcat_variants.py), from the report JSON it was given: the
+    # interactive report's PharmCAT evidence table. Not in template_data, because
+    # the print lane does not carry it -- it is passed to the interactive lane
+    # below, as its own argument.
+    try:
+        _pharmcat_variants = pharmcat_variants.collect(pharmcat_report)
+    except Exception as e:  # the table is evidence, not the report
+        logger.warning("PharmCAT's own positions not tabled: %s", e, exc_info=True)
+        _pharmcat_variants = {"status": "failed"}
     # The PDF carries no evidence table, so this paragraph is where it says which of
     # its calls rest on a variant almost nobody has.
     template_data["rarity_note"] = rarity.note(_rarity)
@@ -5180,6 +5211,7 @@ def generate_report(
                 pharmcat_notes=pharmcat_notes,
                 unlisted_context=unlisted_ctx,
                 rarity_context=_rarity,
+                pharmcat_variants_context=_pharmcat_variants,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 
