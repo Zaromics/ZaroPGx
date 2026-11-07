@@ -26,6 +26,8 @@ import logging
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from app.reports import rarity
+
 logger = logging.getLogger(__name__)
 
 RESULT_FILE = "unlisted_variants.json"
@@ -128,18 +130,13 @@ def _genomic(v: Mapping[str, Any]) -> str:
 
 
 def _frequency(v: Mapping[str, Any]) -> str:
-    g = v.get("gnomad")
-    if not g:
-        return "Not in gnomAD"
-    af = g.get("af_grpmax")
-    if af is None:
-        return "In gnomAD, frequency not given"
-    if af == 0:
-        return "In gnomAD, not seen in any group"
-    pct = 100 * af
-    text = f"{pct:.2g}%" if pct >= 0.01 else "under 0.01%"
-    group = g.get("grpmax")
-    return f"{text}{f' ({group})' if group else ''}"
+    """gnomAD's highest group frequency, worded as rarity.py words it.
+
+    One wording for both tables: these variants and the ones behind the calls. Every
+    variant here is inside the bundle's regions by construction, so a missing row
+    does mean gnomAD has not seen it.
+    """
+    return rarity.frequency_text(v.get("gnomad"))
 
 
 def _clinvar(v: Mapping[str, Any]) -> Dict[str, str]:

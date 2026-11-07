@@ -1274,6 +1274,13 @@
         {% if read_phase_coverage %}
             {{ read_phase_coverage|safe }}
         {% endif %}
+        {# The variants behind the calls, and how common they are
+           (app/reports/rarity.py). Beside the phase paragraph because both say what
+           this run could and could not establish about the calls it prints: that one
+           is about how variants are paired, this about how rare they are. #}
+        {% if rarity_note %}
+            {{ rarity_note|safe }}
+        {% endif %}
     </div>
 
     <div class="disclaimer">

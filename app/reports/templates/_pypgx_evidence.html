@@ -82,14 +82,15 @@
 {%- endif %}
 {%- endmacro %}
 
-{% macro evidence_panel(rows) -%}
+{% macro evidence_panel(rows, rarity=none) -%}
 {%- set with_evidence = rows|selectattr('pypgx')|list %}
+{%- set show_frequency = rarity and rarity.status == 'done' and rarity.shown %}
 {%- if with_evidence %}
 <div class="pypgx-evidence">
     <h4>PyPGx evidence</h4>
     <p>What PyPGx observed for each gene it called: the candidate alleles on each
        chromosome (its call first), the variants that define them with the fraction
-       of reads carrying each, and, for copy-number genes, its copy-number and
+       of reads carrying each{% if show_frequency %} and how common each one is{% endif %}, and, for copy-number genes, its copy-number and
        allele-fraction plots.</p>
     {%- for d in with_evidence|sort(attribute='gene') %}
     {%- set e = d.pypgx %}
@@ -101,11 +102,11 @@
         {{ call_notes(d) }}
         {%- if e.supporting_variants %}
         <table class="evidence-table">
-            <thead><tr><th>Allele</th><th>Defining variant</th><th>Allele fraction</th></tr></thead>
+            <thead><tr><th>Allele</th><th>Defining variant</th><th>Allele fraction</th>{% if show_frequency %}<th>Population frequency</th>{% endif %}</tr></thead>
             <tbody>
             {%- for a in e.supporting_variants %}
                 {%- for v in a.variants %}
-                <tr><td>{{ a.allele }}</td><td>{{ v.variant }}</td><td>{{ '%.2f'|format(v.allele_fraction) if v.allele_fraction is not none else '–' }}</td></tr>
+                <tr><td>{{ a.allele }}</td><td>{{ v.variant }}</td><td>{{ '%.2f'|format(v.allele_fraction) if v.allele_fraction is not none else '–' }}</td>{% if show_frequency %}<td>{{ v.frequency or '–' }}</td>{% endif %}</tr>
                 {%- endfor %}
             {%- endfor %}
             </tbody>
@@ -119,6 +120,21 @@
         {%- endif %}
     </details>
     {%- endfor %}
+    {%- if show_frequency %}
+    {#- Why the highest group frequency and not an overall one, and why some rows have
+        no number: app/reports/rarity.py. -#}
+    <p class="header-note">Population frequency: how often the variant is seen in the
+       gnomAD genetic ancestry group that carries it most, that group named
+       ({{ rarity.release or 'gnomAD v4.1, joint release' }}). The highest group rather
+       than an overall frequency, because an overall figure hides an allele that is
+       common in one group and absent from the rest, as several of these are.
+       {{ rarity.shown }} of the {{ rarity.total }} variants above have one;
+       &ldquo;{{ rarity.no_data }}&rdquo; marks a position this run&rsquo;s annotation data does
+       not reach, which is not a statement that gnomAD has never seen the variant. That
+       data was built over the pharmacogenes&rsquo; coding exons and splice sites, and a
+       core variant is often elsewhere &mdash; CYP2C19 *17&rsquo;s is in the promoter,
+       CYP3A5 *3&rsquo;s in an intron.</p>
+    {%- endif %}
 </div>
 {%- endif %}
 {%- endmacro %}

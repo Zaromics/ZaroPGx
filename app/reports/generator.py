@@ -68,7 +68,7 @@ from app.pharmcat.report_json import (
     extract_matcher_metadata,
     parse_pharmcat_version,
 )
-from app.reports import caller_agreement, read_phase, unlisted
+from app.reports import caller_agreement, rarity, read_phase, unlisted
 from app.reports.alt_locus import (
     alt_locus_alert,
     alt_locus_diagram_line,
@@ -2573,6 +2573,7 @@ def create_interactive_html_report(
     workflow_diagram: Optional[Dict[str, Any]] = None,
     pharmcat_notes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     unlisted_context: Optional[Dict[str, Any]] = None,
+    rarity_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Create an interactive HTML report with JavaScript visualizations.
@@ -2663,6 +2664,16 @@ def create_interactive_html_report(
         # from the same directory (without PyPGx's word on the sample's sex).
         if unlisted_context is None:
             unlisted_context = unlisted.context(unlisted.read_result(report_dir))
+        # How common the variants behind each call are: the PDF lane's summary, which
+        # also annotated these same gene rows. Computed here when this report is made
+        # on its own -- the four dicts that feed these templates have cost a fix that
+        # landed on one lane before (see report_branding_context).
+        if rarity_context is None:
+            try:
+                rarity_context = rarity.annotate_genes(diplotypes)
+            except Exception as _e:  # a missing frequency must not cost the report
+                logger.warning("Variant frequencies not read: %s", _e, exc_info=True)
+                rarity_context = {"status": "failed", "shown": 0, "total": 0}
 
         # Prepare the report data
         report_data = {
@@ -2677,6 +2688,8 @@ def create_interactive_html_report(
             ),
             "mtdna": mtdna_context,
             "unlisted": unlisted_context,
+            "rarity": rarity_context,
+            "rarity_note": rarity.note(rarity_context),
             "pharmcat_notes": pharmcat_notes or {"general": [], "drugs": []},
             "disclaimer": get_disclaimer(),
             "workflow_png_url": workflow_png_url,
@@ -4530,6 +4543,18 @@ def generate_report(
             "flagged": {},
         }
     unlisted.annotate_genes(data.get("genes", []), unlisted_ctx)
+    # How common each variant behind a call is (app/reports/rarity.py, from the
+    # annotation bundle's gnomAD extract): a frequency beside each one in the
+    # evidence table. Read at report time, so an older run re-rendered gains it too.
+    try:
+        _rarity = rarity.annotate_genes(data.get("genes", []))
+    except Exception as e:  # a missing frequency must not cost the report
+        logger.warning("Variant frequencies not read: %s", e, exc_info=True)
+        _rarity = {"status": "failed", "shown": 0, "total": 0}
+    template_data["rarity"] = _rarity
+    # The PDF carries no evidence table, so this paragraph is where it says which of
+    # its calls rest on a variant almost nobody has.
+    template_data["rarity_note"] = rarity.note(_rarity)
     # Where the reads put two of a call's variants on the other chromosome from the
     # one the call asserts (app/reports/read_phase.py, from the run's
     # read_phase.json): a note beside the call, one in the Executive Summary and one
@@ -4757,6 +4782,11 @@ def generate_report(
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
                 "gvcf_provenance": gvcf_provenance,
                 "read_phase_coverage": _read_phase_coverage,
+                # How common the variants behind the calls are (app/reports/rarity.py).
+                # Listed here and not only on the earlier template_data: this dict
+                # rebinds the name and is the one rendered into the HTML and the PDF.
+                "rarity": _rarity,
+                "rarity_note": rarity.note(_rarity),
                 "liftover_provenance": liftover_provenance,
                 # 159: run-derived provenance (each rendered only if resolved).
                 # This dict rebinds `template_data` and is the one actually fed
@@ -5149,6 +5179,7 @@ def generate_report(
                 workflow_diagram=workflow_diagram,
                 pharmcat_notes=pharmcat_notes,
                 unlisted_context=unlisted_ctx,
+                rarity_context=_rarity,
             )
             logger.info(f"Interactive HTML report generated: {interactive_html_path}")
 
