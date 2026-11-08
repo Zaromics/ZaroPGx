@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
+from app.reports.marks import CAUTION_SVG
+
 Boolish = Union[str, bool, None]
 
 
@@ -170,7 +172,7 @@ def assume_ref_alert(absent: bool, unspecified: bool) -> Optional[str]:
         assumed = "Positions the file lists without a genotype (<code>./.</code>)"
     (flag,) = pharmcat_cli_ref_flags(absent, unspecified)
     return (
-        f"<p>⚠️ {assumed} were assumed to be the reference allele (PharmCAT "
+        f"<p>{CAUTION_SVG} {assumed} were assumed to be the reference allele (PharmCAT "
         f"<code>{flag}</code>). Fabricating reference calls can over-call "
         "*1/Reference and normal phenotypes: a position the data never covered "
         "reads as reference. PharmCAT documents these flags as dangerous / "

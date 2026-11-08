@@ -192,7 +192,7 @@ def test_the_uploads_warnings_are_one_alert_a_line_each_every_line_marked():
     assert alert.startswith('<div class="input-warnings">')
     lines = _lines(alert)
     assert len(lines) == 3, lines
-    assert all(line.startswith("⚠") for line in lines), lines
+    assert all(line.startswith("⚠️") for line in lines), lines
     assert lines[0].endswith(
         "analysis. The analysis can proceed, however, the results will be "
         "incomplete and have degraded accuracy."

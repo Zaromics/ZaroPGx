@@ -24,6 +24,7 @@ import json
 import re
 from html import unescape
 from pathlib import Path
+from typing import Mapping
 
 import pytest
 
@@ -46,6 +47,7 @@ from app.reports.copy_number import (
     positions_summary_note,
     why_not_assessed,
 )
+from tests.report_marks import marks_as_characters
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "docker" / "pypgx" / "pypgx_wrapper.py"
@@ -287,7 +289,7 @@ def test_every_gene_has_both_notes_and_a_short_call_note():
 
 def test_the_alert_names_the_genes_why_and_what_would_assess_them():
     alert = copy_number_alert(["CYP2D6", "GSTM1", "UGT2B17"], VCF)
-    text = re.sub(r"<[^>]+>", "", alert)
+    text = re.sub(r"<[^>]+>", "", marks_as_characters(alert))
     assert text.startswith(
         "⚠️ Copy number not assessed: CYP2D6, GSTM1 and UGT2B17. The input was a VCF"
     )
@@ -402,6 +404,14 @@ def _render_pdf_template(rows):
 
 
 def _clean(fragment):
+    # An Alerts and Warnings entry is either a string (a warning) or
+    # {"tone": "info", "html": ...} (information): see generator's
+    # workflow_warnings docstring.
+    if isinstance(fragment, Mapping):
+        fragment = fragment.get("html", "")
+    # The marks are drawn, so put them back as the characters these
+    # expectations spell before the tags come out.
+    fragment = marks_as_characters(fragment)
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip()
 
 
@@ -411,20 +421,20 @@ def test_the_pdf_notes_the_call_the_summary_row_and_its_notes():
         page.index('id="exec-summary"') : page.index('id="exec-summary-notes"')
     ]
     row = summary[summary.index('id="summary-CYP2D6"') :]
-    assert "⚠ Copy number not assessed: see the notes" in _clean(
+    assert "⚠️ Copy number not assessed: see the notes" in _clean(
         row[: row.index("</tr>")]
     )
     cyp2c19 = summary[summary.index('id="summary-CYP2C19"') :]
     assert "Copy number" not in cyp2c19[: cyp2c19.index("</tr>")]
     notes = page[page.index('id="exec-summary-notes"') :]
     notes = _clean(notes[: notes.index("Genetic Results")])
-    assert f"⚠ CYP2D6 : {copy_number_note('CYP2D6', VCF)}" in notes
+    assert f"⚠️ CYP2D6 : {copy_number_note('CYP2D6', VCF)}" in notes
     # GSTM1 is outside PharmCAT's panel: no summary note, but its call is noted.
     assert "GSTM1" not in notes
     results = page[page.index("<h2>Genetic Results</h2>") :]
     for gene in ("CYP2D6", "GSTM1"):
         row = results[results.index(f"<td>{gene}</td>") :]
-        assert f"⚠ {copy_number_call_note(gene, VCF)}" in _clean(
+        assert f"⚠️ {copy_number_call_note(gene, VCF)}" in _clean(
             row[: row.index("</tr>")]
         )
     row = results[results.index("<td>CYP2C19</td>") :]
@@ -497,7 +507,7 @@ def test_a_vcf_report_says_so_and_a_whole_genome_does_not(monkeypatch, tmp_path)
     assert rows["CYP2D6"]["call_source"] == "OUTSIDE"
     assert rows["CYP2D6"]["called_by"] == "P"
     assert rows["CYP2D6"]["copy_number_not_assessed"]
-    assert "⚠ Copy number not assessed: see the notes" in body
+    assert "⚠️ Copy number not assessed: see the notes" in body
     assert "ABCB1" in rows and "copy_number_not_assessed" not in rows["ABCB1"]
 
     pypgx = _wgs_run()
@@ -733,11 +743,12 @@ def test_pypgxs_copy_number_in_the_same_run_is_stated_not_contradicted():
     assert measured_normal_genes(rows, pypgx) == ["CYP2B6", "CYP4F2"]
     # Measured, so neither is named as not assessed, and each is said once.
     text = _clean(pharmcat_copy_number_alert(rows, pypgx))
+    # Nothing found, so this is the all-clear: the info mark, not the caution one.
     assert text == (
-        "Structural alleles: PyPGx measured normal copy number for CYP2B6 (no *29 "
-        "or *30 hybrid, or duplication) and CYP4F2 (no whole-gene deletion)."
+        "ℹ️ Structural alleles: PyPGx measured normal copy number for CYP2B6 "
+        "(no *29 or *30 hybrid, or duplication) and CYP4F2 (no whole-gene deletion)."
     )
-    assert "⚠" not in text and "not assessed" not in text
+    assert "⚠️" not in text and "not assessed" not in text
 
 
 def test_every_listed_gene_can_be_measured():
@@ -793,7 +804,9 @@ def test_an_alignment_under_auto_keeps_pharmcats_calls_with_pypgxs_copy_number(
     # CYP2C19, SLCO1B1 and DPYD still not assessed, and said so.
     for gene in ("CYP2C19", "SLCO1B1", "DPYD"):
         row = page[page.index(f'id="summary-{gene}"') :]
-        assert "⚠ Copy number not assessed: see the notes" in row[: row.index("</tr>")]
+        assert "⚠️ Copy number not assessed: see the notes" in marks_as_characters(
+            row[: row.index("</tr>")]
+        )
     alerts = body[: body.index("Executive Summary")]
     assert "Structural alleles not assessed: CYP2C19, DPYD and SLCO1B1." in alerts
     assert (
@@ -882,7 +895,7 @@ def test_a_heading_names_only_genes_not_assessed():
     text = _clean(alert)
     assert text.count("PyPGx measured") == 1
     assert "the call shown is PharmCAT's" not in text
-    assert text.count("⚠") == 1
+    assert text.count("⚠️") == 1
 
 
 def test_a_report_notes_pharmcats_calls_once_and_apart(monkeypatch, tmp_path):
@@ -912,11 +925,11 @@ def test_a_report_notes_pharmcats_calls_once_and_apart(monkeypatch, tmp_path):
     for gene in list(PHARMCAT_MISSED) + ["DPYD"]:
         row = page[page.index(f'id="summary-{gene}"') :]
         assert "Copy number not assessed: see the notes" in row[: row.index("</tr>")]
-        assert "⚠ " + rows[gene]["copy_number_not_assessed"]["call_note"] in body
-        assert notes.count(f"⚠ {gene} : Copy number not assessed, so this call") == 1
+        assert "⚠️ " + rows[gene]["copy_number_not_assessed"]["call_note"] in body
+        assert notes.count(f"⚠️ {gene} : Copy number not assessed, so this call") == 1
     # The alert's paragraph is not copied behind the summary.
     assert "PharmCAT lists as undetectable" not in notes
-    assert "⚠ G6PD" not in body
+    assert "⚠️ G6PD" not in body
 
 
 PANEL = (
@@ -981,9 +994,9 @@ def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
     notes = page[page.index('id="exec-summary-notes"') :]
     notes = unescape(_clean(notes[: notes.index("<h2>Genetic Results</h2>")]))
     for gene in ("CYP2D6", "CYP2B6", "CYP4F2", "G6PD"):
-        assert f"⚠ {gene} : Copy number was not assessed" in notes, gene
+        assert f"⚠️ {gene} : Copy number was not assessed" in notes, gene
     for gene in ("CYP2C19", "SLCO1B1", "DPYD"):
-        assert f"⚠ {gene} : Copy number not assessed (PyPGx has no" in notes, gene
+        assert f"⚠️ {gene} : Copy number not assessed (PyPGx has no" in notes, gene
     document, _ = generator_module.render_pdf_document(page)
     assert len(section_pages(document, "exec-summary")) == 1
     ((_, used),) = section_fragments(document, "exec-summary")
@@ -992,7 +1005,7 @@ def test_the_notes_fit_one_page_in_the_worst_case(monkeypatch, tmp_path):
     # With room to spare, not just inside the page.
     ((_, notes_used),) = section_fragments(document, "exec-summary-notes")
     assert notes_used < 0.9, notes_used
-    assert "⚠ ABCG2, CACNA1S, CFTR" in notes
+    assert "⚠️ ABCG2, CACNA1S, CFTR" in notes
 
 
 def test_several_positions_notes_are_one_entry():
@@ -1262,8 +1275,8 @@ def test_dpyd_measured_normal_is_said_with_the_other_checked_genes():
     assert all("copy_number_not_assessed" not in r for r in rows)
     text = _clean(pharmcat_copy_number_alert(rows, pypgx))
     assert text.startswith(
-        "Structural alleles: Read depth showed no deletion in CYP2C19 (*36, *37) or "
-        "DPYD (of one exon or more), which ZaroPGx checks from the same depth and "
-        "control gene, PyPGx having no copy-number model for them."
+        "ℹ️ Structural alleles: Read depth showed no deletion in CYP2C19 "
+        "(*36, *37) or DPYD (of one exon or more), which ZaroPGx checks from the same "
+        "depth and control gene, PyPGx having no copy-number model for them."
     )
-    assert "⚠" not in text
+    assert "⚠️" not in text

@@ -24,6 +24,7 @@ from app.api.utils.file_utils import (
     has_index_file,
     matching_index,
 )
+from app.reports.marks import CAUTION_SVG
 
 VCF_BYTES = (
     b"##fileformat=VCFv4.2\n"
@@ -238,7 +239,7 @@ def test_preview_and_upload_say_what_happens_to_a_bams_index():
     )
     assert paired is None and notes == []
     assert warning == (
-        "<p>⚠️ sample.bai does not index sample.bam (it &lt;covers&gt; 2) and was "
+        f"<p>{CAUTION_SVG} sample.bai does not index sample.bam (it &lt;covers&gt; 2) and was "
         "not used. The pipeline indexes the data itself.</p>"
     )
 
@@ -283,7 +284,7 @@ def test_the_upload_drops_an_index_that_does_not_index_the_bam(tmp_path):
     assert result["file_analysis"].has_index is False
     workflow = result["workflow"]
     assert (
-        "<p>⚠️ sample.bai does not index sample.bam (reading the file through it "
+        f"<p>{CAUTION_SVG} sample.bai does not index sample.bam (reading the file through it "
         "failed) and was not used. The pipeline indexes the data itself.</p>"
     ) in workflow["warnings"]
     assert not any("is used" in r for r in workflow["recommendations"])

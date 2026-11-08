@@ -11,13 +11,13 @@
     "Normal" stays in the evidence panel: a note on every gene PyPGx
     checks for copy-number changes would bury the ones that have one. #}
 {%- if d.alt_locus and d.diplotype is a_call %}
-<div class="call-note alt-locus-note">⚠ {{ d.alt_locus.call_note }}</div>
+<div class="call-note alt-locus-note">{{ CAUTION }} {{ d.alt_locus.call_note }}</div>
 {%- endif %}
 {#- The reads put two of the call's variants on the other chromosome from the one it
     asserts (app/reports/read_phase.py): the alleles are not in question, the pairing
     of them into a diplotype is. #}
 {%- if d.read_phase_conflict and d.diplotype is a_call %}
-<div class="call-note read-phase-note">⚠ {{ d.read_phase_conflict.call_note }}</div>
+<div class="call-note read-phase-note">{{ CAUTION }} {{ d.read_phase_conflict.call_note }}</div>
 {%- elif d.read_phase_open and d.diplotype is a_call %}
 <div class="call-note read-phase-note">{{ d.read_phase_open.call_note }}</div>
 {%- endif %}
@@ -28,18 +28,18 @@
 {%- if d.copy_number_not_assessed.warn is sameas false %}
 <div class="call-note">{{ d.copy_number_not_assessed.call_note }}</div>
 {%- else %}
-<div class="call-note copy-number-note">⚠ {{ d.copy_number_not_assessed.call_note }}</div>
+<div class="call-note copy-number-note">{{ CAUTION }} {{ d.copy_number_not_assessed.call_note }}</div>
 {%- endif %}
 {%- endif %}
 {#- A variant no allele definition lists, predicted to stop or damage the protein
     (app/reports/unlisted.py): the call does not account for it. #}
 {%- if d.unlisted_flag and d.diplotype is a_call %}
-<div class="call-note unlisted-note">⚠ {{ d.unlisted_flag.call_note }}</div>
+<div class="call-note unlisted-note">{{ CAUTION }} {{ d.unlisted_flag.call_note }}</div>
 {%- endif %}
 {#- PyPGx named different alleles for a gene PharmCAT called itself
     (app/reports/caller_agreement.py): the printed call is one of two readings. #}
 {%- if d.caller_disagreement and d.diplotype is a_call %}
-<div class="call-note disagreement-note">⚠ {{ d.caller_disagreement.call_note }}</div>
+<div class="call-note disagreement-note">{{ CAUTION }} {{ d.caller_disagreement.call_note }}</div>
 {%- endif %}
 {#- PyPGx's copy-number call in words; its code is in the evidence panel. The
     deletion check's (CYP2C19, SLCO1B1, DPYD) is in the note above, in full. #}

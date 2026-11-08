@@ -29,6 +29,7 @@ from app.reports.pharmcat_tsv_parser import (
     parse_pharmcat_tsv,
     unresolved_summary_call,
 )
+from tests.report_marks import marks_as_characters
 
 DATA = Path(__file__).resolve().parents[1] / "test_data"
 REPORT_JSON = DATA / "pharmcat.unphased.example.report.json"
@@ -143,6 +144,7 @@ def test_the_database_lane_matches_the_json_lane(report):
 
 
 def _clean(fragment: str) -> str:
+    fragment = marks_as_characters(fragment)
     return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
 
 
@@ -172,7 +174,7 @@ def test_the_executive_summary_shows_the_candidates_not_a_cut_string(
     # The diplotype without the line under it: PharmCAT's own SLCO1B1 and CYP2B6
     # calls carry "Copy number not assessed: see the notes" (copy_number.py).
     rows = {
-        _clean(g): (_clean(d).split(" ⚠")[0], _clean(p), p)
+        _clean(g): (_clean(d).split(" ⚠️")[0], _clean(p), p)
         for g, d, p in re.findall(
             r'class="exec-summary-gene">(.*?)</td>\s*<td class="exec-summary-diplotype[^"]*">'
             r'(.*?)</td>\s*<td class="exec-summary-phenotype">(.*?)</td>',

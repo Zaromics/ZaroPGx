@@ -34,7 +34,7 @@
                 {%- if pc.priced %}<td>{{ r.frequency or '–' }}</td>{% endif %}
             </tr>
             {%- if r.warnings %}
-            <tr class="pharmcat-variant-note"><td colspan="{{ 5 if pc.priced else 4 }}">{% for w in r.warnings %}<div class="call-note">⚠ {{ w }}</div>{% endfor %}</td></tr>
+            <tr class="pharmcat-variant-note"><td colspan="{{ 5 if pc.priced else 4 }}">{% for w in r.warnings %}<div class="call-note">{{ CAUTION }} {{ w }}</div>{% endfor %}</td></tr>
             {%- endif %}
             {%- endfor %}
             </tbody>

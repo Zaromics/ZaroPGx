@@ -67,6 +67,7 @@ from pathlib import Path
 import pytest
 
 import app.api.routes.upload_router as ur
+from app.reports.marks import CAUTION_SVG
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN_NF = REPO_ROOT / "pipelines" / "pgx" / "main.nf"
@@ -977,13 +978,13 @@ def _vcf_workflow(**analysis_kwargs):
 # changes while nobody is looking at it, which is what this list is here to catch.
 VCF_WARNINGS_BEFORE_THE_SPLIT = [
     # Once two paragraphs, the second without the mark; one warning since.
-    "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis. "
+    f"<p>{CAUTION_SVG} VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis. "
     "The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>",
     "<p class='preflight'>If you have an upstream, or original, datafile, such as BAM/SAM/CRAM, please consider uploading it instead in order for the PGx analysis to yield complete results with optimal fidelity.</p>",
     "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>",
-    "<p>⚠️ HLA typing can not be performed.</p>",
-    "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>",
-    "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>",
+    f"<p>{CAUTION_SVG} HLA typing can not be performed.</p>",
+    f"<p>{CAUTION_SVG} CYP2D6 typing will be performed with degraded accuracy.</p>",
+    f"<p>{CAUTION_SVG} All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>",
 ]
 
 VCF_RECOMMENDATIONS_BEFORE_THE_SPLIT = [

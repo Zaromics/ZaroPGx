@@ -37,6 +37,7 @@ from app.reports.alt_locus import (
     alt_locus_flags,
     annotate_alt_locus,
 )
+from tests.report_marks import marks_as_characters
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "docker" / "pypgx" / "pypgx_wrapper.py"
@@ -356,15 +357,19 @@ def _render_pdf_template(rows, execsum=True):
         "rec_lookup_phenotype": "Poor Metabolizer",
         "rec_lookup_activity_score": 0,
     }
-    return env.get_template("report_template.html").render(
-        execsum_from_tsv=[tsv] if execsum else [],
-        diplotypes=rows,
-        recommendations=[],
-        patient_id="p",
-        report_id="r",
-        report_date="2026-10-14",
-        organization="ZaroPGx",
-        disclaimer="",
+    # The caveat marks are drawn, so put them back as the characters the
+    # assertions below spell (tests/report_marks.py).
+    return marks_as_characters(
+        env.get_template("report_template.html").render(
+            execsum_from_tsv=[tsv] if execsum else [],
+            diplotypes=rows,
+            recommendations=[],
+            patient_id="p",
+            report_id="r",
+            report_date="2026-10-14",
+            organization="ZaroPGx",
+            disclaimer="",
+        )
     )
 
 
@@ -375,26 +380,26 @@ def test_the_pdf_flags_the_call_the_summary_row_and_its_notes():
     )
     page = _render_pdf_template(rows)
     hla_b = page[page.index('id="summary-HLA-B"') :]
-    assert "⚠" not in hla_b[: hla_b.index("</tr>")]
+    assert "⚠️" not in hla_b[: hla_b.index("</tr>")]
     summary = page[
         page.index('id="exec-summary"') : page.index('id="exec-summary-notes"')
     ]
     row = summary[summary.index('id="summary-CYP2D6"') :]
     row = row[: row.index("</tr>")]
-    assert "⚠" in row
+    assert "⚠️" in row
     notes = page[page.index('id="exec-summary-notes"') :]
     notes = re.sub(r"\s+", " ", notes[: notes.index("Genetic Results")])
     assert (
-        "<strong>⚠ CYP2D6</strong>: 73% of the reads over this gene had mapping "
+        "<strong>⚠️ CYP2D6</strong>: 73% of the reads over this gene had mapping "
         "quality 0" in notes
     )
     # UGT2B15 is outside PharmCAT's panel: no summary note, but its call is flagged.
     assert "UGT2B15" not in notes
     results = page[page.index("Genetic Results") :]
     cyp2d6 = results[results.index("<td>CYP2D6</td>") :]
-    assert "⚠ 73% of reads had mapping quality 0" in cyp2d6[: cyp2d6.index("</tr>")]
+    assert "⚠️ 73% of reads had mapping quality 0" in cyp2d6[: cyp2d6.index("</tr>")]
     ugt2b15 = results[results.index("<td>UGT2B15</td>") :]
-    assert "⚠ 82% of reads had mapping quality 0" in ugt2b15[: ugt2b15.index("</tr>")]
+    assert "⚠️ 82% of reads had mapping quality 0" in ugt2b15[: ugt2b15.index("</tr>")]
 
 
 def test_an_unflagged_report_is_unchanged():
@@ -431,6 +436,6 @@ def test_an_uncalled_gene_gets_no_call_note_only_the_alert():
     page = _render_pdf_template(rows, execsum=False)
     summary = page[page.index('id="exec-summary"') :]
     row = summary[summary.index('id="summary-CYP2D6"') :]
-    assert "⚠" not in row[: row.index("</tr>")]
+    assert "⚠️" not in row[: row.index("</tr>")]
     assert "this gene had mapping quality 0" not in page
     assert "CYP2D6 (99% of 187 reads)" in alt_locus_alert(output)

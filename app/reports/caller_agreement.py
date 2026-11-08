@@ -39,6 +39,7 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from app.reports.copy_number import pharmcat_called
+from app.reports.marks import CAUTION_SVG
 
 # The second caller, named in every note this module writes.
 CALLER = "PyPGx"
@@ -213,7 +214,7 @@ def alert(found: Mapping[str, str]) -> Optional[str]:
         for gene, call in found.items()
     )
     return (
-        f"<p>⚠️ <strong>The two callers disagree:</strong> {items}. On an alignment "
+        f"<p>{CAUTION_SVG} <strong>The two callers disagree:</strong> {items}. On an alignment "
         f"ZaroPGx calls PharmCAT's genes with both PharmCAT and {CALLER}, for their "
         f"copy number, and prints PharmCAT's call. Here {CALLER} named different "
         "alleles from the same reads, so each printed call is one of two readings "
