@@ -29,7 +29,11 @@ fitted to it.
 **Cover.** Sample ID, report ID and date, and the reference build if the file was lifted
 over. **Methodology** says how the sample was analysed and whose guidelines PharmCAT applies
 (CPIC, DPWG, FDA), PharmCAT's allele-definition build and guideline data version, and how
-positions the file did not cover were treated. The disclaimer follows.
+positions the file did not cover were treated. It also says how many of the variants
+behind PyPGx's calls the run could find a population frequency for, and names any
+call resting on a variant seen in under 1% of people in every gnomAD genetic
+ancestry group: a rare defining variant makes a call uncommon, not uncertain. The
+disclaimer follows.
 
 **Alerts and Warnings.** What qualifies these results: limits of the input type (a VCF
 cannot give HLA calls, for instance), genes called from partial coverage, variants PharmCAT
@@ -273,6 +277,21 @@ A single HTML file with tabs: Alerts, Summary, Genes, mtDNA, Drugs, Recs, Visual
 Acknowledgements. It carries its own scripts (Chart.js and D3 included), so it works offline
 and when opened from the downloaded ZIP. **Export** links the job's FHIR bundle, PharmCAT's
 JSON, TSV and HTML, and the PDF, whichever were written.
+
+**Genes** carries the evidence behind the calls as well, a disclosure per gene, in two
+tables. PyPGx's gives the candidate alleles on each chromosome, the variants that
+define them, the fraction of reads carrying each, and a **Population frequency**
+column: the variant's frequency in the gnomAD genetic ancestry group that carries it
+most, with that group named, because an overall figure hides an allele that is common
+in one group and absent from the rest. A variant the annotation bundle holds no
+frequency for reads "No frequency data"; which variants those are depends on the
+bundle in place, and the footnote under the table says which case applies. PharmCAT's
+table sits beside it and gives what PharmCAT read at the positions it genotypes —
+only those read as something other than two copies of the reference base, since a
+position that matched the reference is what leaves the reference allele standing;
+the counts of those, and of the positions it could not read at all, are in the
+paragraph above it. Neither table is in the PDF, which carries the calls and what
+they mean rather than the genotypes under them.
 
 ## FHIR
 
