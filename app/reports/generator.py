@@ -2686,6 +2686,13 @@ def create_interactive_html_report(
         # Methodology paragraph beside it; rarity.note points at it from there. The
         # split read_phase makes between its alert and its coverage paragraph.
         _rarity_alert = rarity.alert(rarity_context)
+        # generate_report has already put this alert in the ``workflow_warnings`` it
+        # passes here; the re-render lanes (app/main.py, upload_router) read their
+        # warnings from the job's metadata, which has none. Adding it unconditionally
+        # printed it twice on the page and once in the PDF.
+        _warnings = list(workflow_warnings or [])
+        if _rarity_alert and _rarity_alert not in _warnings:
+            _warnings.append(_rarity_alert)
         # The positions behind PharmCAT's own calls: the PDF lane's context, else
         # read from PharmCAT's report JSON beside this one, the file
         # probe_pharmcat_report already finds for its messages.
@@ -2727,8 +2734,7 @@ def create_interactive_html_report(
             **report_branding_context(),
             "header_text": header_text,
             # Add workflow warnings/alerts for report display
-            "workflow_warnings": list(workflow_warnings or [])
-            + ([_rarity_alert] if _rarity_alert else []),
+            "workflow_warnings": _warnings,
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
             "gvcf_provenance": gvcf_provenance,
             "read_phase_coverage": read_phase_coverage,
