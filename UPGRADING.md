@@ -17,6 +17,64 @@ pins its own release and updates to nothing newer.
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
+## v0.4.1 → v0.4.2
+
+This release changes code inside the PyPGx and genome-downloader images, so it needs the new
+ones: `docker compose pull`, then `docker compose up -d`. The bootstrap update command above
+does both, in that order, which the annotation below depends on.
+
+### The annotation is rebuilt, and prices every variant either caller can name
+
+0.4.1's annotation covered the positions the unlisted-variant check reads. It now also covers
+every position PharmCAT or PyPGx names an allele from, so a report can say how common the
+variants behind a call are. The genome downloader rebuilds it on its first start after the
+update: about 1 GB fetched again from the same pinned sources, about 3 MB kept in
+`reference/annotation`.
+
+Pull the images before the stack starts. A 0.4.1 downloader that finds a 0.4.2 annotation on
+disk reads it as stale and builds it back down to the old one, so the new image has to be in
+place first. `ANNOTATION_ENABLED=false` still skips the whole thing.
+
+### Reports say how common each call's variants are
+
+The interactive report's evidence tables now carry a population frequency for each variant
+behind a call, from gnomAD v4.1's joint release, given as the highest genetic ancestry group's
+frequency rather than an average. A position this run's annotation does not reach is marked as
+having no frequency, which is not a claim that gnomAD has never seen the variant.
+
+When a call rests on a variant seen in fewer than 1 person in 100 in *every* group, Alerts and
+Warnings names that call, in the PDF as well as the page. A rare defining variant means the
+call is uncommon, not that it is less certain.
+
+### The reads are read against how a call is phased
+
+On an alignment — BAM, CRAM, SAM or FASTQ — ZaroPGx now checks each call's phasing against the
+reads themselves. Where the reads contradict the arrangement a call assumes, the report says
+so, names what the reads' own arrangement would be called, and says whether that changes the
+phenotype. Methodology says how much of the phasing the reads could check at all, since on most
+calls they cannot reach the defining variants. Neither caller's call is changed by the check. A
+VCF, BCF or gVCF carries no reads, so it does not run.
+
+### A BAM upload is indexed once, and its own index is used
+
+A BAM uploaded without an index was indexed again by every step that needed one, and never
+beside the upload itself — so the phasing check above never ran on that lane at all. The app now
+indexes a BAM once, beside the stored file. On the 30x NA12878 BAM this took the whole job from
+1,304 s to 752 s, and the phasing check from "not run" to done.
+
+A `.bai` or `.csi` uploaded beside a BAM is now kept and used, once it has been read against the
+data to confirm it belongs to it — 0.7 s on a 30x genome. An index that does not match is
+refused, and the page says why.
+
+### NUDT15 *2 is handed to PharmCAT under PharmCAT's own name
+
+PharmCAT 3.4 has no NUDT15 *2 in its allele definitions, so an outside call naming *2 was
+accepted and then left `Unassigned function`: the phenotype came out n/a and no thiopurine
+recommendation matched. PharmCAT's own *3 definition permits either state of the 6 bp
+duplication, so the haplotype PyPGx calls *2 is one PharmCAT calls *3. PyPGx's NUDT15 *2 is now
+translated to *3 on the way in — a rename into PharmCAT's nomenclature, not a loss of
+information — and the phenotype and its thiopurine guidance come through.
+
 ## v0.4.0 → v0.4.1
 
 ### The FHIR server's heap is set
