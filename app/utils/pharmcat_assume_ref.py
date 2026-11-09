@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
-from app.reports.marks import CAUTION_SVG
-
 Boolish = Union[str, bool, None]
 
 
@@ -159,6 +157,14 @@ def methodology_assume_ref_paragraph(absent: bool, unspecified: bool) -> Optiona
 
 def assume_ref_alert(absent: bool, unspecified: bool) -> Optional[str]:
     """The Alerts and Warnings entry for a run that assumed the reference allele."""
+    # Imported here, not at module scope: docker/pharmcat/Dockerfile copies this
+    # file ALONE into /assume-ref-lib and the sidecar imports it as a bare
+    # module, so there is no ``app`` package in that image. A module-level
+    # ``from app...`` import makes PharmCAT fail with ModuleNotFoundError before
+    # it runs. The sidecar imports only resolve_assume_ref_flags and
+    # pharmcat_cli_ref_flags, never this function.
+    from app.reports.marks import CAUTION_SVG
+
     if not absent and not unspecified:
         return None
     if absent and unspecified:
