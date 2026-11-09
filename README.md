@@ -115,65 +115,63 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 
 <u>Hardware</u>
 
-- *Virtualization*: Hardware Virtualization must be enabled for Windows and macOS users
-- *CPU*: x86-64 (64-bit Intel or AMD)
+- *Virtualization*: Hardware Virtualization must be enabled for Windows and macOS use
+- *CPU*: x86-64
 
-(resource usage, projected)
+Projected resource usage
 
-- *Internet connection*: <u>first run only</u> requires significant bandwidth to fetch images and load reference genomes; advisable to NOT be on a metered connection, and preferably use a wired one.
-- *Hardware, Minimum* (limited function): **4 CPU cores, 16 GB RAM, 100 GB storage**
-- *Hardware, Acceptable* (full function): **8 CPU cores, 32-64 GB RAM, 1 TB NVMe SSD storage**
-- *Hardware, Preferred* (fast, full function): **16 CPU cores, 128 GB ECC RAM, 2 TB NVMe SSD storage**
+- *Internet connection*: <u>first run only</u> Significant bandwidth to fetch images and reference genomes; prefer wired, non-metered connection
+- *Hardware Minimum* (limited functions): **4 core CPU, 16 GB RAM, 100 GB storage**
+- *Hardware Acceptable* (full functions): **8 core CPU, 32 - 64 GB RAM, 1 TB NVMe SSD storage**
+- *Hardware Preferred* (fast, full functions): **16+ core CPU, 128+ GB ECC RAM, 2+ TB NVMe SSD storage**
 
-## Manual Installation (Advanced)
+## Manual Install for Advanced use
 
-If you prefer more control or want to customize the installation:
-
-1. **Clone the repository**
+1. **Clone repository**
    ```bash
    git clone https://github.com/Zaromics/ZaroPGx.git
    cd ZaroPGx
    ```
 
-2. **Start services** (the script asks which `.env` template to use)
+2. **Start ZaroPGx**
 
    - **PowerShell (Windows):** `.\start-docker.ps1`
-   - **Bash (Linux / Mac / Windows WSL):** `./start-docker.sh`
+   - **Bash (Linux / Mac / WSL):** `./start-docker.sh`
 
-3. **Access the Main App**
+3. **Main App**
    - Web UI: `http://localhost:8765`
    - Documentation: `http://localhost:8765/docs`
-   - HAPI FHIR dashboard (optional): `http://localhost:8090`
+   - HAPI FHIR dashboard: `http://localhost:8090`
 
 ## Usage
 
-### Web Interface (Recommended)
+### Web Interface - Recommended
 
 1. Open `http://localhost:8765`
-2. Upload a genomic data file
-3. Observe progress, and on completion you will see links to the custom PDF and interactive HTML reports, as well as PharmCAT's report and raw data outputs.
+2. Upload genomic data file
+3. Observe progress, upon completion you will see links to the ZaroPGx PDF and web HTML reports, as well as PharmCAT report and raw data outputs.
 
 Reports are written to `data/reports/<patient_id>/<job_id>/`.
 
-### REST API (Advanced and Debugging)
+### REST API - Advanced and Debugging
 
-**See the FastAPI docs on your instance's page: `http://localhost:8765/api/docs`**
+**FastAPI Swagger docs on your instance: `http://localhost:8765/api/docs`**
 
-## Sample Data Access
+## Sample Data
 For real-world sample data, try browsing the **Personal Genome Project**:
 - https://www.personalgenomes.org/
 
-Sample files available in the repo:
+Sample files included in the repo:
 - `app/static/demo/NA12878.pgx-demo.cram`
 - `test_data/sample_cpic.vcf`
 
-## Contributions are welcome and are gratefully appreciated!
+## Contributions welcome and gratefully appreciated!
 
 ## Acknowledgements & Citations
-If your work is a part of ZaroPGx and you wish to add or amend text recognizing yourself, your work, and/or your organization, please send me a message and I will gladly attend to your request.
+If your work is a part of ZaroPGx and you wish to add or amend text recognizing yourself, your work, and/or your organization, please send a message and I will gladly attend to your request.
 
 <details>
-<summary>Software and data credits</summary>
+<summary>Software and Data Credits</summary>
 
 <!-- credits:start (scripts/render_credits.py writes this part) -->
 
@@ -290,17 +288,17 @@ If your work is a part of ZaroPGx and you wish to add or amend text recognizing 
 - [dbSNP](https://www.ncbi.nlm.nih.gov/snp/)
   - Phan L, Zhang H, Wang Q, et al. The evolution of dbSNP: 25 years of impact in genomic research. *Nucleic Acids Research*. 2025;53(D1):D925–D931. doi:[10.1093/nar/gkae977](https://doi.org/10.1093/nar/gkae977)
 
-Licenses and terms of use: [Credits](docs/user/credits.md).
+Licenses and Terms of Use: [Credits](docs/user/credits.md).
 
 <!-- credits:end -->
 
 </details>
 
-This project was originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
+ZaroPGx was originally inspired by software such as **NeuroPGx**, available here: https://github.com/Andreater/NeuroPGx
 - Zampatti S, Fabrizio C, Ragazzo M, et al. Precision Medicine into Clinical Practice: A Web-Based Tool Enables Real-Time Pharmacogenetic Assessment of Tailored Treatments in Psychiatric Disorders. *Journal of Personalized Medicine*. 2021;11(9):851. doi:[10.3390/jpm11090851](https://doi.org/10.3390/jpm11090851)
 
 ## License
 
-This project is provided under the [AGPLv3](LICENSE) License.
+The ZaroPGx project is provided under the [AGPLv3](LICENSE) License.
 
 Copyright (C) 2024-2026 Iliya Yaroshevskiy
