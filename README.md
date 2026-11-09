@@ -9,11 +9,11 @@
 />](https://www.youtube.com/embed/FzKI48IQb3I)
 
 ---
-## What ZaroPGx Does
+## ZaroPGx Overview
 
-ZaroPGx is a self-hosted pharmacogenomic analytic pipeline. As input, ZaroPGx accepts a VCF, BCF, gVCF, BAM, CRAM,
-SAM or short-read FASTQ, and reports diplotypes and phenotypes for up to 91 pharmacogenes, with the
-CPIC, DPWG and FDA guidances that apply, with reports in PDF, interactive HTML, and FHIR R4 bundle forms.
+ZaroPGx is a self-hosted pharmacogenomic analytic pipeline. Inputs accepted: VCF, BCF, gVCF, BAM, CRAM,
+SAM, or short-read FASTQ. Reports are made on diplotypes and phenotypes for up to 91 pharmacogenes, bundled with the
+CPIC, DPWG, and FDA guidances that apply, with reports in PDF, interactive web HTML, and FHIR R4 bundle formats.
 
 <details>
 <summary>Supported genes (91)</summary>
@@ -33,7 +33,7 @@ CPIC, DPWG and FDA guidances that apply, with reports in PDF, interactive HTML, 
 
 **Workflow**: *Genomic data sample submission → Preprocessing (if needed) → OptiType HLA Allele Calling → mtDNA-Server 2 Mitochondrial DNA Allele Calling → PyPGx Allele Calling → Unlisted Variant Screening → PharmCAT phenotype matching with Outside Calls → Report Creation → optional FHIR export*
 
-Designed as a self-hostable Docker Compose stack, ZaroPGx enables absolute **data privacy and security** when loaded in a local and secure network. Reports are for informational purposes only and are not intended for use as a substitute for professional medical advice, diagnosis, or treatment.
+Designed as a self-hostable Docker Compose stack, ZaroPGx provides absolute **data privacy and security** when loaded in a local environment on a secure network. Reports are intended for information discovery purposes only and are not intended for use as a substitute for professional medical advice, diagnosis, or treatment.
 
 ### Quickstart with One-Command Setup
 
@@ -55,11 +55,11 @@ This single command will:
 - Create necessary directories
 - Start the Docker compose containers
 
-**Security Note:** If you're cautious about running remote scripts (which is good practice), you can inspect the bootstrap scripts here:
+**Security:** See the bootstrap script here:
 - PowerShell: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.ps1
 - Bash: https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh
 
-**To update an existing installation:**
+**Update existing installation:**
 
 **PowerShell:**
 ```powershell
@@ -74,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 <img width="300" height="550" alt="zaropgx_demo" src="https://github.com/user-attachments/assets/50de2e8d-b496-424b-b2fb-0d34d7e39505" />
 
 ## Status
-**This project is in early development.**
+**This project is in continued development.**
 
 **Core functionality is being implemented incrementally:**
 
@@ -82,15 +82,15 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 - [X] Priority 0 (*Supported*): **VCF, GRCh38**/hg38, NGS-derived.
 - [X] Priority 1 (*Supported*): **VCF, GRCh37**/hg19, NGS-derived. *Lifted over to GRCh38.*
 - [...] Priority 2 (*Testing*): **BAM, CRAM, SAM, BCF, gVCF**, NGS-derived, GRCh38.
-- [...] Priority 2 (*Testing*): **FASTQ**, short reads, up to 20 GB. *Aligned to GRCh38.*
+- [...] Priority 2 (*Testing*): **FASTQ**, short reads *Aligned to GRCh38.*
 - [...] Priority 3 (*Research*): Other sequencing and genotyping formats.
-- [...] Priority 4 (*Research*): BED, 23andMe, AncestryDNA, various TXT formats. *Detected and refused for now.*
-- [...] Priority 5 (*Early research*): T2T-CHM13, and others. *Detected and refused for now.*
+- [...] Priority 4 (*Research*): BED, 23andMe, AncestryDNA, TXT formats. *Detected and refused for now.*
+- [...] Priority 5 (*Early research*): T2T-CHM13, and emerging formats. *Detected and refused for now.*
 
 *Features*
-- [X] Priority 0 (*Supported*): **PDF and interactive HTML custom in-house reports.**
-- [X] Priority 1 (*Supported*): **mtDNA-Server 2**: haplogroup and the MT-RNR1 outside call.
-- [X] Priority 2 (*Supported*): **FHIR R4 export** (JSON, XML) following HL7's Genomics Reporting IG; push to the bundled HAPI FHIR server.
+- [X] Priority 0 (*Supported*): **ZaroPGx reports in PDF and interactive web HTML**
+- [X] Priority 1 (*Supported*): **mtDNA-Server 2**: haplogroup and MT-RNR1 call.
+- [X] Priority 2 (*Supported*): **FHIR R4 export** (JSON, XML) following HL7 Genomics Reporting IG; push to bundled HAPI FHIR server.
 - [...] Priority 3 (*Development*): Interactive HTML enhancements with useful visualizations, fully DB-oriented data handling. *Projected release in v0.5*
 - [...] Priority 4 (*Research*): FHIR online export direct to PHR/EHR
 - [...] Priority 5 (*Early research*): In-depth and targeted analytics, with specialty curation to reduce cognitive load
@@ -99,19 +99,19 @@ curl -fsSL https://raw.githubusercontent.com/Zaromics/ZaroPGx/main/bootstrap.sh 
 ## Requirements
 <u>Software</u>
 
-**NB: The simple bootstrap script will automatically install missing dependencies for you!**
+**NB: The Bootstrap script will auto install missing dependencies!**
 
-**Linux** environment preferred
+**Linux**
 - *Docker*; *Docker Compose* (>= 2.24); *Git* -- at minimum
-- Auto-install supported via: apt, yum, dnf, pacman
+- Auto-install via: apt, yum, dnf, pacman
 
-**Windows 10/11** requires *WSL2* installed and configured
+**Windows 10 and 11** requires *WSL2* installed and configured
 - *WSL2*; *Docker*; *Docker Compose*; *Git*
-- Auto-install supported via: winget or chocolatey
+- Auto-install via: winget or chocolatey
 
 **macOS** requires either *Docker Desktop* or to run a Linux VM
-- Auto-install supported via: homebrew (Git only; Docker Desktop must be installed manually)
-- (macOS support needs testing)
+- Auto-install via: homebrew (Git only; Docker Desktop must be installed manually)
+- (needs testing)
 
 <u>Hardware</u>
 
