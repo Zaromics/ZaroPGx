@@ -58,6 +58,35 @@ jobs:
       - name: flake8 (full, informational)
         run: uv tool run flake8 app tests || true
 
+  docs:
+    name: Docs
+    # Same Ubuntu LTS as production (zimerguz). Move CI when zimerguz moves.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.23"
+          enable-cache: true
+
+      # Exactly what Read the Docs installs — docs/requirements.txt and nothing
+      # else. No page uses autodoc, so the documentation builds without the app's
+      # dependencies; keeping it that way is what makes this job cheap and what
+      # keeps the hosted build from needing pysam and WeasyPrint.
+      - name: Install the documentation toolchain
+        run: uv venv && uv pip install -r docs/requirements.txt
+
+      # -W matches .readthedocs.yaml's fail_on_warning. Without this job a broken
+      # {doc} target, an orphan page or a duplicate label passes every check, is
+      # merged, and only then breaks the hosted build — after the fact, where
+      # nobody is looking. --keep-going reports every problem in one run rather
+      # than stopping at the first.
+      - name: Build the documentation the way Read the Docs does
+        run: uv run python -m sphinx -b html -W --keep-going docs docs/_build/html
+
   test:
     name: Tests
     runs-on: ubuntu-24.04
