@@ -310,10 +310,14 @@ def get_author_name() -> str:
 
 
 # Initialize FastAPI app
+# The release this build is. chore(release) bumps it with the other stamps; the docs
+# staleness check below keys on it, so a release always reprints the documentation.
+APP_VERSION = "0.4.2"
+
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
-    version="0.4.2",
+    version=APP_VERSION,
     # /docs is the project documentation (mounted below); FastAPI's API explorer
     # lives under /api instead of taking that path. FastAPI's own explorer pages load
     # Swagger UI and ReDoc from jsDelivr (and ReDoc's fonts from Google), so they are
@@ -349,39 +353,100 @@ async def documentation_moved(path: str = "") -> RedirectResponse:
     return RedirectResponse(url=f"/docs/{path}", status_code=301)
 
 
-def _build_docs_if_missing() -> None:
+DOCS_SOURCE_DIR = BASE_DIR.parent / "docs"
+# Written into the build so a later start can tell what the pages were printed from.
+DOCS_STAMP = DOCS_BUILD_DIR / ".zaropgx-docs-build"
+
+
+def _docs_sources_newer_than(when: float) -> bool:
+    """Is any documentation source newer than the build? Catches an edit to a page
+    between releases, where the version alone would say the build is still current."""
+    for path in DOCS_SOURCE_DIR.rglob("*"):
+        if "_build" in path.parts or not path.is_file():
+            continue
+        try:
+            if path.stat().st_mtime > when:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _docs_build_reason() -> Optional[str]:
+    """Why the documentation needs printing again, or None if it is current.
+
+    The old check was ``if not index.exists()``, which asks only whether SOME build
+    is there. A build from an older release satisfies it forever, so an install that
+    was ever started kept serving whatever pages it printed the first time. On
+    pgx.zaromics.com that meant /docs/user/credits.html answering "not found" --
+    the page is newer than that install's build, so it had simply never existed
+    there -- while /docs itself returned 200 from the stale copy.
+    """
+    index = DOCS_BUILD_DIR / "index.html"
+    if not index.exists():
+        return "no documentation has been printed yet"
     try:
-        docs_index = DOCS_BUILD_DIR / "index.html"
-        if not docs_index.exists():
+        stamped = DOCS_STAMP.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "the printed documentation does not say which release it is from"
+    if stamped != APP_VERSION:
+        return f"the printed documentation is from {stamped or 'an unknown release'}"
+    try:
+        built = index.stat().st_mtime
+    except OSError:
+        return "the printed documentation cannot be read"
+    if _docs_sources_newer_than(built):
+        return "a documentation source has changed since it was printed"
+    return None
+
+
+def _mount_docs() -> None:
+    mounted = "/docs" in {m.path for m in app.router.routes if hasattr(m, "path")}
+    if not mounted and DOCS_BUILD_DIR.exists():
+        app.mount(
+            "/docs",
+            StaticFiles(directory=str(DOCS_BUILD_DIR), html=True),
+            name="sphinx-docs",
+        )
+
+
+def _build_docs_if_stale() -> None:
+    try:
+        reason = _docs_build_reason()
+        if reason:
+            logger.info(f"Printing the documentation: {reason}")
             DOCS_BUILD_DIR.mkdir(parents=True, exist_ok=True)
-            # Build docs using Sphinx if available
-            cmd = [
-                sys.executable,
-                "-m",
-                "sphinx",
-                "-b",
-                "html",
-                "docs",
-                str(DOCS_BUILD_DIR),
-            ]
-            subprocess.run(cmd, check=False)
-        # Mount after building if not already mounted
-        if (
-            "/docs" not in {m.path for m in app.router.routes if hasattr(m, "path")}
-            and DOCS_BUILD_DIR.exists()
-        ):
-            app.mount(
-                "/docs",
-                StaticFiles(directory=str(DOCS_BUILD_DIR), html=True),
-                name="sphinx-docs",
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "sphinx",
+                    "-b",
+                    "html",
+                    "docs",
+                    str(DOCS_BUILD_DIR),
+                ],
+                cwd=str(BASE_DIR.parent),
+                check=False,
             )
+            if result.returncode == 0:
+                # Only on success: a failed build leaves the previous pages in place
+                # and no stamp, so the next start tries again rather than trusting it.
+                DOCS_STAMP.write_text(APP_VERSION, encoding="utf-8")
+                logger.info(f"Documentation printed for {APP_VERSION}")
+            else:
+                logger.warning(
+                    f"Documentation build exited {result.returncode}; "
+                    "serving whatever was there before"
+                )
+        _mount_docs()
     except Exception as e:
         logger.warning(f"Docs build skipped or failed: {e}")
 
 
 @app.on_event("startup")
 async def ensure_docs_built_on_start() -> None:
-    _build_docs_if_missing()
+    _build_docs_if_stale()
 
 
 # Front-door auth gate (outermost). Default mode is open — a no-op for existing
