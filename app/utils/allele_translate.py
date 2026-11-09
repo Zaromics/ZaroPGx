@@ -22,7 +22,7 @@ SYNONYM_GENES = frozenset({"ABCG2", "IFNL3", "NUDT15", "VKORC1"})
 
 # PharmCAT names a CYP2D6 tandem arrangement with spaced plus signs ("*68 + *4");
 # PyPGx writes it unspaced ("*3/*68+*4"), and PharmCAT reports an allele it does not
-# recognise as Indeterminate, so NA12878's *3/*68+*4 came out Indeterminate instead
+# recognize as Indeterminate, so NA12878's *3/*68+*4 came out Indeterminate instead
 # of a Poor Metabolizer. _clean_token adds the spaces. CYP2D6 only: elsewhere PharmCAT
 # spells a "+" unspaced (UGT1A1 "*80+*28", DPYD "c.1905+1G>A (*2A)").
 SPACED_TANDEM_GENES = frozenset({"CYP2D6"})

@@ -1463,7 +1463,7 @@ CREDITS: Tuple[Credit, ...] = (
         "pharmcat_reference",
         "PharmCAT's GRCh38 reference FASTA",
         "data",
-        "Normalises the input in PharmCAT's preprocessor",
+        "Normalizes the input in PharmCAT's preprocessor",
         "https://zenodo.org/records/7288118",
         "CC-BY-4.0",
         _always,
@@ -1528,7 +1528,7 @@ CREDITS: Tuple[Credit, ...] = (
         "data",
         "Lifts the input from GRCh37 to GRCh38",
         "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/",
-        "UCSC Chain Files licence (non-commercial)",
+        "UCSC Chain Files license (non-commercial)",
         lambda run: run.ran("liftover"),
         (UCSC_LIFTOVER_2006,),
         release="hg19ToHg38.over.chain",
@@ -1643,7 +1643,7 @@ CREDITS: Tuple[Credit, ...] = (
         release="3.13.0, in OptiType",
         notice=(
             "HLA allele sequences are from the IPD-IMGT/HLA Database, used under "
-            "the Creative Commons Attribution-NoDerivs licence."
+            "the Creative Commons Attribution-NoDerivs license."
         ),
         used_when="BAM, CRAM, SAM, FASTQ, with HLA typing on",
     ),
@@ -2118,7 +2118,7 @@ TERMINOLOGY_NOTICES: Tuple[Tuple[str, str], ...] = (
         "Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was "
         'originally created by The College of American Pathologists. "SNOMED" and '
         '"SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is '
-        "subject to its licence (https://www.snomed.org/get-snomed).",
+        "subject to its license (https://www.snomed.org/get-snomed).",
     ),
     (
         "HGNC",

@@ -20,7 +20,7 @@ curated: true
   (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
   gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
-  with the bwa-mem GATK already bundles, then analysed as a BAM. Refused: over the cap
+  with the bwa-mem GATK already bundles, then analyzed as a BAM. Refused: over the cap
   (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
   the FASTQ, checked before alignment starts), long reads (ONT, PacBio), or a platform that
   cannot be read from the read names. The cap is about scratch disk and run time. On 2% of
@@ -267,7 +267,7 @@ curated: true
     Oct 2026 on **all 31 GeT-RM genomes with a scored CYP2D6 call**, and **not worth
     taking on**. It scores 28 of 31; so do we. It fixes the `*1/*21` call we print as
     `*2/*21` — a phasing decision the reads settle on their own, 7 fragments to 0, so the
-    read-adjudication item above buys that call without naming a noncommercial licence in
+    read-adjudication item above buys that call without naming a noncommercial license in
     our UI — and it loses NA19908's `*1/*46`, where it cannot choose between two
     partitions of the same four variants and reports both. Of the two neither caller
     gets right, one it gets wrong identically to us. The one thing it does better is
@@ -408,20 +408,20 @@ curated: true
 - [DONE Oct 2026] Recommendation headings name their guideline (CPIC / DPWG / FDA) in
   reports from uploads; they read "General" (fix/report-guideline-source-names).
 - [DONE Oct 2026] The network graph draws only genes that set the guidance, never an
-  uncalled gene, and colours an unresolved call grey (fix/network-hubs-uncalled-unresolved).
+  uncalled gene, and colors an unresolved call gray (fix/network-hubs-uncalled-unresolved).
 - [DONE Oct 2026] The HTML report no longer ends with a debug dump of its template
   context (fix/report-no-debug-dump).
 - [DONE Oct 2026] PDF layout: page 1 holds the whole disclaimer; the workflow diagram
   keeps its proportions; the genomic file header prints in full (it ran off the page) as
-  an appendix after the citations; the licence never opens a page alone. Major sections
+  an appendix after the citations; the license never opens a page alone. Major sections
   keep their own pages (decided). The Executive Summary is one page: it covers PharmCAT's
   panel, and the PDF tightens it step by step when it would run over; a section spilling
   a few lines onto a page (Alerts, Drugs, Platform and Citations) is tightened to end a
   page sooner (app/reports/pdf_fit.py; fix/report-exec-summary-one-page,
   fix/pdf-sections-fit-pages). F2 and F5 are read as called
   (fix/report-unannotated-gene-calls); score badges are legible.
-- [DONE Oct 2026, fix/report-phenotype-colours] "Decreased Function" is amber, like
-  intermediate metabolism. Badge colours say what the phenotype means for function against
+- [DONE Oct 2026, fix/report-phenotype-colors] "Decreased Function" is amber, like
+  intermediate metabolism. Badge colors say what the phenotype means for function against
   what is typical, not CPIC's EHR priority, which ranks the need to act (decided
   2026-10-19; `app/reports/generator.py`).
 
@@ -446,7 +446,7 @@ curated: true
   That gap produced three bugs in one sitting on 2026-08-29, each invisible to
   the 1700-test suite:
   - PharmCAT popup text unreadable in dark mode (a white card inheriting the
-    dark theme's body colour) — needs *computed styles*, not markup.
+    dark theme's body color) — needs *computed styles*, not markup.
   - Progress bar frozen for the whole liftover step — needed a live run watched
     end to end.
   - Every completed job deleting its own reports — needed a post-run check that

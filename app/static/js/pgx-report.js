@@ -233,12 +233,12 @@ function actionableNetwork(recommendations, diplotypes) {
 }
 
 /**
- * A phenotype's colour in the charts, in the badges' tiers
+ * A phenotype's color in the charts, in the badges' tiers
  * (app/reports/generator.py, phenotype_badge_class): green normal; amber
  * intermediate metabolism, decreased function, G6PD Variable; red poor metabolism
  * or function, G6PD Deficient, an HLA risk allele positive, malignant hyperthermia
  * susceptible, increased hearing-loss risk; blue rapid metabolism and increased
- * function; grey uncertain, indeterminate, unresolved and anything else.
+ * function; gray uncertain, indeterminate, unresolved and anything else.
  */
 const PHENOTYPE_COLOURS = [
     [/\sor\s/i, '#95a5a6'],
@@ -246,7 +246,7 @@ const PHENOTYPE_COLOURS = [
     [/\bpositive\b/i, '#e74c3c'],
     [/\bnegative\b/i, '#2ecc71'],
     // PharmCAT writes "Malignant Hyperthermia Susceptibility"; "Uncertain
-    // Susceptibility" is grey by the rule above.
+    // Susceptibility" is gray by the rule above.
     [/\bsusceptib(?:le|ility)\b/i, '#e74c3c'],
     [/\bincreased risk\b/i, '#e74c3c'],
     [/\bnormal risk\b/i, '#2ecc71'],
@@ -260,10 +260,10 @@ const PHENOTYPE_COLOURS = [
 
 function geneColor(phenotype) {
     // Several possibilities ("Normal Function or ... Poor Function", an unphased
-    // call): no one colour fits, and matching words made SLCO1B1's hub red.
+    // call): no one color fits, and matching words made SLCO1B1's hub red.
     const p = String(phenotype || '');
-    for (const [pattern, colour] of PHENOTYPE_COLOURS) {
-        if (pattern.test(p)) return colour;
+    for (const [pattern, color] of PHENOTYPE_COLOURS) {
+        if (pattern.test(p)) return color;
     }
     return '#95a5a6';
 }
@@ -425,7 +425,7 @@ function createNetworkVisualization() {
     const view = svg.append('g');
     // Ctrl/Cmd + wheel zooms and a plain wheel scrolls the page; on a touch screen
     // one finger scrolls the page and two pinch and pan. Double-click resets through
-    // this same behaviour: a fresh d3.zoom() has no 'zoom' listener to move the view.
+    // this same behavior: a fresh d3.zoom() has no 'zoom' listener to move the view.
     const zoom = d3.zoom()
         .scaleExtent([1, 6])
         .filter(event => event.type === 'wheel' ? event.ctrlKey || event.metaKey
@@ -512,7 +512,7 @@ function createNetworkVisualization() {
     legend.innerHTML = Object.entries(PRESCRIBING_CHANGE_COLORS)
         .map(([label, color]) => `<span style="color:${color}">&#9644;</span> ${label}`)
         .join(' &nbsp; ') +
-        ' &nbsp; (a line takes the colour of the most decisive change any guideline makes for that pair)';
+        ' &nbsp; (a line takes the color of the most decisive change any guideline makes for that pair)';
     container.appendChild(legend);
 }
 

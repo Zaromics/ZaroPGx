@@ -32,12 +32,12 @@ question does not have to be re-argued from memory, as
 
 Only the second and third groups are errors another caller could fix.
 
-## Licence: the constraint is distribution, not commercial use
+## License: the constraint is distribution, not commercial use
 
 ZaroPGx is not commercial, so noncommercial-only terms do not restrict running these
 tools. What they restrict is shipping them inside the images we publish.
 
-| tool | licence | last release | can go in our images | operator can install it |
+| tool | license | last release | can go in our images | operator can install it |
 |---|---|---|---|---|
 | Cyrius (Illumina) | PolyForm Strict 1.0.0 | v1.1.1, 2021-05-03 | no | yes |
 | Aldy 4 | Indiana University / IURTC | — | no | with limits |
@@ -49,9 +49,9 @@ tools. What they restrict is shipping them inside the images we publish.
 distributing the software or making changes or new works based on the software"*, so it
 cannot go in an image and cannot be patched, whatever the purpose. It does not stop
 anyone running it: Illumina publish it on PyPI themselves (`pip install cyrius`, author
-`xchen2@illumina.com`, licence field `PolyFormStrict`), so an operator who installs it
+`xchen2@illumina.com`, license field `PolyFormStrict`), so an operator who installs it
 has it from the licensor. Its permitted purposes are noncommercial, so that restriction
-travels to whoever runs it — a reason to name the licence where the feature is switched
+travels to whoever runs it — a reason to name the license where the feature is switched
 on and leave it off by default, not a reason to skip it. Last release May 2021, last
 commit October 2023: its definitions are frozen near PharmVar 5.x, so it is worth having
 for structure, not for new alleles.
@@ -63,7 +63,7 @@ running their own genome and not a hosted install.
 **ursaPGx does not call CYP2D6 itself.** `R/read-pgx.R` answers a request for it with
 `stop("Please use cyrius() to perform calling for CYP2D6.")`, and `R/cyrius.R` is a
 reticulate wrapper that installs and imports Cyrius. The benchmark's CYP2D6 figure for
-ursaPGx (97.7%) is therefore Cyrius's, with Cyrius's licence. What ursaPGx itself does is
+ursaPGx (97.7%) is therefore Cyrius's, with Cyrius's license. What ursaPGx itself does is
 annotate star alleles from an already-phased multi-sample VCF — and its published
 validation used phased **short-read** 1000 Genomes VCFs (NYGC 30x, GRCh38), not long
 reads. Its overall figure in the same benchmark was 83.0%.
@@ -133,13 +133,13 @@ The other 27 both callers get right, including the structurally hard ones — `*
 `*2x2/*10` (NA19207). **No call we get right is regressed except NA19908**, which is the
 result that matters most for an opt-in second caller.
 
-Every cut carried enough depth for Cyrius to normalise against — median depth 32–60x,
+Every cut carried enough depth for Cyrius to normalize against — median depth 32–60x,
 coverage MAD 0.065–0.080 across the 31 — so nothing here is an artefact of a thin cut.
 
 Cyrius filtered 30 of 31 `PASS`, and the one it flagged
 (`More_than_one_possible_genotype`) is exactly the call it gets wrong, so it is honest
 about its own failure rather than printing a wrong diplotype flat. That is a point in
-its favour as a *disagreement detector* (item 5), not as a replacement.
+its favor as a *disagreement detector* (item 5), not as a replacement.
 
 **NA19908 is the mirror image of HG00589.** Both callers read the same four variants —
 `g.42126611C>G` and `g.42127941G>A` (`*2`'s cores), `g.42129075C>T`, `g.42130715C>T` —
@@ -172,11 +172,11 @@ right:
   evidence we have that this call is not a deficiency in our caller choice.
 - **NA18565 — Cyrius gets the alleles right and the arrangement wrong.** It reads
   `*10_*36_*36`, which is GeT-RM's content exactly; we read `*10`, `*36`, `*10` and
-  miss the second hybrid. So the hybrid-counting is a real modelling advantage, but it
+  miss the second hybrid. So the hybrid-counting is a real modeling advantage, but it
   does not produce a correct diplotype here: Cyrius splits those three as `*36` against
   `*36+*10` where GeT-RM has `*10` against `*36x2`.
 
-**On re-cutting.** Cyrius normalises depth against 3,004 intervals over 22 autosomes,
+**On re-cutting.** Cyrius normalizes depth against 3,004 intervals over 22 autosomes,
 so each sample is thousands of range requests rather than the handful a PGx cut makes.
 EBI's FTP host will not sustain that. Six samples are not on the mirror's panel prefix
 and fell back to it; five failed all three tries with `Seek at offset … failed` /
@@ -271,13 +271,13 @@ built from the `.bai` rather than the `.bam`.
    The plumbing exists: PharmCAT already takes CYP2D6 from an outside caller, which is
    how PyPGx's reaches the report. Cyrius needs only numpy, scipy, pysam and statsmodels
    and reads the BAM the pipeline already has, and it would go in as a runtime-detected
-   option, off by default, licence named where it is enabled. The section above measures
+   option, off by default, license named where it is enabled. The section above measures
    it on all 31 scored CYP2D6 calls: **28 of 31, the same as ours**. It fixes the
    `*1/*21` phasing call that **item 3 can fix without it**, and loses NA19908, which
-   item 3 cannot reach. What is left is one genuine modelling advantage that still does
+   item 3 cannot reach. What is left is one genuine modeling advantage that still does
    not yield a correct call (the second `*36` in NA18565) and one error it makes
    identically to ours (NA18545). Taking on a PolyForm Strict dependency and naming
-   someone else's noncommercial licence in our UI buys, on the full denominator, a
+   someone else's noncommercial license in our UI buys, on the full denominator, a
    net of zero correct calls. Build item 3 and do not adopt Cyrius as a caller; its
    one real use here is item 5, since the one call it gets wrong it also flags.
 5. **Say when a CYP2D6 or CYP2A6 call has nothing behind it.** Those two have no second

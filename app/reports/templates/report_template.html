@@ -175,7 +175,7 @@
             padding-right: 0px; /* further reduced right margin to match left */
             padding-left: 5px; /* keep some left padding for readability */
         }
-        /* ...except a one-letter column, which is centred. */
+        /* ...except a one-letter column, which is centered. */
         .gene-table th.narrow-col:last-child,
         .gene-table td.narrow-col:last-child {
             padding-left: 0px;
@@ -385,7 +385,7 @@
             font-weight: normal;
             margin-top: 2px;
         }
-        /* ...plain, without the warning colour, for a note that warns of nothing
+        /* ...plain, without the warning color, for a note that warns of nothing
            (copy_number's entries with warn False). */
         .exec-summary-diplotype .copy-number-note.plain-note {
             color: #555;
@@ -541,7 +541,7 @@
             vertical-align: middle;
         }
         /* An unresolved call's phenotypes, "A or B": plain text that wraps. A
-           coloured pill would claim one phenotype, and nowrap ran the list off
+           colored pill would claim one phenotype, and nowrap ran the list off
            the page. */
         .phenotype-candidates {
             font-weight: bold;
@@ -551,7 +551,7 @@
             display: inline-block;
             white-space: normal;
         }
-        /* A gene of the panel this run did not call: its row stays, in grey, so
+        /* A gene of the panel this run did not call: its row stays, in gray, so
            every summary lists the same genes. */
         .exec-summary-uncalled td {
             color: #666;
@@ -592,7 +592,7 @@
             justify-content: center;
         }
         .as-badge .as-text { font-weight: bold; }
-        /* The gauge is drawn in the badge's text colour, set on the SVG's own
+        /* The gauge is drawn in the badge's text color, set on the SVG's own
            paths (the template's gauge_ink): WeasyPrint ignores `fill` in CSS and
            does not resolve currentColor in inline SVG, so both paths printed
            black, and on the black 0.0 badge the icon was not there at all. Ring
@@ -662,7 +662,7 @@
             background-color: #17a2b8;
         }
         /* Function phenotypes (SLCO1B1, ABCG2) in their metabolizer counterparts'
-           colours: decreased as intermediate, increased as rapid
+           colors: decreased as intermediate, increased as rapid
            (generator.phenotype_badge_class). */
         .decreased-function {
             background-color: #ffc107;
@@ -828,10 +828,10 @@
             position: relative;
             z-index: 0;
         }
-        /* The licence lines never open a page alone: when what precedes them ends
+        /* The license lines never open a page alone: when what precedes them ends
            at a page foot, its last lines come over with them. A VCF report's
            header appendix ended at the foot of page 51, leaving page 52 to the
-           four licence lines. */
+           four license lines. */
         .footer {
             page-break-before: avoid;
             break-before: avoid;
@@ -1017,8 +1017,8 @@
                 padding-right: 0px !important;
                 padding-left: 5px !important;
             }
-            /* A one-letter column is centred: the last-child padding above
-               put its letter 2.5px right of centre. */
+            /* A one-letter column is centered: the last-child padding above
+               put its letter 2.5px right of center. */
             .gene-table th.narrow-col:last-child,
             .gene-table td.narrow-col:last-child {
                 padding-left: 0px !important;
@@ -1254,7 +1254,7 @@
        UUID; the job id is Report ID. (Report ID was briefly dropped because Sample
        ID used to fall back to the same UUID.) The liftover line used to sit on the Executive Summary page,
        buried in a paragraph of PharmCAT tooling facts, which is not where anyone
-       looks to find out what was analysed. #}
+       looks to find out what was analyzed. #}
     <div class="report-info">
         <p><strong>Sample ID:</strong> {{ sample_identifier or "Not provided" }}</p>
         <p><strong>Report ID:</strong> {{ report_id }}</p>
@@ -1449,7 +1449,7 @@
                                 {% else %}
                                     {% set tier = 6 %}
                                 {% endif %}
-                                {# The badge's text colour (.as-tier-N above): dark on orange,
+                                {# The badge's text color (.as-tier-N above): dark on orange,
                                    yellow, light green and turquoise, white on the rest. #}
                                 {% set gauge_ink = '#333333' if tier in (2, 3, 4, 6) else '#ffffff' %}
                                 <span class="as-badge as-tier-{{ tier }}" title="Activity Score">
@@ -1709,7 +1709,7 @@
                             &lt;ul&gt; tags into dosing advice. -#}
                         <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
                         {# DPWG's and FDA's "Unspecified" and a missing classification
-                           (CPIC warfarin's): no strength, which the card's colour and
+                           (CPIC warfarin's): no strength, which the card's color and
                            the Drugs legend ("Guideline available", "Unclassified") say;
                            the line said only that, on every such card. #}
                         {% if group_data['rec'].evidence_class not in ('evidence-unspecified', 'evidence-unclassified') %}
@@ -1733,8 +1733,8 @@
     
     {# The workflow diagram comes before Platform and Citations, not after: in the
        PDF it fills a page of its own, and after the citations it left their tail
-       on a mostly empty page and the closing licence lines alone on another. Now
-       the licence closes the citations' last page. #}
+       on a mostly empty page and the closing license lines alone on another. Now
+       the license closes the citations' last page. #}
     {# The print lane gives this section its own page and overlays the heading on the
        diagram (@page workflow-page below). That layout assumes a diagram covers the
        page: the heading is positioned absolutely over it. With only the HTML fallback --
@@ -1777,7 +1777,7 @@
     {# The genomic file header is an appendix: after the citations, on pages of
        its own (narrow margins). It used to sit between the software table and
        the citations, leaving the table alone on a page, and the citations
-       after it. The licence lines close its last page. #}
+       after it. The license lines close its last page. #}
     {% if header_text %}
     <div class="header-section">
         <h3>Genomic Datafile Header</h3>

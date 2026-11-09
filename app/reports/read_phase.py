@@ -210,7 +210,7 @@ def phenotype_note(
     """Whether the reads' arrangement would change the phenotype, where it is known.
 
     A diplotype paired the wrong way is not always a patient reported the wrong way.
-    HG00589's CYP2D6 is an Intermediate Metaboliser read as *2/*21, *1/*21 or
+    HG00589's CYP2D6 is an Intermediate Metabolizer read as *2/*21, *1/*21 or
     *21/*39, so the printed label is wrong and nothing downstream of it is. Saying so
     is the difference between a note a reader must act on and one they need only
     know about.

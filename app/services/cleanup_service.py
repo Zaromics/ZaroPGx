@@ -78,7 +78,7 @@ class CleanupService:
                         # Built from self.data_dir/self.temp_dir rather than
                         # hardcoded "/data/..." literals. The class always declared
                         # those attributes and then ignored them, which is why this
-                        # method's real behaviour was untestable: pointing it at a
+                        # method's real behavior was untestable: pointing it at a
                         # tmp_path did nothing, so an on-disk assertion passed
                         # whether or not the bug below was present.
                         str(self.data_dir / "temp" / patient_id),

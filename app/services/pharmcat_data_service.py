@@ -115,7 +115,7 @@ class PharmCATDataService:
             # Get workflow to find associated PharmCAT run. populate_existing() for
             # the same reason as JobService.get_job: SessionLocal sets
             # expire_on_commit=False, so a plain .first() fetches the row and then
-            # discards it in favour of whatever instance this session already has in
+            # discards it in favor of whatever instance this session already has in
             # its identity map. pharmcat_run_id is written by whichever session
             # finished the PharmCAT stage -- never this one -- so without this the
             # report route reads job_metadata as it stood when the session first

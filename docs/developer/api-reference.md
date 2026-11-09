@@ -42,7 +42,7 @@ the same way. The other fields are optional:
 | `pharmcat_absent_to_ref`, `pharmcat_unspecified_to_ref` | `true`, `false` | PharmCAT's assume-reference flags, VCF and BCF only. `pharmcat_absent_to_ref` also decides whether PyPGx calls a gene the file has no genotype for, and whether MT-RNR1 (a gVCF's too) can be called reference (see {doc}`../user/usage`) |
 
 The response carries `job_id` and `data_id`, the detected `file_type`, and the workflow
-the job will run. An input that cannot be analysed is refused with 400 and a reason, before
+the job will run. An input that cannot be analyzed is refused with 400 and a reason, before
 any job is created.
 
 Then:

@@ -23,7 +23,7 @@ The sample Bundle (`type: collection`) contains the following FHIR resources in 
 ### 1. DiagnosticReport (Genomic Report)
 - **Profile:** `genomic-report`
 - Top-level report that references all observations, links to the genomic study, and lists recommended actions via extensions
-- Includes a `conclusion` text: how many genes were analysed and how many findings are actionable
+- Includes a `conclusion` text: how many genes were analyzed and how many findings are actionable
 
 ### 2. Patient
 - **Profile:** `Patient`
@@ -217,6 +217,6 @@ recommendations. The report generator writes one with every report as
 
 This material contains content from LOINC (http://loinc.org). LOINC is copyright © Regenstrief Institute, Inc. and the Logical Observation Identifiers Names and Codes (LOINC) Committee and is available at no cost under the license at http://loinc.org/license. LOINC® is a registered United States trademark of Regenstrief Institute, Inc.
 
-This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used by permission of the International Health Terminology Standards Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was originally created by The College of American Pathologists. "SNOMED" and "SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its licence (https://www.snomed.org/get-snomed).
+This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used by permission of the International Health Terminology Standards Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was originally created by The College of American Pathologists. "SNOMED" and "SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its license (https://www.snomed.org/get-snomed).
 
 HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of Health Level Seven International and their use does not constitute endorsement by HL7.

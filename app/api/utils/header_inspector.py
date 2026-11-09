@@ -85,7 +85,7 @@ DEFAULT_TIMEOUT_SEC = int(os.getenv("MAX_HEADER_PARSE_TIMEOUT_SEC", str(300)))
 # The T2T-CHM13v2 rows added 2026-08-31 are the one group NOT read out of a
 # shipped dictionary, because this deployment stages no CHM13 reference and does
 # not align against one (T2T support is in development) -- they exist so a CHM13
-# file can be REFUSED instead of analysed on GRCh38 coordinates
+# file can be REFUSED instead of analyzed on GRCh38 coordinates
 # (file_processor.determine_workflow).
 # They were taken from UCSC's hs1.chrom.sizes and cross-checked against NCBI
 # GCF_009914755.1, and every one was checked against both builds above: no
@@ -113,7 +113,7 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
     # The chromosomes the PGx genes actually sit on, added 2026-08-29 because a
     # targeted panel or gene-slice file carries only these -- chr1/2/3/X above
     # appear in a WGS header but not in, say, a CYP2D6-only BAM, which then read
-    # as "no evidence" and was analysed as GRCh38 whatever build it was really
+    # as "no evidence" and was analyzed as GRCh38 whatever build it was really
     # on. That gap is what makes the GRCh37-alignment refusal in
     # file_processor.determine_workflow reachable for panel data at all.
     #   6  HLA-A/B/C (class-I typing), CYP21A2
@@ -138,7 +138,7 @@ CONTIG_LENGTH_ASSEMBLIES: Dict[tuple, str] = {
     ("22", 50818468): "GRCh38",
     ("22", 51304566): "GRCh37",
     # T2T-CHM13v2 (UCSC hs1), for the same eleven chromosomes: a CHM13 file has
-    # to be recognised before it can be refused, and a CHM13 PGx panel carries
+    # to be recognized before it can be refused, and a CHM13 PGx panel carries
     # only the gene-bearing chromosomes for exactly the reason the block above
     # exists. Names are the canonical build string that travels through
     # determine_workflow, source_build and the pipeline token allowlist.
@@ -299,13 +299,13 @@ def detect_reference_assembly(header_records=None, contig_lengths=None) -> Dict:
          "candidates": [assembly, ...]}
 
     Naming an assembly is not the same as supporting it: T2T-CHM13v2 is here so
-    that a CHM13 file is *recognised*, and determine_workflow refuses it. This
+    that a CHM13 file is *recognized*, and determine_workflow refuses it. This
     function reports what the header says and nothing about what can be run.
 
     `assembly` is None whenever the answer is not established -- either no
     evidence at all, or evidence that contradicts itself. A caller must treat
     None as "no answer" rather than as a detection: naming the wrong build means
-    the sample is analysed against the wrong coordinates with nothing in the
+    the sample is analyzed against the wrong coordinates with nothing in the
     output saying so, which is worse than declining to answer.
 
     Decision order:
@@ -496,7 +496,7 @@ def inspect_header(
     # reference_genome="unknown".
     #
     # That is not a cosmetic loss. Every build-keyed decision reads that value, so
-    # a GRCh37 VCF stopped being lifted and was analysed on GRCh38 coordinates, a
+    # a GRCh37 VCF stopped being lifted and was analyzed on GRCh38 coordinates, a
     # T2T-CHM13 VCF stopped being refused, and the self-contradicting-header
     # warning stopped firing -- each silently, on a file whose only peculiarity
     # was a non-Latin name. FileProcessor._detect_file_type has already decided
@@ -505,7 +505,7 @@ def inspect_header(
     #
     # Fallback rather than override, deliberately: for a normally-named file the
     # suffix and the hint agree, so preferring the suffix leaves this function's
-    # behaviour for every existing caller exactly as it was.
+    # behavior for every existing caller exactly as it was.
     file_format = inspector._get_file_format(filepath)
     if format_hint and file_format not in DISPATCHABLE_FORMATS:
         file_format = format_hint
@@ -517,7 +517,7 @@ def inspect_header(
         ".bcf",
         # `sample.gvcf[.gz]`. The GATK spelling `sample.g.vcf[.gz]` already lands on
         # ".vcf" above (_get_file_format returns only the final suffix), so only this
-        # one needed adding -- and it needed it once gVCFs were analysed rather than
+        # one needed adding -- and it needed it once gVCFs were analyzed rather than
         # refused: without it a `.gvcf` upload got no header read at all, which reads
         # downstream as "no evidence about the build", and a GRCh37 gVCF would have
         # been genotyped at GRCh38 positions instead of refused. pysam and the bcftools
@@ -884,7 +884,7 @@ def inspect_header(
                 "created_by": None,
                 "reference_genome": None,
                 "reference_genome_path": None,
-                # Format not even recognised; present for shape uniformity
+                # Format not even recognized; present for shape uniformity
                 # -- see the FASTQ branch above.
                 "reference_genome_source": None,
                 "reference_genome_ambiguous": False,

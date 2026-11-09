@@ -4,7 +4,7 @@ StellarPGx (<https://github.com/SBIMB/StellarPGx>, MIT) genotypes star alleles f
 variation graph built over each gene and its pseudogene, where ZaroPGx's callers read a
 linear alignment. Its CYP2D6 benchmark is the best published for a short-read caller
 (Twesigomwe et al., Clin Pharmacol Ther 2021;110(3):741-749, PMID 33492672: 99% diplotype
-concordance on 109 genomes, against Cyrius 98%, Stargazer 84%, Aldy 82%), and its licence
+concordance on 109 genomes, against Cyrius 98%, Stargazer 84%, Aldy 82%), and its license
 is one ZaroPGx can ship. So it was measured, on the same genomes and the same score as
 ZaroPGx itself, to see whether it makes any report more complete or more accurate.
 

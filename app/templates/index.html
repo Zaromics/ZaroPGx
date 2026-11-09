@@ -141,7 +141,7 @@
         }
 
         /* The stage row's eight stages need about 500px. In a narrower form (a phone,
-           or a tablet's centred column) they ran off the card and the page scrolled
+           or a tablet's centered column) they ran off the card and the page scrolled
            sideways; there they sit four to a row. */
         #uploadForm {
             container: upload-form / inline-size;
@@ -191,7 +191,7 @@
             transform: translateX(-50%);
             background: white;
             /* This card is white in BOTH themes, so it has to set its own text
-               colour. Without it, any child without an explicit colour inherits
+               color. Without it, any child without an explicit color inherits
                the dark theme's near-white body text and disappears onto the white
                background -- which is what happened to the PharmCAT popup's
                assume-ref labels, the only popup content that is neither an h6, a
@@ -381,7 +381,7 @@
         }
 
         /* Bootstrap Icons has no mitochondrion. This one is a mask (outer membrane and
-           cristae) filled with currentColor, so stage colours and pulses apply to it as
+           cristae) filled with currentColor, so stage colors and pulses apply to it as
            to any .bi glyph. */
         .bi-mitochondrion::before {
             content: "";
@@ -530,7 +530,7 @@
         }
         
         /* At 100% the bar just stopped, still bg-info, so nothing marked the
-           moment the run finished. Settle to green with a short colour pulse.
+           moment the run finished. Settle to green with a short color pulse.
            Pulsed via background-color rather than box-shadow because Bootstrap's
            .progress wrapper is overflow:hidden and would clip a glow. */
         #progressBar.progress-bar-complete {
@@ -545,9 +545,9 @@
         }
 
         /* Reduced motion still gets a ping, just not a repeated one. The concern
-           there is movement and flashing, not a single colour settle -- and
+           there is movement and flashing, not a single color settle -- and
            suppressing it entirely left the only completion cue as a static
-           colour swap, which is easy to miss if you looked away. One slow cycle. */
+           color swap, which is easy to miss if you looked away. One slow cycle. */
         @media (prefers-reduced-motion: reduce) {
             #progressBar.progress-bar-complete {
                 animation: progress-complete-pulse 1.2s ease-in-out 1;
@@ -837,8 +837,8 @@
                                         <i class="bi bi-eye"></i> View Header
                                     </button>
 
-                                    <!-- Demo: the server analyses its bundled NA12878 reads (POST /upload/demo) -->
-                                    <button type="button" class="btn btn-secondary" id="demoButton" onclick="runDemo()" title="Analyse NA12878's reads from the 1000 Genomes Project through every stage">
+                                    <!-- Demo: the server analyzes its bundled NA12878 reads (POST /upload/demo) -->
+                                    <button type="button" class="btn btn-secondary" id="demoButton" onclick="runDemo()" title="Analyze NA12878's reads from the 1000 Genomes Project through every stage">
                                         <i class="bi bi-play-fill"></i> Run Demo
                                     </button>
                                 </div>
@@ -933,7 +933,7 @@
                             <div class="card-body d-flex flex-column h-100">
                                 <p class="mb-0">ZaroPGx is a free and open source, easily self-hostable individual pharmacogenomic
                                     analysis system which attempts to create the most accurate and complete reports possible 
-                                    with a given genomic datafile.<br>
+                                    with a given genomic datafile.<br><br>
                                     For detailed information, see the software documentation and access the API reference.</p>
                                 <div class="mt-auto d-flex gap-2">
                                     <a href="/docs/" class="btn btn-secondary">Documentation</a>
@@ -949,7 +949,7 @@
                                 <p>This platform uses PharmCAT to generate recommendations based on institutional guidelines.<br>
                                     PharmCAT is now part of the ClinPGx project, which includes CPIC and PharmGKB.
                                     PharmCAT includes outside calls from <a href="https://github.com/FRED-2/OptiType">OptiType</a>, <a href="https://pypgx.readthedocs.io/en/latest/readme.html">PyPGx</a>, and <a href="https://github.com/genepi/mtdna-server-2">mtDNA-Server 2</a> when available.
-                                    Everything ZaroPGx is built on, with licences and citations, is on the <a href="/docs/user/credits.html">Credits</a> page of the documentation.
+                                    All components comprising ZaroPGx, including licenses and citations, are enumerated in the <a href="/docs/user/credits.html">Credits</a> page in the docs.
                                 </p>
                                 <div class="mt-auto d-flex gap-2">
                                     <a href="https://pharmcat.org/" target="_blank" class="btn btn-secondary">Learn More</a>
@@ -1113,7 +1113,7 @@
                 const fileType = (opts.fileType || '').toString().toLowerCase();
 
                 // A refused input has no workflow at all. Drawing one next to the red
-                // "cannot analyse" alert told the user two opposite things at once:
+                // "cannot analyze" alert told the user two opposite things at once:
                 // this file type is not accepted, and here is the pipeline it will run.
                 // `refused` is the upload gate's own verdict, sent by
                 // POST /upload/inspect-header, so this cannot drift from the upload.
@@ -1707,8 +1707,8 @@
                     this.progressBar.style.width = '0%';
                     this.progressBar.textContent = '0%';
                     this.progressBar.setAttribute('aria-valuenow', 0);
-                    // Drop the completion and failure colours, or the next run starts
-                    // green, red or grey (Bootstrap's bg-danger outranks bg-info), and
+                    // Drop the completion and failure colors, or the next run starts
+                    // green, red or gray (Bootstrap's bg-danger outranks bg-info), and
                     // put back the stripes a failed or cancelled run took off.
                     this.progressBar.classList.remove('progress-bar-complete', 'bg-danger', 'bg-secondary');
                     this.progressBar.classList.add('bg-info', 'progress-bar-striped', 'progress-bar-animated');
@@ -2612,7 +2612,7 @@
             `;
         }
 
-        // A popup is centred under its stage and up to 320px wide, so on a phone the
+        // A popup is centered under its stage and up to 320px wide, so on a phone the
         // first and last stages' popups ran off the screen. Moved back in by as much
         // as it overhangs, less an 8px margin.
         window.keepPopupOnScreen = function(popup) {
@@ -3411,7 +3411,7 @@
 
                         // Mark the finish visually: bg-info -> green, with a short
                         // pulse. Without this the bar reached 100% and simply froze
-                        // in the same colour it had been the whole run.
+                        // in the same color it had been the whole run.
                         const completedBar = document.getElementById('progressBar');
                         if (completedBar) {
                             completedBar.classList.remove('bg-info');

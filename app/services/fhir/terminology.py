@@ -11,7 +11,7 @@ References:
 - HL7 Genomics Reporting IG, STU3 (3.0.0):
   http://hl7.org/fhir/uv/genomics-reporting/STU3/
 - LOINC: https://loinc.org. Every LOINC code below is sent with its official
-  display name (LOINC_DISPLAYS), as LOINC's licence requires; checked against
+  display name (LOINC_DISPLAYS), as LOINC's license requires; checked against
   tx.fhir.org on 2026-10-12 and 2026-10-16.
 
 The bundle these build validates against the IG's profiles with no errors

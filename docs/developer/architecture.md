@@ -52,7 +52,7 @@ so `start-docker.sh` makes `data/temp` and `data/versions` world-writable (stick
 1. **Upload.** `POST /upload/genomic-data` saves the first data file (and a FASTQ's second
    mate) under `/data/uploads`. `app/api/utils/file_processor.py` reads the header, detects
    the format and reference build, and decides the workflow: a set of `needs_*` flags. An
-   input it cannot analyse is refused here, before any job exists.
+   input it cannot analyze is refused here, before any job exists.
 2. **Job.** The app creates a row in `jobs` and one in `job_steps` per step that will run.
    The steps come from `app/services/workflow_registry.py`, chosen by the flags.
 3. **Pipeline.** The app posts the job to `nextflow` (`POST /run`). Each process in

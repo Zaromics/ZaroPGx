@@ -9,7 +9,7 @@ Open `http://localhost:8765`.
 ## Choosing the input
 
 **Genomic File(s)** takes one data file per analysis: a VCF, BCF, gVCF, BAM, CRAM, SAM or
-FASTQ ({doc}`file-formats`). Add the file's index if you have one; it is recognised and
+FASTQ ({doc}`file-formats`). Add the file's index if you have one; it is recognized and
 named, but the pipeline makes its own. For paired-end FASTQ, choose both mates. Any further
 data file is ignored, with a warning saying which. A VCF, BCF or gVCF must hold one sample.
 
@@ -21,7 +21,7 @@ blank, the job gets a random identifier.
 analysis: the format, reference build, samples and contigs, and the steps the analysis will
 run, or why the file will be refused.
 
-**Run Demo** analyses NA12878's reads, from the 1000 Genomes Project's 30x whole genomes,
+**Run Demo** analyzes NA12878's reads, from the 1000 Genomes Project's 30x whole genomes,
 cut to the reads its calls depend on (30 MB). It runs every stage, takes several minutes, and
 its results can be checked against NA12878's published ones: `app/static/demo/README.md`
 lists them, and `scripts/make-demo-cram.sh` makes the file.
@@ -92,4 +92,4 @@ With the FHIR server on, **Push to FHIR server** sends the job's FHIR bundle to 
 Everything is in `data/reports/<patient_id>/<job_id>/` on the host. The upload itself is
 deleted when the job ends, unless `KEEP_UPLOADS=true`.
 
-To run analyses from a script, see {doc}`../developer/api-reference`.
+To run analyzes from a script, see {doc}`../developer/api-reference`.

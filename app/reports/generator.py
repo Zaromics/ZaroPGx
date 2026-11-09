@@ -335,7 +335,7 @@ _DIAGRAM_PAGE_HEIGHT_MM = 287.0
 
 def workflow_pdf_style(png: bytes) -> str:
     """The diagram's size and place on its PDF page: as large as the page allows,
-    in its own proportions, centred across the page under its title.
+    in its own proportions, centered across the page under its title.
 
     Set on the image itself. Left to object-fit inside a fixed box, WeasyPrint
     placed a diagram wider than the box's proportions 130px to the left of it: its
@@ -813,7 +813,7 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 
 
-# Wild-type labelling (BACKLOG 235).
+# Wild-type labeling (BACKLOG 235).
 #
 # PharmCAT reports a reference diplotype with no phenotype when it found nothing
 # to call. What that *means* depends on what the pipeline was given, so the report
@@ -834,7 +834,7 @@ CSS_FILE = os.path.join(TEMPLATE_DIR, "style.css")
 # had no test anywhere. The copies agreed on every input reachable today, but only
 # because each caller happened to lower-case file_type first: the HTML-lane copy
 # compared it raw, so a single upstream change to that normalisation would have
-# made one lane stop labelling while the other two carried on.
+# made one lane stop labeling while the other two carried on.
 WILD_TYPE_VARIANT_ONLY_LABEL = "Possibly Wild Type"
 WILD_TYPE_ALIGNED_READS_LABEL = "Likely Wild Type"
 
@@ -878,7 +878,7 @@ def wild_type_phenotype(
 # PharmCAT 3.4 names a one-position gene's reference allele by its position and
 # base: VKORC1 "rs9923231 reference (C)", F5 "rs6025 reference (C)". Two of them are
 # a reference call as much as CYP4F2's *1/*1 is. Reports before October 2026 printed
-# these as Reference/Reference and labelled them; with the names, VKORC1, F2 and F5
+# these as Reference/Reference and labeled them; with the names, VKORC1, F2 and F5
 # fell to "N/A" while CYP4F2 beside them kept its label.
 _NAMED_REFERENCE_ALLELE = re.compile(r"rs\d+ reference \([ACGT]+\)", re.IGNORECASE)
 
@@ -1451,7 +1451,7 @@ def mtdna_report_context(
             )
         else:
             # Defensive fallback only -- a result missing this reason code
-            # (older format) or carrying one this report does not recognise.
+            # (older format) or carrying one this report does not recognize.
             # Never re-derive the reason from indirect signals like whether
             # "mean_coverage" is a key: that inference is what conflated
             # "no chrM data" with "consent not given" in the first place.
@@ -1519,15 +1519,15 @@ env = Environment(
 )
 
 
-# Which colour a phenotype's badge gets. No standards body assigns colours to
-# phenotypes (CPIC standardised the terms, Caudle et al. 2017, not their colours;
-# PharmCAT's report colours none). The badges colour what the phenotype says
+# Which color a phenotype's badge gets. No standards body assigns colors to
+# phenotypes (CPIC standardized the terms, Caudle et al. 2017, not their colors;
+# PharmCAT's report colors none). The badges color what the phenotype says
 # about the gene's function or the risk screened, against what is typical: they
 # do not follow CPIC's EHR priority, which ranks the need to act and so differs
 # by gene (a CYP3A5 normal metabolizer is CPIC "Abnormal/Priority", needing more
 # tacrolimus than the standard dose set on the more common poor metabolizers; a
 # UGT1A1 intermediate is "Normal/Routine"). Whether to act is the drug
-# recommendations' to say. Four colours:
+# recommendations' to say. Four colors:
 #
 # - green, normal: Normal Metabolizer or Function, G6PD Normal, an HLA risk allele
 #   negative, normal risk of aminoglycoside-induced hearing loss;
@@ -1540,8 +1540,8 @@ env = Environment(
 #   ultrarapid metabolizer is at risk on codeine).
 #
 # Uncertain and indeterminate results, an unresolved "A or B", and anything else
-# keep the neutral grey. The label is always printed: colour is never the only cue.
-# The CSS classes are colour tiers; their names predate the non-metabolizer terms.
+# keep the neutral gray. The label is always printed: color is never the only cue.
+# The CSS classes are color tiers; their names predate the non-metabolizer terms.
 _PHENOTYPE_BADGE_CLASSES = tuple(
     (re.compile(pattern, re.IGNORECASE), css_class)
     for pattern, css_class in (
@@ -1567,7 +1567,7 @@ _PHENOTYPE_BADGE_CLASSES = tuple(
 
 
 def phenotype_badge_class(phenotype) -> str:
-    """The colour class of a phenotype badge, "" for the neutral default."""
+    """The color class of a phenotype badge, "" for the neutral default."""
     text = str(phenotype or "")
     for pattern, css_class in _PHENOTYPE_BADGE_CLASSES:
         if pattern.search(text):
@@ -1678,7 +1678,7 @@ _INLINE_SCRIPTS = {
     "d3": "vendor/d3/d3.min.js",
     "pgx-report.js": "js/pgx-report.js",
 }
-# Their licences, which ask for the copyright and permission notice in every copy:
+# Their licenses, which ask for the copyright and permission notice in every copy:
 # the downloaded report is one, and the minified files carry only a one-line
 # banner.
 _INLINE_SCRIPT_LICENCES = {
@@ -2371,7 +2371,7 @@ def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
 
     Returns ``None`` when there is nothing to say. In particular, a payload with
     **no** ``pharmcatVersion`` key at all is silent rather than alarming: that is
-    the shape of the TSV fallback and of already-normalised data, neither of
+    the shape of the TSV fallback and of already-normalized data, neither of
     which is making a claim about a PharmCAT release, and alerting there would
     put the banner on every TSV-rescued run. Only a version that is present and
     unverified is reported, which is the case the gate's warning is about.
@@ -3335,7 +3335,7 @@ def label_conditional_recommendations(recommendations: List[Dict[str, Any]]) -> 
 
     A gene is in question for a drug's guideline when its annotations were matched
     on more than one set of candidates. Each block the report prints -- one
-    guideline's text, as the template groups it -- is labelled with the candidates
+    guideline's text, as the template groups it -- is labeled with the candidates
     of those genes it was matched on, unless it covers all of them (FDA's
     simvastatin text is the same for both: it holds whatever the truth). Genes
     matched one way only are left out: DPWG writes one annotation per gene for
@@ -4913,7 +4913,7 @@ def generate_report(
                     json.dumps(debug_info, indent=2, default=str),
                 )
             except Exception:
-                logger.debug("HTML report context could not be serialised")
+                logger.debug("HTML report context could not be serialized")
 
             # Render the HTML template with error handling
             try:
