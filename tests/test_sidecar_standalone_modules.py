@@ -12,8 +12,13 @@ fail every run, which showed only as a job that finished with no PharmCAT files
 and no report links. Unit tests all passed -- they import the module from the
 repo, where `app` is importable -- and only the e2e lane caught it.
 
-An import inside the function that needs it is fine; the sidecar never calls
-those functions.
+The rule here is **no `app` import at any level**, not merely none at module
+scope. An import nested inside a function would survive the sidecar only while
+the sidecar never calls that function, which is a precondition nobody can see
+from the file and nothing can check. Code that needs the rest of `app` belongs
+on the app side instead: `assume_ref_alert` moved to `app/reports/assume_ref.py`
+for exactly this reason, leaving this file as shared flag logic with no `app`
+dependency at all.
 """
 
 import ast
@@ -55,11 +60,11 @@ def test_the_audit_found_the_modules_it_is_meant_to_police():
 
 
 @pytest.mark.parametrize("path", STANDALONE, ids=lambda p: p.name)
-def test_no_module_level_app_import(path):
+def test_no_app_import_anywhere(path):
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
     offenders = []
-    for node in tree.body:  # module scope only; inside a function is fine
+    for node in ast.walk(tree):  # any level: a nested one is no safer
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app"):
             offenders.append((node.lineno, f"from {node.module} import ..."))
         elif isinstance(node, ast.Import):
@@ -69,6 +74,7 @@ def test_no_module_level_app_import(path):
 
     assert not offenders, (
         f"{path.relative_to(ROOT)} is copied into a sidecar image on its own, "
-        f"where no 'app' package exists, but imports it at module scope: "
-        f"{offenders}. Move the import inside the function that needs it."
+        f"where no 'app' package exists, but imports it: {offenders}. "
+        "Move the code that needs 'app' to the app side -- nesting the import "
+        "only hides the failure until the sidecar calls that function."
     )

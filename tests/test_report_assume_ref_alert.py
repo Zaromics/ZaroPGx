@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 import app.reports.generator as generator_module
+from app.reports.assume_ref import assume_ref_alert
 from app.utils.pharmcat_assume_ref import (
-    assume_ref_alert,
     methodology_assume_ref_paragraph,
 )
 

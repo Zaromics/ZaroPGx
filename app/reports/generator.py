@@ -3686,12 +3686,12 @@ def generate_report(
             # Prefer Job.job_metadata (upload writes assume-ref flags here)
             try:
                 from app.api.db import Job, JobStep
+                from app.reports.assume_ref import assume_ref_alert
                 from app.utils.gvcf_provenance import gvcf_provenance_paragraph
                 from app.utils.liftover_provenance import (
                     liftover_provenance_sentence,
                 )
                 from app.utils.pharmcat_assume_ref import (
-                    assume_ref_alert,
                     explicit_calls_paragraph,
                     methodology_assume_ref_paragraph,
                     pharmcat_flags_for_input,

@@ -153,34 +153,3 @@ def methodology_assume_ref_paragraph(absent: bool, unspecified: bool) -> Optiona
         f"<p><strong>Assume reference when missing:</strong> This research run used {mode}. "
         "What this means for the results is set out under Alerts and Warnings.</p>"
     )
-
-
-def assume_ref_alert(absent: bool, unspecified: bool) -> Optional[str]:
-    """The Alerts and Warnings entry for a run that assumed the reference allele."""
-    # Imported here, not at module scope: docker/pharmcat/Dockerfile copies this
-    # file ALONE into /assume-ref-lib and the sidecar imports it as a bare
-    # module, so there is no ``app`` package in that image. A module-level
-    # ``from app...`` import makes PharmCAT fail with ModuleNotFoundError before
-    # it runs. The sidecar imports only resolve_assume_ref_flags and
-    # pharmcat_cli_ref_flags, never this function.
-    from app.reports.marks import CAUTION_SVG
-
-    if not absent and not unspecified:
-        return None
-    if absent and unspecified:
-        assumed = (
-            "Positions absent from the file, and positions it lists without a "
-            "genotype (<code>./.</code>),"
-        )
-    elif absent:
-        assumed = "Positions absent from the file"
-    else:
-        assumed = "Positions the file lists without a genotype (<code>./.</code>)"
-    (flag,) = pharmcat_cli_ref_flags(absent, unspecified)
-    return (
-        f"<p>{CAUTION_SVG} {assumed} were assumed to be the reference allele (PharmCAT "
-        f"<code>{flag}</code>). Fabricating reference calls can over-call "
-        "*1/Reference and normal phenotypes: a position the data never covered "
-        "reads as reference. PharmCAT documents these flags as dangerous / "
-        "research-oriented. Confirm assayed coverage before interpreting results.</p>"
-    )
