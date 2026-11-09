@@ -16,6 +16,7 @@ import pytest
 
 from app.reports import unlisted
 from app.reports.generator import build_report_credits, credit_run_for_job
+from tests.report_marks import marks_as_characters
 
 
 def _variant(gene, tier, label, **kw):
@@ -340,6 +341,7 @@ def _render(rows, ctx):
 
 
 def _clean(fragment):
+    fragment = marks_as_characters(fragment)
     return html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip())
 
 
@@ -368,12 +370,12 @@ def test_the_pdf_marks_the_summary_row_notes_it_and_tables_the_variants():
         ]
     )
     assert (
-        "⚠ DPYD : c.2788C>T (p.Gln930Ter), predicted to cause loss of function: no allele definition lists it"
+        "⚠️ DPYD : c.2788C>T (p.Gln930Ter), predicted to cause loss of function: no allele definition lists it"
         in notes
     )
     results = page[page.index("<h2>Genetic Results</h2>") :]
     row = results[results.index("<td>DPYD</td>") :]
-    assert "⚠ Unlisted variant: predicted loss of function" in _clean(
+    assert "⚠️ Unlisted variant: predicted loss of function" in _clean(
         row[: row.index("</tr>")]
     )
     section = _clean(

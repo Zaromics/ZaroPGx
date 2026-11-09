@@ -52,6 +52,7 @@ from app.api.utils.file_utils import (
 )
 from app.api.utils.header_inspector import inspect_header
 from app.genome.contig_names import names_a_chromosome
+from app.reports.marks import CAUTION_SVG
 from app.utils.env import env_flag
 
 # Configure logging
@@ -523,7 +524,7 @@ def uploaded_index_messages(
         # Named as its index, and does not index it.
         paired = None
         warnings.append(
-            f"<p>⚠️ {html.escape(named)} does not index {data} "
+            f"<p>{CAUTION_SVG} {html.escape(named)} does not index {data} "
             f"({html.escape(refusal or '')}) and was not used. The pipeline indexes "
             "the data itself.</p>"
         )
@@ -537,7 +538,7 @@ def uploaded_index_messages(
         else:
             why = f"{data} is not a file that takes an index."
         warnings.append(
-            f"<p>⚠️ {html.escape(name)} is not an index of {data} and was not used. "
+            f"<p>{CAUTION_SVG} {html.escape(name)} is not an index of {data} and was not used. "
             f"{why}</p>"
         )
     return paired, recommendations, warnings
@@ -690,7 +691,7 @@ def _ambiguous_reference_genome_warning(candidates: Optional[List[str]]) -> str:
     # gets named instead of silently falling back to the no-candidates phrasing.
     builds_note = f" (candidates: {', '.join(candidates)})" if candidates else ""
     return (
-        "<p>⚠️ This file's header contradicts itself about the genome "
+        f"<p>{CAUTION_SVG} This file's header contradicts itself about the genome "
         f"build{builds_note}. The build could not be verified, so "
         "analysis proceeds against the caller-declared build.</p>"
     )
@@ -787,7 +788,7 @@ def _plan_fastq(analysis: "FileAnalysis", workflow: Dict) -> None:
         "<p>Step 2: HLA typing with OptiType, then PyPGx star-allele calling, then PharmCAT.</p>"
     )
     workflow["warnings"].append(
-        "<p>⚠️ Alignment is slow. An aligned BAM or CRAM is much faster.</p>"
+        f"<p>{CAUTION_SVG} Alignment is slow. An aligned BAM or CRAM is much faster.</p>"
     )
 
 
@@ -1386,7 +1387,7 @@ class FileProcessor:
         # One warning, two sentences: stored as two, the second had no mark and
         # was a warning of its own in the report.
         workflow["warnings"].append(
-            "<p>⚠️ VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis. "
+            f"<p>{CAUTION_SVG} VCF datafiles lack the necessary raw information to perform complete pharmacogenomic analysis. "
             "The analysis can proceed, however, the results will be incomplete and have degraded accuracy.</p>"
         )
         workflow["warnings"].append(
@@ -1398,12 +1399,14 @@ class FileProcessor:
         workflow["warnings"].append(
             "<p class='preflight'>Although significant computation and processing time is required, if possible, using an upstream datafile(s) is strongly recommended.</p>"
         )
-        workflow["warnings"].append("<p>⚠️ HLA typing can not be performed.</p>")
         workflow["warnings"].append(
-            "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>"
+            "<p>" + CAUTION_SVG + " HLA typing can not be performed.</p>"
         )
         workflow["warnings"].append(
-            "<p>⚠️ All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
+            f"<p>{CAUTION_SVG} CYP2D6 typing will be performed with degraded accuracy.</p>"
+        )
+        workflow["warnings"].append(
+            f"<p>{CAUTION_SVG} All genes with phenotypes affected by structural variants and copy-number variants will be evaluated with degraded accuracy.</p>"
         )
 
         workflow["recommendations"].append("<p>VCF files use the quick pipeline:</p>")
@@ -1449,7 +1452,7 @@ class FileProcessor:
                     "file over to GRCh38/hg38 with GATK LiftoverVcf prior to analysis.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p class='preflight'>⚠️ Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
+                    f"<p class='preflight'>{CAUTION_SVG} Liftover will drop and report the number of variants that could not be mapped to GRCh38.</p>"
                 )
             elif reference != "unknown":
                 # A named build that is neither GRCh38 nor GRCh37 -- today that
@@ -1497,7 +1500,7 @@ class FileProcessor:
                     f"GRCh38/hg38 and call from the realigned data."
                 )
                 workflow["warnings"].append(
-                    f"<p>⚠️ This file is aligned to {vcf_info.reference_genome}. "
+                    f"<p>{CAUTION_SVG} This file is aligned to {vcf_info.reference_genome}. "
                     "ZaroPGx analyses GRCh38/hg38 only, so it is refused rather "
                     "than analysed on coordinates that are not GRCh38's.</p>"
                 )
@@ -1545,10 +1548,10 @@ class FileProcessor:
                     "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Whole Exome Sequencing can vary in coverage. The analysis may have degraded completeness, accuracy, and precision, compared to Whole Genome Sequencing.</p>"
+                    f"<p>{CAUTION_SVG} Whole Exome Sequencing can vary in coverage. The analysis may have degraded completeness, accuracy, and precision, compared to Whole Genome Sequencing.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
+                    f"<p>{CAUTION_SVG} Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
                 )
             else:
                 workflow["recommendations"].append(
@@ -1558,10 +1561,10 @@ class FileProcessor:
                     "<p>Sequencing quality is currently not considered. If the sequencing quality is sufficient, you should have good results (with VCF-related limitations).</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Depending on the sequencing platform and methodology, the uploaded VCF datafile may have limited pharmacogene coverage.</p>"
+                    f"<p>{CAUTION_SVG} Depending on the sequencing platform and methodology, the uploaded VCF datafile may have limited pharmacogene coverage.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
+                    f"<p>{CAUTION_SVG} Genes with complex variants (structural variants, copy-number variants, etc.) may have degraded evaluation.</p>"
                 )
 
         # Check if index exists. The pipeline indexes the VCF itself (tabix), as it
@@ -1612,21 +1615,21 @@ class FileProcessor:
         )
         if coverage.missing_core:
             workflow["warnings"].append(
-                "<p>⚠️ The variants that define the common CYP2D6 star alleles are "
+                f"<p>{CAUTION_SVG} The variants that define the common CYP2D6 star alleles are "
                 f"absent from {coverage.vendor} {coverage.best_chip} by name: "
                 f"{coverage.missing_core}.</p>"
             )
         workflow["warnings"].append(
-            "<p>⚠️ rs35742686 (CYP2D6*3) and rs3064744 (the UGT1A1*28 TA repeat) "
+            f"<p>{CAUTION_SVG} rs35742686 (CYP2D6*3) and rs3064744 (the UGT1A1*28 TA repeat) "
             "are absent from every version of every consumer array.</p>"
         )
         workflow["warnings"].append(
-            "<p>⚠️ Genotyping chips cannot detect gene duplications or deletions "
+            f"<p>{CAUTION_SVG} Genotyping chips cannot detect gene duplications or deletions "
             "at all, by any method — and those decide the phenotype for CYP2D6 "
             "and for several other pharmacogenes.</p>"
         )
         workflow["warnings"].append(
-            "<p>⚠️ The coverage above is counted from the vendor's published "
+            f"<p>{CAUTION_SVG} The coverage above is counted from the vendor's published "
             "manifest, which is the union of every revision of the chip, so it is "
             "an upper bound on any individual file rather than a typical one.</p>"
         )
@@ -1704,7 +1707,7 @@ class FileProcessor:
             "ZaroPGx call the variants.</p>"
         )
         workflow["warnings"].append(
-            "<p>⚠️ Do not filter the reference blocks out by hand. "
+            f"<p>{CAUTION_SVG} Do not filter the reference blocks out by hand. "
             "<code>bcftools view -e 'ALT=\"&lt;NON_REF&gt;\"'</code> and its "
             "equivalents delete your real variants too — a gVCF's variant rows carry "
             "the reference allele alongside the alternate one, so the expression "
@@ -1761,7 +1764,7 @@ class FileProcessor:
             "that run, which ZaroPGx converts itself.</p>"
         )
         workflow["warnings"].append(
-            "<p>⚠️ A gVCF genotyped by hand loses the reference-confidence blocks at "
+            f"<p>{CAUTION_SVG} A gVCF genotyped by hand loses the reference-confidence blocks at "
             "pharmacogene positions, so those positions become no-calls rather than "
             "the called homozygous-reference genotypes a GRCh38 gVCF upload would "
             "get.</p>"
@@ -2109,11 +2112,11 @@ class FileProcessor:
                     "Positions the file does not cover are no-calls.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ Genotypes are re-derived by GenotypeGVCFs and may differ from "
+                    f"<p>{CAUTION_SVG} Genotypes are re-derived by GenotypeGVCFs and may differ from "
                     "your caller's. Low-confidence sites are no-calls.</p>"
                 )
                 workflow["warnings"].append(
-                    "<p>⚠️ An indel PharmCAT cannot match stays a no-call, as with a "
+                    f"<p>{CAUTION_SVG} An indel PharmCAT cannot match stays a no-call, as with a "
                     "plain VCF.</p>"
                 )
                 workflow["recommendations"].append(
@@ -2606,7 +2609,7 @@ class FileProcessor:
                     and looks_like_one_mate(primary_file.filename)
                 ):
                     workflow["warnings"].append(
-                        f"<p>⚠️ {html.escape(str(primary_file.filename))} looks like one "
+                        f"<p>{CAUTION_SVG} {html.escape(str(primary_file.filename))} looks like one "
                         "mate of a paired-end run. Alone, it can miss heterozygous "
                         "variants in CYP2B6 and CYP2D6. Upload R1 and R2 together.</p>"
                     )
@@ -2641,7 +2644,7 @@ class FileProcessor:
                         ", ".join(ignored_files),
                     )
                     workflow["warnings"].append(
-                        f"<p>⚠️ ZaroPGx analyses one data file per job. Only {analysed} "
+                        f"<p>{CAUTION_SVG} ZaroPGx analyses one data file per job. Only {analysed} "
                         f"was analysed; {', '.join(ignored)} {was_were} ignored. "
                         "Upload each data file as its own analysis.</p>"
                     )
@@ -2830,7 +2833,7 @@ class FileProcessor:
                 except Exception as e:
                     logger.error(f"Error analyzing original WGS file: {str(e)}")
                     workflow["warnings"].append(
-                        f"<p>⚠️ Could not analyze original WGS file: {html.escape(str(e))}. "
+                        f"<p>{CAUTION_SVG} Could not analyze original WGS file: {html.escape(str(e))}. "
                         "Using uploaded file instead.</p>"
                     )
 

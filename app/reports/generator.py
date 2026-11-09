@@ -70,6 +70,7 @@ from app.pharmcat.report_json import (
 )
 from app.reports import (
     caller_agreement,
+    marks,
     pharmcat_variants,
     rarity,
     read_phase,
@@ -96,6 +97,7 @@ from app.reports.copy_number import (
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
 from app.reports.implications import row_implication, table_implication
+from app.reports.marks import CAUTION_SVG
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
@@ -1643,6 +1645,10 @@ def register_report_template_helpers(environment) -> None:
 
     One function, called by all three, so adding a helper cannot half-land again.
     """
+    # The caveat marks, drawn rather than typed (app/reports/marks.py).
+    # Markup so autoescape leaves the SVG alone.
+    environment.globals["CAUTION"] = Markup(marks.CAUTION_SVG)
+    environment.globals["INFO"] = Markup(marks.INFO_SVG)
     environment.filters["activity_score_num"] = activity_score_num
     environment.filters["phenotype_badge_class"] = phenotype_badge_class
     environment.filters["allele_results_unbroken"] = allele_results_unbroken
@@ -2075,7 +2081,7 @@ def partial_coverage_alert(
     if not lines:
         return None
     note = (
-        f"<p>⚠️ <strong>Positions {verb}:</strong> {intro} some of the positions that define these "
+        f"<p>{CAUTION_SVG} <strong>Positions {verb}:</strong> {intro} some of the positions that define these "
         "genes' alleles, and PharmCAT matched each gene on the rest. An allele defined "
         "only there could not be assessed; one defined at other positions too was "
         "assessed on those alone."
@@ -2220,7 +2226,7 @@ def unread_variants_alert(genes, max_listed: int = 8) -> Optional[str]:
     if not parts:
         return None
     return (
-        "<p>⚠️ <strong>Positions PharmCAT did not use as found.</strong> "
+        f"<p>{CAUTION_SVG} <strong>Positions PharmCAT did not use as found.</strong> "
         + ". ".join(parts)
         + ".</p>"
     )
@@ -2408,7 +2414,7 @@ def unverified_pharmcat_version_alert(pharmcat_results: Any) -> Optional[str]:
             f"has been verified against (verified series: {known})."
         )
     return (
-        "<p>⚠️ <strong>Unverified PharmCAT version</strong></p>"
+        f"<p>{CAUTION_SVG} <strong>Unverified PharmCAT version</strong></p>"
         f"<p>{claim} The structural checks on the PharmCAT output passed, so the "
         f"calls below are readable and are reported as PharmCAT made them; but "
         f"they have not been confirmed to match this pipeline's expectations for "
@@ -2435,6 +2441,15 @@ def pharmcat_tsv_rescue_alert(schema_gate_reason: Optional[str]) -> str:
     banner claiming the rejected file contributed nothing would be false, and
     falsely reassuring about the two fields a reader is most likely to check.
 
+    An entry in the channel is either a **string** -- a warning, rendered with
+    the amber bar and carrying the caution mark -- or a **mapping**
+    ``{"tone": "info", "html": ...}``, rendered with the blue bar and carrying
+    the info mark. Information is not a warning:
+    ``copy_number.pharmcat_copy_number_alert`` returns the mapping when it found
+    nothing wrong at all. Both marks are written in emoji presentation (U+FE0F
+    after the character) so that the page and the PDF agree with each other and
+    with every other mark in the report; ``tests/test_caveat_marks.py`` pins it.
+
     HTML, because the templates render each warning with ``|safe`` and the
     existing warnings are HTML fragments. ``schema_gate_reason`` is built from
     key names lifted out of the payload, so it is escaped.
@@ -2453,7 +2468,7 @@ def pharmcat_tsv_rescue_alert(schema_gate_reason: Optional[str]) -> str:
             "further detail"
         )
     return (
-        "<p>⚠️ <strong>Report built from PharmCAT's TSV output</strong></p>"
+        f"<p>{CAUTION_SVG} <strong>Report built from PharmCAT's TSV output</strong></p>"
         f"<p>{refusal}. The genotypes and drug recommendations below were read "
         "instead from PharmCAT's tab-delimited (TSV) output for the same run -- "
         "a separate file, parsed by separate code -- so the results below are "
@@ -3671,12 +3686,12 @@ def generate_report(
             # Prefer Job.job_metadata (upload writes assume-ref flags here)
             try:
                 from app.api.db import Job, JobStep
+                from app.reports.assume_ref import assume_ref_alert
                 from app.utils.gvcf_provenance import gvcf_provenance_paragraph
                 from app.utils.liftover_provenance import (
                     liftover_provenance_sentence,
                 )
                 from app.utils.pharmcat_assume_ref import (
-                    assume_ref_alert,
                     explicit_calls_paragraph,
                     methodology_assume_ref_paragraph,
                     pharmcat_flags_for_input,
@@ -3859,7 +3874,7 @@ def generate_report(
                 # would mean nothing to a clinician reading the PDF.
                 logger.warning(f"Failed to retrieve job report metadata: {e}")
                 workflow_warnings = [
-                    "<p>⚠️ This run's provenance could not be read back from the "
+                    f"<p>{CAUTION_SVG} This run's provenance could not be read back from the "
                     "database, so this report omits statements it would normally "
                     "make about how the analysis was configured — including "
                     "whether uncalled positions were assumed to be reference, and "

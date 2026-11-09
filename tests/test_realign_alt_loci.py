@@ -41,6 +41,7 @@ from app.reports.alt_locus import (
     annotate_alt_locus,
     realigned_alt_loci,
 )
+from tests.report_marks import marks_as_characters
 from tests.test_gatk_api_no_mock_bam import client, gatk_api  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -825,7 +826,7 @@ def test_a_record_from_before_the_realignment_reads_as_it_did():
         "CYP2D6": {"reads": 266, "mapq0": 155, "percent": 58}
     }
     assert "⚠️ Reads with mapping quality 0: CYP2D6 (58% of 266 reads)" in (
-        alt_locus_alert(output)
+        marks_as_characters(alt_locus_alert(output))
     )
     assert alt_realignment_diagram_line(output) is None
 

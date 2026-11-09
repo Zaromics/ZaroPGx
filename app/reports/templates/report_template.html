@@ -463,7 +463,7 @@
             text-align: left;
             font-weight: bold;
             overflow-wrap: normal; /* allow wrapping if needed */
-            white-space: nowrap; /* "CYP2C19 ⚠" on one line: the mark wrapped under it */
+            white-space: nowrap; /* "CYP2C19 {{ CAUTION }}" on one line: the mark wrapped under it */
         }
         .exec-summary-diplotype {
             text-align: center;
@@ -726,7 +726,7 @@
             margin: 4px 0 10px 0;
             padding-left: 1.2em;
             font-size: 0.95em;
-            color: #333;
+            color: #555;
         }
         .pharmcat-message-list li { margin: 0 0 4px 0; break-inside: avoid; page-break-inside: avoid; }
         .pharmcat-message-source { font-weight: bold; color: #555; }
@@ -1315,14 +1315,20 @@
         
         <div class="alerts-container" style="margin-top: 20px;">
             {% if workflow_warnings and workflow_warnings|length > 0 %}
+                {#- An entry is either a string (a warning: amber bar, the caution
+                    mark) or {"tone": "info", "html": ...} (information: blue bar,
+                    the info mark). generator's workflow_warnings docstring carries
+                    the rule; copy_number's all-clear is the first informational one. -#}
                 {% for warning in workflow_warnings %}
-                    <div class="alert-box" style="margin-bottom: 15px; padding: 12px; border-left: 4px solid #f39c12; background-color: #fffbf0; border-radius: 4px;">
-                        {{ warning|safe }}
+                    {% set _info = warning is mapping and warning.get('tone') == 'info' %}
+                    {% set _body = warning.get('html', '') if warning is mapping else warning %}
+                    <div class="alert-box" style="margin-bottom: 15px; padding: 12px; {{ "border-left: 4px solid #3498db; background-color: #f0f9fb;" if _info else "border-left: 4px solid #f39c12; background-color: #fffbf0;" }} border-radius: 4px;">
+                        {{ _body|safe }}
                     </div>
                 {% endfor %}
             {% else %}
                 <div class="alert-box" style="margin-bottom: 15px; padding: 12px; border-left: 4px solid #3498db; background-color: #f0f9fb; border-radius: 4px;">
-                    <p><strong>No alerts or warnings</strong></p>
+                    <p>{{ INFO }} <strong>No alerts or warnings</strong></p>
                     <p>No workflow warnings or alerts were generated for this report.</p>
                 </div>
             {% endif %}
@@ -1345,8 +1351,8 @@
     {# A call the reads phase differently (read_phase_conflict). #}
     {% set read_phase_genes = diplotypes|selectattr('read_phase_conflict')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
     {% set copy_number_genes = diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|map(attribute='gene')|list %}
-    {# The line under each such call in the summary: "⚠ Copy number not assessed",
-       "⚠ PyPGx found a structural allele", or "⚠ Deletion found from read depth"
+    {# The line under each such call in the summary: "{{ CAUTION }} Copy number not assessed",
+       "{{ CAUTION }} PyPGx found a structural allele", or "{{ CAUTION }} Deletion found from read depth"
        (copy_number.listed_alleles_entry). #}
     {% set copy_number_markers = {} %}
     {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call') %}{% set _ = copy_number_markers.update({d.gene: d.copy_number_not_assessed}) %}{% endfor %}
@@ -1369,33 +1375,33 @@
         <p class="header-note"><strong>{{ r.gene }} {{ r.diplotype }}</strong>: PharmCAT's label for this call, a diplotype of its reference allele, which it names &ldquo;{{ r.reference_name }}&rdquo;.</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('alt_locus')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
-        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ d.gene }}</strong>: {{ d.alt_locus.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('read_phase_conflict')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
-        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.read_phase_conflict.note }}</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ d.gene }}</strong>: {{ d.read_phase_conflict.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('unlisted_flag')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
-        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.unlisted_flag.note }}</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ d.gene }}</strong>: {{ d.unlisted_flag.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('caller_disagreement')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') %}
-        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.caller_disagreement.note }}</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ d.gene }}</strong>: {{ d.caller_disagreement.note }}</p>
         {% endfor %}
         {% for d in diplotypes|selectattr('copy_number_not_assessed')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel') if not d.copy_number_not_assessed.listed %}
-        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ d.gene }}</strong>: {{ d.copy_number_not_assessed.note }}</p>
         {% endfor %}
         {# A short note for each call that cannot show an allele PharmCAT lists; the
-           alert says it in full. ⚠ only where nothing measured the copy number, or
+           alert says it in full. {{ CAUTION }} only where nothing measured the copy number, or
            PyPGx found a structural allele. #}
         {% for d in listed_rows %}{% set e = d.copy_number_not_assessed %}
-        <p class="header-note"><strong>{% if e.warn is not sameas false %}⚠ {% endif %}{{ d.gene }}</strong>: {{ e.note }}</p>
+        <p class="header-note"><strong>{% if e.warn is not sameas false %}{{ CAUTION }} {% endif %}{{ d.gene }}</strong>: {{ e.note }}</p>
         {% endfor %}
         {% set positions_rows = diplotypes|selectattr('positions_note')|selectattr('diplotype', 'a_call')|selectattr('gene', 'in_summary_panel')|list %}
         {% if positions_rows|length == 1 %}{% set d = positions_rows[0] %}
-        <p class="header-note"><strong>⚠ {{ d.gene }}</strong>: {{ d.positions_note }}, so a variant there would not have been seen and this call may be wrong. Genetic Results notes it beside the call.</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ d.gene }}</strong>: {{ d.positions_note }}, so a variant there would not have been seen and this call may be wrong. Genetic Results notes it beside the call.</p>
         {% elif positions_rows %}{% set positions = positions_summary_note(positions_rows) %}
         {# One entry for several: one a gene ran the notes past their page when
            PyPGx called every gene of a thin alignment. #}
-        <p class="header-note"><strong>⚠ {{ positions.genes }}</strong>: {{ positions.note }}</p>
+        <p class="header-note"><strong>{{ CAUTION }} {{ positions.genes }}</strong>: {{ positions.note }}</p>
         {% endif %}
         {{ unresolved.summary_legend(called) }}
         {{ unresolved.summary_uncalled(summary_uncalled_rows, missing_positions_not_assumed) }}
@@ -1419,9 +1425,9 @@
                     {% for r in rows %}
                     <tr id="summary-{{ r.gene }}"{% if not r.called %} class="exec-summary-uncalled"{% endif %}>
                         <td class="exec-summary-number">{{ loop.index }}.</td>
-                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">⚠</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">⚠</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">⚠</span>{% elif r.gene in disagreement_genes %} <span class="alt-locus-note" title="PyPGx read the same data as a different call: see the notes">⚠</span>{% elif r.gene in read_phase_genes %} <span class="alt-locus-note" title="The reads phase this call differently: see the notes">⚠</span>{% endif %}</td>
+                        <td class="exec-summary-gene">{{ r.gene }}{% if r.gene in alt_locus_genes %} <span class="alt-locus-note" title="This call may be wrong: see the notes">{{ CAUTION }}</span>{% elif r.gene in positions_genes %} <span class="alt-locus-note" title="Positions read as reference: see the notes">{{ CAUTION }}</span>{% elif r.gene in unlisted_genes %} <span class="alt-locus-note" title="A variant no allele definition lists, which the call does not account for: see the notes">{{ CAUTION }}</span>{% elif r.gene in disagreement_genes %} <span class="alt-locus-note" title="PyPGx read the same data as a different call: see the notes">{{ CAUTION }}</span>{% elif r.gene in read_phase_genes %} <span class="alt-locus-note" title="The reads phase this call differently: see the notes">{{ CAUTION }}</span>{% endif %}</td>
                         {% if r.called %}
-                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}{% set m = copy_number_markers[r.gene] %}{% if m.warn is sameas false %}<div class="copy-number-note plain-note">{{ m.marker }}: see the notes</div>{% else %}<div class="copy-number-note">⚠ {{ m.marker or 'Copy number not assessed' }}: see the notes</div>{% endif %}{% endif %}</td>
+                        <td class="exec-summary-diplotype{% if r.diplotype|length > 60 %} long-diplotype{% endif %}">{% if '/' in r.diplotype and not r.diplotype_candidates %}{% set parts = r.diplotype.split('/') %}<span class="diplotype-allele">{{ parts[0] }}</span><span class="diplotype-break">/</span><span class="diplotype-allele">{{ parts[1] }}</span>{% else %}{{ r.diplotype }}{% endif %}{% if r.gene in copy_number_markers %}{% set m = copy_number_markers[r.gene] %}{% if m.warn is sameas false %}<div class="copy-number-note plain-note">{{ m.marker }}: see the notes</div>{% else %}<div class="copy-number-note">{{ CAUTION }} {{ m.marker or 'Copy number not assessed' }}: see the notes</div>{% endif %}{% endif %}</td>
                         <td class="exec-summary-phenotype"><div class="phenotype-line">
                             {% set ph = r.phenotype %}
                             {% if r.diplotype_candidates %}<span class="phenotype-candidates">{{ ph }}</span>{% else %}<span class="gene-phenotype {{ ph|phenotype_badge_class }}">{{ ph|allele_results_unbroken }}</span>{% endif %}

@@ -48,6 +48,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from app.reports.marks import CAUTION_SVG
+
 logger = logging.getLogger(__name__)
 
 Key = Tuple[str, int, str, str]
@@ -427,7 +429,7 @@ def alert(summary: Optional[Mapping[str, Any]]) -> Optional[str]:
         return None
     one = len(rare) == 1
     return (
-        f"<p>⚠️ <strong>{'A call rests' if one else 'Calls rest'} on a rare "
+        f"<p>{CAUTION_SVG} <strong>{'A call rests' if one else 'Calls rest'} on a rare "
         f"variant:</strong> {_calls(len(rare))} {'rests' if one else 'rest'} on a "
         "variant seen in fewer than 1 person in 100 in every gnomAD genetic ancestry "
         f"group: {_named(rare)}. A rare defining variant means the call is uncommon, "

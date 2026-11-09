@@ -51,6 +51,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from markupsafe import Markup
 
+from app.reports.marks import CAUTION_SVG, INFO_SVG
 from app.reports.provenance import (
     CALLED_BY_PHARMCAT,
     CALLED_BY_PYPGX,
@@ -402,7 +403,7 @@ def pypgx_copy_number(pypgx_results: Any, gene: str) -> Optional[str]:
 
 # The Executive Summary's line under a noted call, by kind. A call that cannot show
 # an allele (nothing measured it) or may be wrong (a structural allele was measured
-# that PharmCAT's call cannot show) is marked ⚠ (``warn``). A gene whose copy number
+# that PharmCAT's call cannot show) is marked ⚠️ (``warn``). A gene whose copy number
 # was measured and found normal has nothing left to show, and no line at all.
 NOT_ASSESSED_MARKER = "Copy number not assessed"
 FOUND_MARKER = "PyPGx found a structural allele"
@@ -642,7 +643,7 @@ def copy_number_alert(genes: List[str], why: Mapping[str, str]) -> Optional[str]
     if not genes:
         return None
     return (
-        f"<p>⚠️ <strong>Copy number not assessed:</strong> {_gene_list(genes)}. "
+        f"<p>{CAUTION_SVG} <strong>Copy number not assessed:</strong> {_gene_list(genes)}. "
         f"{html.escape(why['sentence'])} "
         "These genes have star alleles made by a gene deletion, a duplication or a "
         "hybrid with a neighbouring gene, which PyPGx calls only from read depth. "
@@ -658,7 +659,7 @@ def _found_paragraph(found: List[Tuple[str, Dict[str, Any]]]) -> str:
     what = "; ".join(f"{html.escape(g)}, {html.escape(e['plain'])}" for g, e in found)
     one = len(found) == 1
     text = (
-        f"<p>⚠️ <strong>Structural allele found:</strong> {_gene_list(genes)}. PyPGx "
+        f"<p>{CAUTION_SVG} <strong>Structural allele found:</strong> {_gene_list(genes)}. PyPGx "
         f"measured copy number that PharmCAT's {'call' if one else 'calls'}, from "
         f"small variants, cannot show: {what}. "
         f"{'This call' if one else 'These calls'} may be wrong"
@@ -708,7 +709,7 @@ def _not_assessed_paragraph(
     for g, e in entries:
         by_kind.setdefault(e["kind"], []).append(g)
     text = (
-        f"<p>⚠️ <strong>Structural alleles not assessed:</strong> "
+        f"<p>{CAUTION_SVG} <strong>Structural alleles not assessed:</strong> "
         f"{_gene_list(genes)}."
     )
     pharmcats = by_kind.get("pharmcat", [])
@@ -808,7 +809,7 @@ def _deletion_paragraph(
         said.append(text)
     genes = [g for g, _ in entries]
     return (
-        f"<p>⚠️ <strong>Deletion found:</strong> {_gene_list(genes)}. "
+        f"<p>{CAUTION_SVG} <strong>Deletion found:</strong> {_gene_list(genes)}. "
         + " ".join(said)
         + f" PyPGx has no copy-number model for {_gene_list(genes, 'or')}; ZaroPGx "
         f"checks {'it' if len(genes) == 1 else 'them'} for deletions from PyPGx's read "
@@ -847,12 +848,17 @@ def _measured_paragraph(measured: List[str]) -> str:
 
 def pharmcat_copy_number_alert(
     rows: Iterable[Mapping[str, Any]], pypgx_results: Any = None
-) -> Optional[str]:
+) -> Optional[Dict[str, str] | str]:
     """The Alerts and Warnings entry for the genes on PharmCAT's list
     (listed_alleles_entry): one box, or None when there is nothing to say.
 
+    Found nothing at all, this returns the channel's informational form --
+    ``{"tone": "info", "html": ...}`` -- so the box is blue with the info mark
+    rather than amber with the warning one. generator's ``workflow_warnings``
+    docstring describes the two tones.
+
     A deletion the check found and a structural allele PyPGx found come first, then
-    the calls nothing measured (⚠, named in the heading), then, once and plainly,
+    the calls nothing measured (" + CAUTION_SVG + ", named in the heading), then, once and plainly,
     the genes whose copy number was measured and found normal."""
     rows = [r for r in rows or [] if isinstance(r, Mapping)]
     entries = _listed(rows)
@@ -876,7 +882,14 @@ def pharmcat_copy_number_alert(
         if paragraphs:
             paragraphs.append(f"<p>{tail}</p>")
         else:
-            paragraphs.append(f"<p><strong>Structural alleles:</strong> {tail}</p>")
+            # Nothing found anywhere: an all-clear, which is information rather
+            # than a warning, so it carries the info mark and the blue bar.
+            return {
+                "tone": "info",
+                "html": (
+                    f"<p>{INFO_SVG} <strong>Structural alleles:</strong> " f"{tail}</p>"
+                ),
+            }
     return "".join(paragraphs) or None
 
 

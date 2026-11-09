@@ -49,6 +49,8 @@ from __future__ import annotations
 import html
 from typing import Any, Dict, List, Mapping, Optional
 
+from app.reports.marks import CAUTION_SVG
+
 # More than half the reads over the gene at MAPQ 0. NA12878's reads, realigned: at
 # most 16.4% with ALT-aware BWA (CYP2D6; 5.3% with no ALT contigs at all), at least
 # 73.3% without ALT-awareness (CYP2D6; 82.4% for UGT2B15).
@@ -235,8 +237,10 @@ def _realignment_entry(
             )
     genes = _gene_list([g for locus in loci for g in (locus.get("genes") or [])])
     text = (
-        # No emoji: the PDF's fonts draw ℹ️ as a bare "i" (seen in the rendered
-        # report), and every entry here shares one amber box anyway.
+        # No mark: every entry here shares one amber box, which already carries
+        # one. (The reason this once gave -- that the PDF's fonts draw the info
+        # character as a bare "i" -- still holds, and is why app/reports/marks.py
+        # draws that mark instead of typing it.)
         f"<p><strong>Re-aligned before genotyping:</strong> {genes}. The uploaded "
         "alignment had reads from these loci on GRCh38's alternate copies of them "
         "(ALT contigs"
@@ -284,7 +288,7 @@ def alt_locus_alert(bam2vcf_output: Optional[Mapping[str, Any]]) -> Optional[str
             else "Reads with mapping quality 0"
         )
         alert += (
-            f"<p>⚠️ {heading}: {measured}. "
+            f"<p>{CAUTION_SVG} {heading}: {measured}. "
             "GRCh38 "
             "includes alternate copies of these genes (ALT contigs). An alignment made "
             "against a reference that has them, without ALT-aware mapping, puts many "

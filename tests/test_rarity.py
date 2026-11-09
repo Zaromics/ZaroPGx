@@ -14,6 +14,7 @@ import gzip
 import pytest
 
 from app.reports import rarity
+from app.reports.marks import CAUTION_SVG
 
 GNOMAD_HEADER = (
     "chrom\tpos\tref\talt\tfilter\tAF_joint\tAF_grpmax_joint\tgrpmax_joint"
@@ -354,7 +355,7 @@ def test_the_alert_names_the_calls_that_rest_on_a_rare_variant(bundle):
     # A reader is told what rarity does and does not mean.
     assert "not that it is less" in text
     # Shaped like the other entries in that section (read_phase.alert).
-    assert text.startswith("<p>\u26a0\ufe0f <strong>") and text.endswith("</p>")
+    assert text.startswith(f"<p>{CAUTION_SVG} <strong>") and text.endswith("</p>")
 
     # The Methodology paragraph no longer carries the naming, but does not leave a
     # reader of that page thinking the question was never asked.

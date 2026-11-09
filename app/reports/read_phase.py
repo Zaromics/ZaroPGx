@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from app.reports.copy_number import pypgx_called
+from app.reports.marks import CAUTION_SVG
 
 logger = logging.getLogger(__name__)
 
@@ -380,7 +381,7 @@ def alert(found: Mapping[str, Mapping[str, Any]]) -> Optional[str]:
         for gene, detail in found.items()
     )
     return (
-        "<p>⚠️ <strong>The reads contradict how a call is phased:</strong> "
+        f"<p>{CAUTION_SVG} <strong>The reads contradict how a call is phased:</strong> "
         f"{items}. Which chromosome each variant sits on is decided by "
         f"{PHASER}, from a reference panel rather than from these reads. Where two of "
         "a call's variants are close enough for one fragment to cover both, the reads "

@@ -48,6 +48,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.report_marks import marks_as_characters
+
 pysam = pytest.importorskip("pysam")
 
 REPO = Path(__file__).resolve().parents[1]
@@ -1429,7 +1431,10 @@ def test_the_summary_marks_a_call_with_positions_read_as_reference(
     notes = notes[: notes.index("<h2>Genetic Results</h2>")]
     marker = '<span class="alt-locus-note" title="Positions read as reference: see'
     assert (marker in table) is partial
-    assert (f"<strong>⚠ CYP2D6</strong>: {note}, so a variant" in notes) is partial
+    assert (
+        f"<strong>⚠️ CYP2D6</strong>: {note}, so a variant"
+        in marks_as_characters(notes)
+    ) is partial
     if partial:
         assert "Genetic Results notes it beside the call" in notes
 

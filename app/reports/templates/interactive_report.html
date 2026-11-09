@@ -701,7 +701,7 @@
             margin: 4px 0 10px 0;
             padding-left: 1.2em;
             font-size: 0.95em;
-            color: #333;
+            color: #555;
         }
         .pharmcat-message-list li { margin: 0 0 4px 0; break-inside: avoid; page-break-inside: avoid; }
         .pharmcat-message-source { font-weight: bold; color: #555; }
@@ -934,15 +934,21 @@
                 <h3>Alerts and Warnings</h3>
                 {% if workflow_warnings and workflow_warnings|length > 0 %}
                     <div class="alerts-container">
+                        {#- Same two tones as the PDF lane, and the same colours:
+                            a string is a warning, {"tone": "info", "html": ...} is
+                            information. generator's workflow_warnings docstring
+                            carries the rule. -#}
                         {% for warning in workflow_warnings %}
-                            <div class="alert alert-warning" style="margin-bottom: 15px; padding: 15px; border-left: 4px solid #f39c12;">
-                                {{ warning|safe }}
+                            {% set _info = warning is mapping and warning.get('tone') == 'info' %}
+                            {% set _body = warning.get('html', '') if warning is mapping else warning %}
+                            <div class="alert" style="margin-bottom: 15px; padding: 15px; {{ "border-left: 4px solid #3498db; background-color: #f0f9fb;" if _info else "border-left: 4px solid #f39c12; background-color: #fffbf0;" }}">
+                                {{ _body|safe }}
                             </div>
                         {% endfor %}
                     </div>
                 {% else %}
-                    <div class="alert alert-info" style="margin-bottom: 15px; padding: 15px; border-left: 4px solid #3498db;">
-                        <p><strong>No alerts or warnings</strong></p>
+                    <div class="alert" style="margin-bottom: 15px; padding: 15px; border-left: 4px solid #3498db; background-color: #f0f9fb;">
+                        <p>{{ INFO }} <strong>No alerts or warnings</strong></p>
                         <p>No workflow warnings or alerts were generated for this report.</p>
                     </div>
                 {% endif %}

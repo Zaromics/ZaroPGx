@@ -36,6 +36,7 @@ from app.reports.caller_agreement import (
     pypgx_call,
     summary_note,
 )
+from tests.report_marks import marks_as_characters
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "test_data"
@@ -322,6 +323,8 @@ def test_the_alert_escapes_what_it_is_given():
 
 
 def _clean(fragment):
+    # The marks are drawn: put them back as characters (tests/report_marks.py).
+    fragment = marks_as_characters(fragment)
     return unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip())
 
 
@@ -332,7 +335,7 @@ def test_the_note_sits_beside_the_call_in_both_reports():
     annotate_genes(rows, _pypgx(CYP4F2="*2/*3"))
     note = str(env.get_template("_pypgx_evidence.html").module.call_notes(rows[0]))
     assert 'class="call-note disagreement-note"' in note
-    assert f"⚠ {call_note('*2/*3')}" in _clean(note)
+    assert f"⚠️ {call_note('*2/*3')}" in _clean(note)
     for template in ("report_template.html", "interactive_report.html"):
         assert ".disagreement-note" in (
             ROOT / "app" / "reports" / "templates" / template
@@ -376,8 +379,8 @@ def test_the_report_marks_the_call_the_summary_and_the_alerts(monkeypatch, tmp_p
     assert "caller_disagreement" not in rows["TPMT"]
     body = _clean(page.split("</style>")[-1])
     # Beside the call, in the Executive Summary's notes, and in one alert.
-    assert f"⚠ {call_note('*2/*3')}" in body
-    assert f"⚠ CYP4F2 : {summary_note('*2/*3')}" in body
+    assert f"⚠️ {call_note('*2/*3')}" in body
+    assert f"⚠️ CYP4F2 : {summary_note('*2/*3')}" in body
     assert "The two callers disagree: CYP4F2 (PyPGx *2/*3)" in body
     # The printed call is still PharmCAT's.
     assert rows["CYP4F2"]["diplotype"] == "*1/*1"
