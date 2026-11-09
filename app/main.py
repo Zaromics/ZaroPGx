@@ -176,12 +176,12 @@ STATIC_DIR = BASE_DIR / "static"
 # absolute container paths, so creating them on import would litter the host filesystem
 # (C:\data, C:\tmp on Windows) merely from `import app.main`.
 
-# Extensions this app recognises, longest first so `.vcf.gz` wins over `.gz`.
+# Extensions this app recognizes, longest first so `.vcf.gz` wins over `.gz`.
 # The stored filename's extension is always one of these literals, never a slice of
 # the upload's own name.
 #
 # DELIBERATE DUPLICATE of docker/gatk-api/gatk_api.py's SAFE_UPLOAD_EXTENSIONS /
-# safe_upload_name(). The two must stay byte-for-byte equivalent in behaviour;
+# safe_upload_name(). The two must stay byte-for-byte equivalent in behavior;
 # tests/test_upload_name_sanitiser.py runs both implementations over the same
 # corpus and asserts they return identical names, so a change to one that is not
 # made to the other fails the suite.

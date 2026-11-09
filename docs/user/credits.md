@@ -2,13 +2,13 @@
 title: Credits
 ---
 
-# Credits and licences
+# Credits and licenses
 
 ZaroPGx is built on the software and data below, and we thank their authors and maintainers. Every report lists, under **Platform and Citations**, the parts its own run used, at the versions that ran, with these references. This page lists all of them. It is written by `scripts/render_credits.py` from `app/reports/credits.py`, the list the reports use.
 
 ## Software
 
-| Software | Used for | Used when | Licence | Ref. |
+| Software | Used for | Used when | License | Ref. |
 |---|---|---|---|---|
 | [ZaroPGx](https://github.com/Zaromics/ZaroPGx) | Runs the pipeline and writes the reports | Every run | AGPL-3.0-only |  |
 | [Nextflow](https://www.nextflow.io) | Runs the pipeline's steps in order | Every run | Apache-2.0 | 1 |
@@ -39,14 +39,14 @@ ZaroPGx is built on the software and data below, and we thank their authors and 
 
 ## Data and knowledge
 
-| Source | Used for | Used when | Licence or terms | Ref. |
+| Source | Used for | Used when | License or terms | Ref. |
 |---|---|---|---|---|
 | [GRCh38 (Genome Reference Consortium)](https://www.ncbi.nlm.nih.gov/grc/human) | The genome build every call is made on | Every run | No restrictions (NCBI) | 30 |
-| [PharmCAT's GRCh38 reference FASTA](https://zenodo.org/records/7288118) | Normalises the input in PharmCAT's preprocessor | Every run | CC-BY-4.0 | 31 |
+| [PharmCAT's GRCh38 reference FASTA](https://zenodo.org/records/7288118) | Normalizes the input in PharmCAT's preprocessor | Every run | CC-BY-4.0 | 31 |
 | [UCSC hg38](https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/) | The reference for reads, gVCFs and liftover | BAM, CRAM, SAM, FASTQ, gVCF, GRCh37 VCF or BCF | Freely available (UCSC) | 32 |
 | [1000 Genomes GRCh38 analysis set](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/) | Decodes the CRAM, with UCSC hg38, by sequence checksum | CRAM | EMBL-EBI terms of use | 33 |
 | [GRCh37](https://www.ncbi.nlm.nih.gov/grc/human) | The build the input was on, before liftover | GRCh37 VCF or BCF | No restrictions (NCBI) | 34 |
-| [UCSC hg19ToHg38 chain](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/) | Lifts the input from GRCh37 to GRCh38 | GRCh37 VCF or BCF | UCSC Chain Files licence (non-commercial) | 35 |
+| [UCSC hg19ToHg38 chain](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/) | Lifts the input from GRCh37 to GRCh38 | GRCh37 VCF or BCF | UCSC Chain Files license (non-commercial) | 35 |
 | [Ensembl and MANE](https://www.ensembl.org) | The transcripts a variant no allele definition lists is read on | When the genome downloader has built the annotation | No restrictions (Ensembl; NCBI and EMBL-EBI for MANE) | 36–37 |
 | [AlphaMissense](https://github.com/google-deepmind/alphamissense) | Scores the missense variants no allele definition lists | When the genome downloader has built the annotation | CC-BY-4.0 | 38 |
 | [gnomAD](https://gnomad.broadinstitute.org) | How common each variant no allele definition lists is | When the genome downloader has built the annotation | CC0-1.0 | 39 |
@@ -67,7 +67,7 @@ ZaroPGx is built on the software and data below, and we thank their authors and 
 
 What runs the application, its database and its pages. None of it touches a call, so reports do not list it.
 
-| Component | Used for | Licence |
+| Component | Used for | License |
 |---|---|---|
 | [FastAPI](https://fastapi.tiangolo.com) | The web application and its API | MIT |
 | [Starlette](https://www.starlette.io) | FastAPI's web toolkit | BSD-3-Clause |
@@ -176,7 +176,7 @@ Reports print the notices of the sources their run used. All of them:
 
 - **1000 Genomes Project 30x panel.** The 1000 Genomes 30x data were generated at the New York Genome Center with funds provided by NHGRI Grants 3UM1HG008901-03S1 and 3UM1HG008901-04S2, from cell lines and DNA samples obtained from the NIGMS Human Genetic Cell Repository at the Coriell Institute for Medical Research.
 
-- **IPD-IMGT/HLA.** HLA allele sequences are from the IPD-IMGT/HLA Database, used under the Creative Commons Attribution-NoDerivs licence.
+- **IPD-IMGT/HLA.** HLA allele sequences are from the IPD-IMGT/HLA Database, used under the Creative Commons Attribution-NoDerivs license.
 
 - **CPIC.** CPIC® content is available under CC0 1.0. CPIC guidelines and content are subject to updates and modifications; refer to ClinPGx (https://www.clinpgx.org/cpic) for the most current content. CPIC® is a registered service mark of the U.S. Department of Health & Human Services (HHS).
 
@@ -188,7 +188,7 @@ The FHIR export carries codes from these terminologies:
 
 - **LOINC.** This material contains content from LOINC (http://loinc.org). LOINC is copyright © Regenstrief Institute, Inc. and the Logical Observation Identifiers Names and Codes (LOINC) Committee and is available at no cost under the license at http://loinc.org/license. LOINC® is a registered United States trademark of Regenstrief Institute, Inc.
 
-- **SNOMED CT.** This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used by permission of the International Health Terminology Standards Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was originally created by The College of American Pathologists. "SNOMED" and "SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its licence (https://www.snomed.org/get-snomed).
+- **SNOMED CT.** This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used by permission of the International Health Terminology Standards Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was originally created by The College of American Pathologists. "SNOMED" and "SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its license (https://www.snomed.org/get-snomed).
 
 - **HGNC.** Gene identifiers from the HUGO Gene Nomenclature Committee (HGNC, https://www.genenames.org), released under CC0.
 

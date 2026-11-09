@@ -19,9 +19,9 @@ from OptiType. `config/genes.json` is the list.
 VCF, BCF, gVCF, BAM, CRAM, SAM, and short-read FASTQ up to 20 GB, on GRCh38; a GRCh37 VCF or
 BCF is lifted over. See {doc}`file-formats`.
 
-**Can I analyse my 23andMe or AncestryDNA file?**
+**Can I analyze my 23andMe or AncestryDNA file?**
 Not yet. A chip carries a small fraction of the positions PharmCAT calls on, and PyPGx would
-read the missing ones as reference, so a poor metaboliser could be reported as normal. The
+read the missing ones as reference, so a poor metabolizer could be reported as normal. The
 refusal explains this with the numbers for your chip.
 
 **Why are so many genes "Not called" from my VCF?**
@@ -49,7 +49,7 @@ about 40; FASTQ adds alignment.
 PharmCAT 3.4.0, PyPGx 0.27.0 (with Beagle 5.4), GATK 4.7.0.0, OptiType 1.5.0, mtDNA-Server 2
 v2.1.16, bcftools, samtools and HTSlib 1.24, Nextflow 25.10.8. Each report's Platform and
 Citations section lists what its run used, at the versions that ran; {doc}`credits` lists
-everything, with licences and the papers to cite.
+everything, with licenses and the papers to cite.
 
 **What do "N/A", "Possibly Wild Type" and "or" mean in a report?**
 See the labels in {doc}`reports`.

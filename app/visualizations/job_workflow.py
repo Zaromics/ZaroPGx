@@ -22,8 +22,8 @@ of it: it produced nothing the run used.
 With the run's facts (RunFacts, gathered by the report generator) each step also
 shows its tool's version, how long it took and what it produced -- genes called,
 the haplogroup, positions genotyped, drugs with guidance -- and a step that ran but
-produced nothing (mtDNA on a VCF without chrM calls) is drawn grey, its outside call
-a dashed "none". Each step is coloured by its stage -- input, preparation,
+produced nothing (mtDNA on a VCF without chrM calls) is drawn gray, its outside call
+a dashed "none". Each step is colored by its stage -- input, preparation,
 calling, interpretation, reports -- with a key beneath.
 """
 
@@ -66,7 +66,7 @@ STEP_LABELS = {
     "report_generation": ("Reports", "ZaroPGx {v}", "ZaroPGx"),
 }
 
-# The stage each step belongs to, for its colour and the key.
+# The stage each step belongs to, for its color and the key.
 STAGES = (
     ("input", "Input", (INPUT, "header_analysis")),
     (
@@ -349,8 +349,8 @@ MERMAID_INIT = (
 )
 
 
-# Each stage's colours (fill, stroke). A step that was skipped, failed or produced
-# nothing is grey and dashed instead, whatever its stage.
+# Each stage's colors (fill, stroke). A step that was skipped, failed or produced
+# nothing is gray and dashed instead, whatever its stage.
 STAGE_STYLES = {
     "input": ("#fff7e6", "#e08e0b"),
     "preparation": ("#fdecea", "#d9534f"),
@@ -394,8 +394,8 @@ def to_mermaid(graph: JobGraph) -> str:
         lines.append(f"  {source} -.->|{_mermaid_text(label)}: none| {target}")
     lines.append("  linkStyle default stroke-width:2px;")
 
-    # The key, a row under the diagram: the stages this run had, and grey when a
-    # step is drawn grey. (Stage boxes around the steps were tried: Mermaid centres
+    # The key, a row under the diagram: the stages this run had, and gray when a
+    # step is drawn gray. (Stage boxes around the steps were tried: Mermaid centers
     # a box's title where the edges come in, so the edges ran through the titles.)
     present = {STAGE_OF[n.id] for n in graph.nodes}
     keys = [(key, title) for key, title, _ in STAGES if key in present]

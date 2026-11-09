@@ -72,7 +72,7 @@ def docs_page() -> str:
         "title: Credits",
         "---",
         "",
-        "# Credits and licences",
+        "# Credits and licenses",
         "",
         "ZaroPGx is built on the software and data below, and we thank their authors "
         "and maintainers. Every report lists, under **Platform and Citations**, the "
@@ -82,7 +82,7 @@ def docs_page() -> str:
         "",
         "## Software",
         "",
-        "| Software | Used for | Used when | Licence | Ref. |",
+        "| Software | Used for | Used when | License | Ref. |",
         "|---|---|---|---|---|",
     ]
     for credit in CREDITS:
@@ -95,7 +95,7 @@ def docs_page() -> str:
         "",
         "## Data and knowledge",
         "",
-        "| Source | Used for | Used when | Licence or terms | Ref. |",
+        "| Source | Used for | Used when | License or terms | Ref. |",
         "|---|---|---|---|---|",
     ]
     for credit in CREDITS:
@@ -111,7 +111,7 @@ def docs_page() -> str:
         "What runs the application, its database and its pages. None of it touches a "
         "call, so reports do not list it.",
         "",
-        "| Component | Used for | Licence |",
+        "| Component | Used for | License |",
         "|---|---|---|",
     ]
     for item in PLATFORM:

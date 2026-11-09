@@ -4,7 +4,7 @@ PharmCAT emits ``classification`` as a bare string. Across every checked-in
 fixture the distinct values are ``Strong``, ``Moderate``, ``Optional``,
 ``No recommendation``, ``Unspecified`` and ``None``. The report templates used
 to ladder only STRONG / MODERATE / OPTIONAL and dump everything else into
-``evidence-0`` -- the bucket the legend labelled "Guideline available" -- so a
+``evidence-0`` -- the bucket the legend labeled "Guideline available" -- so a
 drug with *no* recommendation rendered identically to one with a guideline.
 
 This module is the single source of truth for that mapping. It is deliberately

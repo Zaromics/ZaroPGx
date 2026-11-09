@@ -68,7 +68,7 @@ def safe_upload_basename(filename: Optional[str]) -> str:
     *glob pattern*, so a client that names its upload `*.vcf` produces
     `/data/uploads/upload_*.vcf`, which fans the channel out across every
     other upload sitting in that directory - other patients' files are then
-    analysed and published into this job's report. Stripping glob
+    analyzed and published into this job's report. Stripping glob
     metacharacters here is what keeps one upload to one run.
 
     (Shell metacharacters are a separate question and are *not* the reason for
@@ -101,7 +101,7 @@ GRCH37_BUILD_TOKENS = ("grch37", "hg19", "b37")
 # The two spellings a gVCF arrives under. GATK writes `sample.g.vcf[.gz]`, whose last
 # suffix is `.vcf`; other callers write `sample.gvcf[.gz]`. Only the second pair ever
 # reached the extension table in _detect_file_type, so the GATK spelling was typed VCF
-# and analysed as an ordinary variant call set - see _detect_file_type for why that is a
+# and analyzed as an ordinary variant call set - see _detect_file_type for why that is a
 # wrong answer rather than a wrong label.
 GVCF_NAME_SUFFIXES = (".gvcf", ".gvcf.gz", ".g.vcf", ".g.vcf.gz")
 
@@ -166,7 +166,7 @@ def _header_declares_gvcf_blocks(file_path: Path) -> bool:
 
 # BCF2's container magic: the (decompressed) stream opens with `BCF` plus a major and
 # a minor version byte. htslib has written major version 2 since 2013; BCF1 is not
-# produced by anything in this stack's lifetime and is not recognised here.
+# produced by anything in this stack's lifetime and is not recognized here.
 BCF_MAGIC = b"BCF\x02"
 
 # Cap on the BCF header text read below, for the same reason as
@@ -386,7 +386,7 @@ def _is_gvcf(file_path: Path) -> bool:
     The `<*>` arm is why the symbolic-allele read is consulted here and not only in
     determine_workflow: a DeepVariant gVCF carries no `##GVCFBlock` record at all, so
     the header rule cannot see it, and one named `sample.vcf.gz` used to be typed VCF
-    and analysed as a plain call set. PharmCAT would then refuse it mid-run (its own
+    and analyzed as a plain call set. PharmCAT would then refuse it mid-run (its own
     detector reads the data rows), which is a loud failure in the wrong place --
     minutes into a job, behind main.nf's `|| true`, rather than at the door.
     """
@@ -405,7 +405,7 @@ def _is_gvcf(file_path: Path) -> bool:
 #
 # Both are refused (see determine_workflow), and telling them apart still matters:
 # an AncestryDNA export used to fall through every sniff below and be refused as
-# "Unrecognized file format: unknown", which told the user we could not recognise
+# "Unrecognized file format: unknown", which told the user we could not recognize
 # a file we can name exactly, and left them nothing to act on.
 #
 # Two signals, in this order:
@@ -468,7 +468,7 @@ def _detect_consumer_array(file_path: Path) -> Optional[FileType]:
 
 
 # Companion index files. The upload form invites one alongside the data file. It is
-# not a second dataset, so it must not raise the "extra files were not analysed"
+# not a second dataset, so it must not raise the "extra files were not analyzed"
 # warning.
 INDEX_FILE_SUFFIXES = (".bai", ".crai", ".csi", ".tbi", ".idx")
 
@@ -593,7 +593,7 @@ class FileAnalysis:
     # The build the alignment header actually declares (T6's detect_reference_
     # assembly over the @SQ records), for the same BAM/CRAM/SAM reason as the two
     # fields above. Carried because "which build is this file on" decides whether
-    # the pipeline can analyse it at all: every downstream step (PyPGx's region
+    # the pipeline can analyze it at all: every downstream step (PyPGx's region
     # tables, PharmCAT) is GRCh38, so a GRCh37-aligned file read as GRCh38 pulls
     # reads from the wrong locus and produces star alleles nobody has checked.
     # None means the header carried no usable evidence -- not GRCh38.
@@ -880,13 +880,13 @@ class FileProcessor:
             # code: inspect_header dispatches `.bcf` to _inspect_vcf_bcf, so a BCF
             # yields the same build detection, contig profile and sample count. Without
             # it a BCF reached determine_workflow with vcf_info=None, which reads as
-            # "no evidence about the build" - so a GRCh37 BCF would have been analysed
+            # "no evidence about the build" - so a GRCh37 BCF would have been analyzed
             # on GRCh37 coordinates as if they were GRCh38.
             #
             # GVCF joined them when the gVCF lane landed, and the build matters MORE
             # there than anywhere else: the lane genotypes over PharmCAT's position
             # list, which exists in GRCh38 coordinates only, so a GRCh37 gVCF has to be
-            # recognised as one and refused rather than genotyped at GRCh38 loci.
+            # recognized as one and refused rather than genotyped at GRCh38 loci.
             vcf_info = None
             reference_genome_ambiguous = False
             reference_genome_candidates: List[str] = []
@@ -969,7 +969,7 @@ class FileProcessor:
                     # The detected build itself, not merely whether it was
                     # self-contradictory. Without it the alignment branches
                     # cannot tell a GRCh37-aligned BAM from a GRCh38 one, and
-                    # analyse both as GRCh38 -- see FileAnalysis.reference_genome.
+                    # analyze both as GRCh38 -- see FileAnalysis.reference_genome.
                     alignment_reference_genome = metadata.get("reference_genome")
                     alignment_contigs = [
                         c.get("name")
@@ -1365,7 +1365,7 @@ class FileProcessor:
         sequencing profile, the HLA/CYP2D6 caveats, the index advice - is the same
         reasoning about the same records. Three copies of clinical build-detection copy
         WILL drift: the branches would be edited months apart, and the one that stopped
-        setting needs_liftover would analyse a GRCh37 file on GRCh38 coordinates
+        setting needs_liftover would analyze a GRCh37 file on GRCh38 coordinates
         without saying anything.
 
         Only the format-specific part - that the file is converted first, and what that
@@ -1457,14 +1457,14 @@ class FileProcessor:
             elif reference != "unknown":
                 # A named build that is neither GRCh38 nor GRCh37 -- today that
                 # means T2T-CHM13v2, the only third assembly header_inspector can
-                # name. REFUSED, not analysed provisionally.
+                # name. REFUSED, not analyzed provisionally.
                 #
                 # This branch used to set is_provisional=True next to unsupported,
                 # and until CHM13 detection existed nothing could reach it, so that
                 # was never exercised. It is the wrong verdict now that it can be:
-                # is_provisional means "analysed anyway, provisionally" and exempts
+                # is_provisional means "analyzed anyway, provisionally" and exempts
                 # a vcf from the upload gate (upload_router._unanalysable_upload_
-                # reason), which here would mean analysing CHM13 coordinates as
+                # reason), which here would mean analyzing CHM13 coordinates as
                 # GRCh38. The PGx loci sit hundreds of kb from their GRCh38
                 # positions, and nothing downstream errors on it: PharmCAT's VCF
                 # preprocessor has no assembly check at all -- it runs
@@ -1482,16 +1482,16 @@ class FileProcessor:
                 # at all. See the two caveats named in the copy below.
                 workflow["unsupported"] = True
                 workflow["is_provisional"] = False
-                # Nothing is analysed, so nothing is planned. This function set
+                # Nothing is analyzed, so nothing is planned. This function set
                 # needs_pypgx/needs_mtdna at the top before it knew the build, and a
                 # T2T BCF or gVCF arrives here with its caller's conversion flags set
                 # too. See _clear_needs_flags.
                 _clear_needs_flags(workflow)
                 workflow["unsupported_reason"] = (
-                    f"ZaroPGx analyses against GRCh38/hg38 only. This file is "
+                    f"ZaroPGx analyzes against GRCh38/hg38 only. This file is "
                     f"aligned to {vcf_info.reference_genome}, where the "
                     f"pharmacogenes sit at different coordinates, and nothing "
-                    f"downstream would catch that: PharmCAT normalises against "
+                    f"downstream would catch that: PharmCAT normalizes against "
                     f"GRCh38.p13 without checking which assembly the file is on, "
                     f"so it would rewrite the mismatched reference alleles and "
                     f"report star alleles that are not yours. Automatic liftover "
@@ -1501,8 +1501,8 @@ class FileProcessor:
                 )
                 workflow["warnings"].append(
                     f"<p>{CAUTION_SVG} This file is aligned to {vcf_info.reference_genome}. "
-                    "ZaroPGx analyses GRCh38/hg38 only, so it is refused rather "
-                    "than analysed on coordinates that are not GRCh38's.</p>"
+                    "ZaroPGx analyzes GRCh38/hg38 only, so it is refused rather "
+                    "than analyzed on coordinates that are not GRCh38's.</p>"
                 )
                 workflow["recommendations"].append(
                     "<p>Call your variants against GRCh38/hg38 and upload the "
@@ -1589,17 +1589,17 @@ class FileProcessor:
         No needs_* flag is set, and needs_conversion in particular is NOT set:
         that flag now mints a real bcf_to_vcf step (workflow_registry), so
         setting it here would plan a BCF conversion for a file that is not a BCF
-        and is not being analysed at all. It was set by the old 23andMe branch to
+        and is not being analyzed at all. It was set by the old 23andMe branch to
         mean "a conversion ought to exist one day", which is exactly the
         aspirational flag this repo forbids.
         """
         workflow["unsupported"] = True
-        # Deliberately NOT provisional: nothing is analysed. is_provisional means
-        # "analysed anyway, provisionally" and exempts a runnable input type from
+        # Deliberately NOT provisional: nothing is analyzed. is_provisional means
+        # "analyzed anyway, provisionally" and exempts a runnable input type from
         # the upload gate -- setting it here is the original 23andMe bug.
         workflow["is_provisional"] = False
         workflow["unsupported_reason"] = (
-            f"ZaroPGx cannot analyse {coverage.vendor} genotyping files yet; support "
+            f"ZaroPGx cannot analyze {coverage.vendor} genotyping files yet; support "
             f"is in development. {coverage.article} "
             f"{coverage.vendor} {coverage.best_chip} file carries "
             f"{coverage.positions} of the "
@@ -1608,8 +1608,8 @@ class FileProcessor:
             f"{PHARMCAT_CYP2D6_POSITIONS} that define CYP2D6. ZaroPGx runs PyPGx "
             f"alongside PharmCAT, and PyPGx reads a position the file does not "
             f"carry as homozygous reference rather than as a no-call; that call "
-            f"then overrides PharmCAT's. A CYP2D6 poor metaboliser would be "
-            f"reported as a normal metaboliser, for codeine and tamoxifen, "
+            f"then overrides PharmCAT's. A CYP2D6 poor metabolizer would be "
+            f"reported as a normal metabolizer, for codeine and tamoxifen, "
             f"rather than as an incomplete result. Upload a sequencing-derived "
             f"GRCh38/hg38 VCF, or a BAM, CRAM or SAM file, instead."
         )
@@ -1667,7 +1667,7 @@ class FileProcessor:
         be set by an input that step can finish -- the rule the 23andMe branch broke.
         """
         workflow["unsupported"] = True
-        # Deliberately NOT provisional: nothing is analysed.
+        # Deliberately NOT provisional: nothing is analyzed.
         workflow["is_provisional"] = False
         # No angle brackets around NON_REF, deliberately. This string is the 400's
         # plain-text `detail` *and* the panel's red alert, and the panel assigns it with
@@ -1742,7 +1742,7 @@ class FileProcessor:
         workflow["is_provisional"] = False
         build = detected_build or "GRCh37"
         workflow["unsupported_reason"] = (
-            f"ZaroPGx cannot analyse a {build} gVCF. Converting a gVCF is worth doing "
+            f"ZaroPGx cannot analyze a {build} gVCF. Converting a gVCF is worth doing "
             f"only because ZaroPGx can emit reference calls over PharmCAT's own list "
             f"of pharmacogene positions, and that list exists in GRCh38 coordinates "
             f"only — PharmCAT is a GRCh38-only tool — so there is nothing to run that "
@@ -1993,7 +1993,7 @@ class FileProcessor:
         elif analysis.file_type == FileType.VCF:
             self._plan_variant_call_workflow(workflow, analysis)
 
-        # 23andMe and AncestryDNA: refused at upload, not analysed.
+        # 23andMe and AncestryDNA: refused at upload, not analyzed.
         #
         # The old copy here refused 23andMe for the wrong reason - "converted to VCF
         # first, and that conversion is not implemented yet" - which promises the
@@ -2007,11 +2007,11 @@ class FileProcessor:
         # PyPGx's own maintainer on array input (pypgx#142): missing loci "will be
         # falsely treated as homozygous reference even though there might be
         # variants". So a 23andMe v5 file with no rs3892097 yields CYP2D6 *1/*1 and
-        # the report tells a *4/*4 poor metaboliser they metabolise codeine and
+        # the report tells a *4/*4 poor metabolizer they metabolize codeine and
         # tamoxifen normally. That is the confident-wrong-answer class.
         #
         # `is_provisional` used to be set here alongside `unsupported`, which read as
-        # "analysed anyway, provisionally" -- the meaning it genuinely carried for a
+        # "analyzed anyway, provisionally" -- the meaning it genuinely carried for a
         # VCF -- and waved 23andMe past the upload refusal gate.
         #
         # AncestryDNA reaches its own branch as of 2026-08-31. Before that
@@ -2043,7 +2043,7 @@ class FileProcessor:
                 "<p>• Then use the resulting BAM for pharmacogenomic analysis</p>"
             )
 
-        # GVCF: genotyped into a plain VCF, then analysed as one.
+        # GVCF: genotyped into a plain VCF, then analyzed as one.
         #
         # What this branch used to say was wrong on both counts, and the copy is worth
         # recording because the wrong version was more plausible than the right one.
@@ -2125,7 +2125,7 @@ class FileProcessor:
                 )
                 self._plan_variant_call_workflow(workflow, analysis)
 
-        # BCF: converted to a bgzipped VCF, then analysed as one.
+        # BCF: converted to a bgzipped VCF, then analyzed as one.
         #
         # Renaming a BCF onto the pipeline's vcf branch was tried and reverted, and that
         # is still the wrong answer: the branch stages the upload verbatim, so the file
@@ -2245,12 +2245,12 @@ class FileProcessor:
                 )
             )
 
-        # A BAM/CRAM/SAM aligned to anything but GRCh38 is refused, not analysed.
+        # A BAM/CRAM/SAM aligned to anything but GRCh38 is refused, not analyzed.
         #
         # The liftover added for VCF input does not reach this case: it converts a
         # *called* file's coordinates, and these formats reach PharmCAT only by
         # having variants called out of them first. That call is made against gene
-        # regions PyPGx looks up by assembly, so a GRCh37-aligned file analysed as
+        # regions PyPGx looks up by assembly, so a GRCh37-aligned file analyzed as
         # GRCh38 reads its variants out of the wrong locus entirely (GRCh38's
         # CYP2D6 window is ~400 kb away from GRCh37's) and yields star alleles
         # nobody has checked -- the "confident wrong answer, not a failure" case
@@ -2264,7 +2264,7 @@ class FileProcessor:
         #
         # T2T-CHM13 joined this check when CONTIG_LENGTH_ASSEMBLIES learned to name
         # it (2026-08-31); before that a CHM13 alignment was simply undetected and
-        # analysed as GRCh38. It gets its own copy rather than sharing GRCh37's,
+        # analyzed as GRCh38. It gets its own copy rather than sharing GRCh37's,
         # because GRCh37's way out -- call variants yourself, we lift the VCF -- is
         # not available: there is no CHM13 chain here, and the VCF branch above
         # refuses a CHM13 VCF for the same reason. Realigning is the only way out.
@@ -2280,8 +2280,8 @@ class FileProcessor:
             if is_grch37 or is_t2t:
                 file_label = analysis.file_type.value.upper()
                 workflow["unsupported"] = True
-                # Deliberately NOT provisional: nothing is analysed, so the flag
-                # that means "analysed anyway, provisionally" would wave this past
+                # Deliberately NOT provisional: nothing is analyzed, so the flag
+                # that means "analyzed anyway, provisionally" would wave this past
                 # the upload gate (the 23andMe mistake).
                 workflow["is_provisional"] = False
                 # And nothing is planned either: the BAM/CRAM/SAM branches above set
@@ -2291,7 +2291,7 @@ class FileProcessor:
                 _clear_needs_flags(workflow)
                 workflow["unsupported_reason"] = (
                     f"This {file_label} file is aligned to "
-                    f"{analysis.reference_genome}. ZaroPGx analyses against "
+                    f"{analysis.reference_genome}. ZaroPGx analyzes against "
                     f"GRCh38/hg38 only, and reading these reads as GRCh38 would "
                     f"take every gene from the wrong position and report star "
                     f"alleles that are not yours. Automatic liftover covers VCFs, "
@@ -2341,7 +2341,7 @@ class FileProcessor:
                     "them is a chromosome name ZaroPGx can read: chr1 to chr22, chrX, "
                     "chrY and chrM, the same without 'chr', or NCBI's GRCh38 "
                     "accessions (NC_000001.11, CM000663.2, ...). Nothing in it could "
-                    "be analysed."
+                    "be analyzed."
                 )
                 workflow["recommendations"].append(
                     f"<p>Rename the contigs to UCSC names (samtools reheader), or "
@@ -2416,7 +2416,7 @@ class FileProcessor:
         if len(mates) != 1:
             return refuse(
                 f"This upload has {len(mates) + 1} data files. Upload one FASTQ, or "
-                "the R1 and R2 of one run; upload other files as separate analyses."
+                "the R1 and R2 of one run; upload other files as separate analyzes."
             )
 
         mate = mates[0]
@@ -2497,7 +2497,7 @@ class FileProcessor:
             if not files:
                 return {"success": False, "error": "No files provided"}
 
-            # Only one file is analysed.
+            # Only one file is analyzed.
             # TODO: Support multiple files in the future
             # A data file can come with its index; a BAM's is used (_save_uploaded_index).
             #
@@ -2519,7 +2519,7 @@ class FileProcessor:
             ]
 
             # Every other data file is dropped on the floor, which for a second *data*
-            # file is a silent wrong answer: a paired-read upload used to be analysed as
+            # file is a silent wrong answer: a paired-read upload used to be analyzed as
             # one mate, and two VCFs as whichever arrived first, with nothing said.
             # Collect the names now and warn below. They are HTML-escaped there, because
             # the workflow panel renders warnings with innerHTML.
@@ -2635,17 +2635,17 @@ class FileProcessor:
                     # them a name they never typed ("my file (2).bam" -> "my_file_2.bam").
                     # Escaping is what keeps it inert -- the panel assigns warnings with
                     # innerHTML -- and these strings are only ever rendered as HTML.
-                    analysed = html.escape(str(primary_file.filename or "your file"))
+                    analyzed = html.escape(str(primary_file.filename or "your file"))
                     ignored = [html.escape(name) for name in ignored_files]
                     was_were = "was" if len(ignored) == 1 else "were"
                     logger.warning(
-                        "Analysing %s only; ignored %s",
+                        "Analyzing %s only; ignored %s",
                         primary_file.filename,
                         ", ".join(ignored_files),
                     )
                     workflow["warnings"].append(
-                        f"<p>{CAUTION_SVG} ZaroPGx analyses one data file per job. Only {analysed} "
-                        f"was analysed; {', '.join(ignored)} {was_were} ignored. "
+                        f"<p>{CAUTION_SVG} ZaroPGx analyzes one data file per job. Only {analyzed} "
+                        f"was analyzed; {', '.join(ignored)} {was_were} ignored. "
                         "Upload each data file as its own analysis.</p>"
                     )
 
@@ -2765,7 +2765,7 @@ class FileProcessor:
             analysis = await self.analyze_file(file_path, declared_size=declared_size)
 
             # Enforce exactly-one-sample policy for variant-call files. BCF is held to
-            # it as well as VCF: the pipeline converts a BCF to a VCF and analyses that,
+            # it as well as VCF: the pipeline converts a BCF to a VCF and analyzes that,
             # so a multi-sample BCF would reach PyPGx/PharmCAT as a multi-sample VCF -
             # the case this check exists to stop, arriving by a different door.
             #

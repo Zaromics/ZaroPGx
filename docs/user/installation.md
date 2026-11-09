@@ -103,7 +103,7 @@ Then:
 - this documentation: `http://localhost:8765/docs`
 - the API reference: `http://localhost:8765/api/docs`
 
-To analyse FASTQ files, build the alignment index once, after the reference genomes are
+To analyze FASTQ files, build the alignment index once, after the reference genomes are
 staged: `./scripts/build-align-index.sh` (about an hour).
 
 ## Who can reach it

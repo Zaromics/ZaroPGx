@@ -517,7 +517,7 @@ def fill_summary_page(render, document, css: str):
         return document
     slack = room - FILL_MARGIN
     # Every cell has the same vertical padding, the template's or a fitting step's.
-    # Read the specified value: WeasyPrint centres a cell's content by adding to its
+    # Read the specified value: WeasyPrint centers a cell's content by adding to its
     # laid-out top padding.
     cell_y = cells[0][1].style["padding_top"].value
     for share in (1.0, 0.98):

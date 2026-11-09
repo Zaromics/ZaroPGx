@@ -282,7 +282,7 @@ def extract_source_call(gene_data: Mapping[str, Any]) -> Dict[str, Any]:
     """Pull the primary display diplotype/phenotype/activity from a gene block.
 
     Uses ``sourceDiplotypes`` (PharmCAT's displayed / "real" call). Defaults match
-    the historical empty-list behaviour of the old recommendation helper.
+    the historical empty-list behavior of the old recommendation helper.
     """
     diplotype = "Unknown/Unknown"
     phenotype = "Unknown"
@@ -582,7 +582,7 @@ def _scan_genes(genes_section: Mapping[str, Any]) -> Tuple[int, List[str]]:
             continue
         if isinstance(value, Mapping):
             if not value:
-                # An empty guideline bucket: recognised, holds nothing. ZaroPGx
+                # An empty guideline bucket: recognized, holds nothing. ZaroPGx
                 # builds exactly this itself as the TSV fallback seed
                 # (upload_router.py:588), so it is not a broken shape.
                 continue
@@ -721,7 +721,7 @@ def _check_genes(
     blocks = len(gene_blocks)
 
     if expected == 0 and not unrecognised:
-        # Every entry was a recognised-but-empty bucket: a run that called no
+        # Every entry was a recognized-but-empty bucket: a run that called no
         # genes, which is the same fact as ``genes: {}`` and equally advisory.
         issues.append(
             SchemaIssue(
@@ -748,7 +748,7 @@ def _check_genes(
             SchemaIssue(
                 "warning",
                 "genes.partial_shape",
-                f"'genes' entries not recognised as gene data or guideline "
+                f"'genes' entries not recognized as gene data or guideline "
                 f"buckets, and therefore not parsed: {sorted(unrecognised)[:8]}",
             )
         )
@@ -778,7 +778,7 @@ def _check_genes(
                 "warning",
                 "genes.overcounted",
                 f"the walker extracted {blocks} gene blocks from {expected} "
-                f"recognised gene entries (detected format: {detected})",
+                f"recognized gene entries (detected format: {detected})",
             )
         )
 
@@ -931,7 +931,7 @@ def _check_version(
             SchemaIssue(
                 "warning",
                 "version.unparseable",
-                f"'pharmcatVersion' {version!r} is not a recognisable version "
+                f"'pharmcatVersion' {version!r} is not a recognizable version "
                 f"number; results cannot be attributed to a verified release",
             )
         )

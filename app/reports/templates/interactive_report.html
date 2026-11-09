@@ -80,8 +80,8 @@
         h1, h2, h3, h4 {
             color: var(--primary-color);
         }
-        /* The title sits on the header's primary-colour band: in the headings'
-           primary colour it was invisible. */
+        /* The title sits on the header's primary-color band: in the headings'
+           primary color it was invisible. */
         header h1 {
             color: white;
         }
@@ -197,7 +197,7 @@
         .rapid-metabolizer, .ultrarapid-metabolizer {
             background-color: var(--info-color);
         }
-        /* Function phenotypes in their metabolizer counterparts' colours
+        /* Function phenotypes in their metabolizer counterparts' colors
            (generator.phenotype_badge_class). */
         .decreased-function {
             background-color: var(--warning-color);
@@ -934,7 +934,7 @@
                 <h3>Alerts and Warnings</h3>
                 {% if workflow_warnings and workflow_warnings|length > 0 %}
                     <div class="alerts-container">
-                        {#- Same two tones as the PDF lane, and the same colours:
+                        {#- Same two tones as the PDF lane, and the same colors:
                             a string is a warning, {"tone": "info", "html": ...} is
                             information. generator's workflow_warnings docstring
                             carries the rule. -#}
@@ -1211,7 +1211,7 @@
                                         attribute below deliberately stays escaped. -#}
                                     <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
                                     {# As in report_template.html: "Unspecified" (DPWG, FDA) and
-                                       a missing classification are the card's colour
+                                       a missing classification are the card's color
                                        and the legend's "Guideline available" and
                                        "Unclassified". #}
                                     {% if group_data['rec'].evidence_class not in ('evidence-unspecified', 'evidence-unclassified') %}
@@ -1377,7 +1377,7 @@
         
         <!-- Store diplotypes data -->
         {# data-activity-score carried the same truthiness bug as the visible table:
-           a score of 0 serialised as "", so any consumer of this payload saw a Poor
+           a score of 0 serialized as "", so any consumer of this payload saw a Poor
            Metabolizer as having no score at all. Same numeric presence test. #}
         {% for d in diplotypes %}
         <div class="diplotype-data"

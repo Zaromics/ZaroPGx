@@ -1,6 +1,6 @@
 # The demo
 
-**Run Demo** analyses `NA12878.pgx-demo.cram`: reads of NA12878 (Coriell GM12878), the
+**Run Demo** analyzes `NA12878.pgx-demo.cram`: reads of NA12878 (Coriell GM12878), the
 most studied reference sample, from the 1000 Genomes Project's 30x whole genomes,
 sequenced at the New York Genome Center and aligned to GRCh38 (the 1000 Genomes analysis
 set with decoys and HLA). Source: run

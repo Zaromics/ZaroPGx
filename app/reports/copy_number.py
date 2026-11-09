@@ -2,7 +2,7 @@
 
 PyPGx calls a star allele made by a structural variant (a gene deletion, a
 duplication, a hybrid with a neighbouring gene) only from the alignment's depth of
-coverage, normalised against a control gene. ZaroPGx prepares those inputs only for
+coverage, normalized against a control gene. ZaroPGx prepares those inputs only for
 a GRCh38 alignment with whole-genome depth (docker/pypgx's prepare_sv_inputs).
 Every other input, a VCF, BCF or gVCF, a panel or exome, a low-depth genome, gets
 these genes called from small variants alone, and the call looks like one made
@@ -813,7 +813,7 @@ def _deletion_paragraph(
         + " ".join(said)
         + f" PyPGx has no copy-number model for {_gene_list(genes, 'or')}; ZaroPGx "
         f"checks {'it' if len(genes) == 1 else 'them'} for deletions from PyPGx's read "
-        "depth, normalised to the same control gene (VDR)."
+        "depth, normalized to the same control gene (VDR)."
         # DPYD's says how to confirm it already.
         + (
             ""

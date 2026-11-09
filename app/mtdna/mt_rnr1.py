@@ -34,7 +34,7 @@ REFERENCE = "Reference"
 
 
 class VcfRecord(NamedTuple):
-    """One normalised VCF record: bcftools norm -m-any -f <rCRS> output."""
+    """One normalized VCF record: bcftools norm -m-any -f <rCRS> output."""
 
     pos: int
     ref: str
@@ -142,9 +142,9 @@ def match_alleles(records: List[VcfRecord]) -> List[str]:
                     # something this module has a verified example of, and a
                     # repeat-tract insertion is exactly the kind of variant
                     # that can be represented more than one way depending on
-                    # the normaliser. Guessing a matching rule risks naming
+                    # the normalizer. Guessing a matching rule risks naming
                     # this allele for a record that is really something
-                    # else, so until a real normalised-VCF shape for this
+                    # else, so until a real normalized-VCF shape for this
                     # allele is confirmed, it matches nothing here rather
                     # than the wrong thing. Tracked: review round 1, finding
                     # 1 (2026-08-30).
@@ -179,7 +179,7 @@ def has_unresolved_961_deletion(records: List[VcfRecord]) -> bool:
     """True when some record's deletion/delins footprint touches position 961.
 
     m.961T>del+Cn is a real, named MT-RNR1 allele that `match_alleles`
-    deliberately never matches -- there is no verified normalised-VCF shape
+    deliberately never matches -- there is no verified normalized-VCF shape
     for that compound delins yet (see match_alleles's comment). So a carrier
     of only that variant produces the same `matched == []` as a carrier with
     nothing at 961 at all: `select_call` returns None either way, and the two
@@ -230,7 +230,7 @@ BASIS_INFERRED = "inferred"
 # because they suggest different remedies to the reader.
 NO_CALL_REGION_NOT_COVERED = "region_not_covered"
 
-# An alignment whose header has no mitochondrial contig the sidecar recognises: its
+# An alignment whose header has no mitochondrial contig the sidecar recognizes: its
 # mitochondrial reads, if any, could not be read. Not NO_CALL_COVERAGE_BELOW_FLOOR,
 # which is measured coverage; nothing was measured here.
 NO_CALL_NO_MITO_CONTIG = "no_mito_contig"
@@ -283,7 +283,7 @@ def resolve_mt_rnr1_call(
     route their promotion decision through this function instead of each
     hand-rolling it, so their tests can no longer stay green on a substring
     match alone (e.g. "absent_to_ref" appearing anywhere in app.py) -- they
-    exercise this function's real behaviour with real VcfRecord inputs
+    exercise this function's real behavior with real VcfRecord inputs
     instead (see test_mt_rnr1_vocabulary.py).
 
     `matched` is `match_alleles()`'s output. A real match always wins,

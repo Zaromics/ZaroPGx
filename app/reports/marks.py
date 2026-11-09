@@ -6,15 +6,15 @@ all-clear. ``generator``'s ``workflow_warnings`` docstring describes the channel
 that carries both.
 
 **Why they are drawn rather than typed.** As characters these marks cannot be
-what the report needs them to be. U+26A0 with the emoji selector is a colour
+what the report needs them to be. U+26A0 with the emoji selector is a color
 triangle in a browser but a thin monochrome outline in the PDF, because
-WeasyPrint has no colour-emoji font in the shipped image -- so the report has
+WeasyPrint has no color-emoji font in the shipped image -- so the report has
 never actually had a yellow caution mark in print. Its counterpart U+2139 is
 worse: the only fonts in that image carrying it draw a plain serif "i", which
-reads as a stray letter rather than an icon. U+1F6C8 prints but loses its colour
+reads as a stray letter rather than an icon. U+1F6C8 prints but loses its color
 in a browser.
 
-Drawn, both marks are the same colour, weight and size in the page and in the
+Drawn, both marks are the same color, weight and size in the page and in the
 PDF, which is the point: the report says one thing in two outputs.
 
 Templates reach these through ``CAUTION`` and ``INFO``, registered as globals by

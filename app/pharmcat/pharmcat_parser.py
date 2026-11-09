@@ -1308,7 +1308,7 @@ def get_pharmcat_summary(
         Dictionary containing summary information, or None when no run with
         this identifier exists.  Every child row is FK-bound to
         ``pharmcat.results``, so a missing result row means there is nothing to
-        summarise -- reporting zero genes would be indistinguishable from a run
+        summarize -- reporting zero genes would be indistinguishable from a run
         that genuinely called none.
     """
     with PharmCATParser(db_session) as parser:

@@ -24,7 +24,7 @@ geometry:
   ``FP200007900L1C025R03808007886`` -- the DNB is placed on a patterned array, so the
   name is a grid reference. Present because real consumer WGS arrives this way: the
   sample this was first tested against is DNBSEQ, and without this arm it was refused
-  for having "no recognisable platform structure" when its platform is perfectly
+  for having "no recognizable platform structure" when its platform is perfectly
   legible. ``DNBSEQ`` is a valid ``@RG PL:`` value in the SAM specification, so there
   is somewhere honest to put the answer.
 
@@ -205,7 +205,7 @@ def detect_fastq_platform(path, max_records: int = 1000) -> PlatformCall:
     if not votes:
         return PlatformCall(
             None,
-            f"read names carry no recognisable platform structure (e.g. {names[0][:60]!r}); "
+            f"read names carry no recognizable platform structure (e.g. {names[0][:60]!r}); "
             f"{length_summary}",
             "the read names do not identify one (SRA re-exports lose the "
             "instrument's naming)",

@@ -188,20 +188,20 @@ NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "gvcf", "bam", "cram", "sam", "f
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
-    """Why this upload cannot be analysed at all, or ``None`` to let it through.
+    """Why this upload cannot be analyzed at all, or ``None`` to let it through.
 
     ``unsupported`` on its own is not a refusal. It means "flagged", and
-    ``is_provisional`` — this codebase's own flag for "we did analyse it,
+    ``is_provisional`` — this codebase's own flag for "we did analyze it,
     provisionally" — is what would exempt a flagged input from refusal.
 
     As of 2026-08-31 **nothing sets it**. Both inputs that once did are now decided
     the other way: a GRCh37/hg19 VCF is genuinely supported (lifted over to GRCh38
     via GATK Picard LiftoverVcf) and reaches this gate unflagged, and a VCF on a
     third build — T2T-CHM13, the only one the header inspector can name — is now
-    refused outright rather than analysed on coordinates that are not GRCh38's.
+    refused outright rather than analyzed on coordinates that are not GRCh38's.
     The exemption is kept anyway, because the ordering below is the actual guard:
     the flag is written by hand next to a reason string, so it records intent as
-    readily as behaviour, and consulting the pipeline's repertoire first is what
+    readily as behavior, and consulting the pipeline's repertoire first is what
     stops a mis-set one from waving an input past.
 
     What genuinely cannot work is an input that is flagged unsupported and that the
@@ -249,7 +249,7 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
 
     ``is_provisional`` only exempts a *runnable* input type, and that ordering is the
     point rather than belt-and-braces. The flag was written aspirationally once — for
-    23andMe, meaning "we intend to convert this one day" rather than "we analysed
+    23andMe, meaning "we intend to convert this one day" rather than "we analyzed
     this" — and only the pipeline's own repertoire says whether a provisional
     analysis is a thing that can happen at all, so it is consulted first.
     """
@@ -259,7 +259,7 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     if file_type in NEXTFLOW_INPUT_TYPES and workflow.get("is_provisional"):
         return None
     return workflow.get("unsupported_reason") or (
-        f"Files of type '{file_type}' cannot be analysed."
+        f"Files of type '{file_type}' cannot be analyzed."
     )
 
 
@@ -310,7 +310,7 @@ def _discard_refused_upload(file_paths: Optional[List[str]]) -> None:
 # so the interpolation is safe by construction rather than by hoping an escape holds.
 # sample_identifier is ALSO handed to the pipeline through the environment
 # (SAMPLE_IDENTIFIER, see runner.py/main.nf), which is the structural fix; this
-# allowlist is defence in depth and turns a hostile value into a clear 400.
+# allowlist is defense in depth and turns a hostile value into a clear 400.
 #
 # The alphabet is deliberately generous enough for real identifiers - alphanumerics
 # plus dot, underscore and hyphen, 1-64 chars, first char alphanumeric - so ordinary
@@ -366,7 +366,7 @@ def sanitize_optional_pipeline_token(value: Optional[str]) -> Optional[str]:
 
 
 def analysis_reference(workflow: Dict[str, Any]) -> str:
-    """The build the pipeline analyses against -> Nextflow's params.reference.
+    """The build the pipeline analyzes against -> Nextflow's params.reference.
 
     A GRCh37/hg19 VCF is lifted to GRCh38 (gatk-api /liftover-vcf) BEFORE PyPGx
     and PharmCAT ever see it, so the build the analysis runs against is hg38 no
@@ -1198,7 +1198,7 @@ async def wait_for_nextflow_completion(
             try:
                 # Check if workflow has been cancelled. This read is blocking SQLAlchemy,
                 # so it runs in a worker thread like the status call below; the await
-                # serialises access, so this session is never used by two threads at
+                # serializes access, so this session is never used by two threads at
                 # once. (The writes further down stay on the loop: they are one-shot on
                 # the way out, not per-iteration.)
                 job = await asyncio.to_thread(job_service.get_job, job_id)
@@ -1666,7 +1666,7 @@ async def process_file_nextflow_background(
             # instead of a refusal (see NEXTFLOW_INPUT_TYPES above).
             input_type = workflow.get("file_type", "vcf")
 
-            # The build the pipeline analyses against. For a lifted GRCh37/hg19 VCF
+            # The build the pipeline analyzes against. For a lifted GRCh37/hg19 VCF
             # this is forced to hg38 (the file is GRCh38 by the time PyPGx/PharmCAT
             # run) regardless of the uploader's reference_genome selection -- see
             # analysis_reference().
@@ -1678,7 +1678,7 @@ async def process_file_nextflow_background(
             # reference_genome form field: that defaults to hg38 no matter what the
             # file is, and keying the lift off it would mean never lifting anything.
             # Sent only when a lift is actually planned; blank means "no liftover"
-            # to both the runner and main.nf. Sanitised as defence in depth - the
+            # to both the runner and main.nf. Sanitised as defense in depth - the
             # value is header-derived, but it ends up interpolated into main.nf's
             # LiftoverVCF shell block, the same trip reference makes.
             source_build = ""
@@ -1900,7 +1900,7 @@ async def upload_genomic_data(
       lane instead (##GVCFBlock is read out of the binary header); that lane's staging
       step is bcftools, so it reads a BCF for free.
 
-    Only the first uploaded data file is analysed; any further data file is reported as
+    Only the first uploaded data file is analyzed; any further data file is reported as
     ignored in the workflow warnings. Index files (.bai, .crai, .csi, .tbi, .idx) may be
     uploaded alongside it. Currently only hg38/GRCh38 reference genome is fully supported.
     """
@@ -1961,7 +1961,7 @@ async def upload_genomic_data(
                 result["workflow"].get("file_type"),
                 unanalysable,
             )
-            # process_files() saves before it analyses, so the bytes are already on disk.
+            # process_files() saves before it analyzes, so the bytes are already on disk.
             # Nothing will ever collect them: the cleanup service sweeps
             # /data/uploads/{patient_id}, and a refusal mints no patient. Left alone, a
             # refused 200GB FASTQ sits in the upload directory forever.
@@ -2154,7 +2154,7 @@ async def run_demo(
     mtdna_enabled: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """Analyse the bundled demo (DEMO_FILES) exactly as an upload of the same files.
+    """Analyze the bundled demo (DEMO_FILES) exactly as an upload of the same files.
 
     The stage switches apply as they do to an upload. The assume-reference options are
     off: the reads are genotyped at every position, so there is nothing to assume, and

@@ -3,7 +3,7 @@
 # Cut the demo's input, app/static/demo/NA12878.pgx-demo.cram, from the 1000 Genomes
 # 30x CRAM of NA12878 (New York Genome Center, run ERR3239334, 15.8 GB).
 #
-# The Run Demo button analyses this file. Reads, not a VCF: only reads take every
+# The Run Demo button analyzes this file. Reads, not a VCF: only reads take every
 # stage (HLA typing, PyPGx's deletion and duplication calls, mtDNA, PharmCAT's
 # positions genotyped from the reads), and NA12878's answers are published (GeT-RM's
 # CYP2D6 *3/*68+*4, HLA-A*01:01/*11:01, -B*08:01/*56:01, -C*01:02/*07:01, haplogroup

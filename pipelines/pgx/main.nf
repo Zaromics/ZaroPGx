@@ -55,7 +55,7 @@ params.skip_pypgx     = params.skip_pypgx != null ? params.skip_pypgx : false
 // It is NOT, however, a no-op for vcf/bam: LiftoverVCF is a gatk-api process too, and
 // the vcf lane invokes it on source_build grch37/hg19/b37 whatever skip_gatk says. So
 // unticking GATK on a GRCh37 VCF still lifts the file. That is the safe direction -
-// everything downstream is GRCh38-only, and honouring the toggle here would analyse the
+// everything downstream is GRCh38-only, and honouring the toggle here would analyze the
 // file on the wrong coordinates - but it is not what the toggle promises, and this
 // comment used to claim the opposite. Making the toggle refuse a GRCh37 VCF the way it
 // refuses a BCF is the change to consider, not making it skip the lift.
@@ -69,7 +69,7 @@ params.skip_gatk      = params.skip_gatk != null ? params.skip_gatk : false
 // (_handle_final_stages_progression_sync), which skips generate_report() when
 // needs_report is false; needs_report also drops the step template in
 // app/services/workflow_registry.py. That app-side gate is the only thing acting
-// on the toggle - declaring the param here is not a second line of defence. A
+// on the toggle - declaring the param here is not a second line of defense. A
 // report process added to this pipeline later must gate on it itself.
 params.skip_report    = params.skip_report != null ? params.skip_report : false
 // sample_identifier is a free-text, user-supplied field. It is DELIBERATELY not a
@@ -89,7 +89,7 @@ params.pharmcat_unspecified_to_ref = params.pharmcat_unspecified_to_ref ?: 'fals
 // app's header inspector (empty when it is already GRCh38 or unknown). When it names
 // GRCh37/hg19 and the input is a VCF, the LiftoverVCF process converts the file to
 // GRCh38 coordinates before anything else touches it. This is deliberately separate
-// from params.reference, which names the TARGET build the pipeline analyses against
+// from params.reference, which names the TARGET build the pipeline analyzes against
 // (hg38): conflating the two is how a GRCh37 file used to sail through on its
 // original coordinates. The value is interpolated into a shell block below, so the
 // runner (docker/nextflow/runner.py) allowlist-validates it exactly as it does
@@ -390,7 +390,7 @@ if call:
 src = data.get('report_html')
 if src and os.path.exists(src):
     shutil.copy(src, 'mtdna_report.html')
-# The normalised chrM VCF (bcftools norm output), present on both the VCF and
+# The normalized chrM VCF (bcftools norm output), present on both the VCF and
 # alignment paths -- unlike report_html, it does not depend on coverage or
 # contamination metrics, so it is available regardless of input type.
 src_vcf = data.get('chrm_vcf')
@@ -523,7 +523,7 @@ PY
 }
 
 // GRCh37/hg19 VCF -> GRCh38 VCF, via gatk-api's Picard LiftoverVcf endpoint.
-// Real coordinate conversion, not a contig rename - the sidecar normalises contig
+// Real coordinate conversion, not a contig rename - the sidecar normalizes contig
 // naming to match the UCSC chain, runs LiftoverVcf against the GRCh38 reference,
 // and refuses (HTTP 500 -> --fail-with-body -> run failure) when an implausible
 // share of variants fails to lift, so a chain/prefix mismatch can never quietly
@@ -839,7 +839,7 @@ process PharmCATRun {
     # DELIBERATELY EXEMPT from the --fail-with-body rule in the header: the trailing
     # `|| true` already discards curl's exit status, so adding the flag would change
     # nothing, and removing `|| true` would turn a tolerated PharmCAT error into a hard
-    # run failure - a behaviour change that cannot be validated without a live run.
+    # run failure - a behavior change that cannot be validated without a live run.
     # Left as-is on purpose; making PharmCAT failures fail the run is its own change.
     curl "${CURL_ARGS[@]}" http://pharmcat:5000/genotype > pharmcat_result.json 2>pharmcat.log || true
     
@@ -1081,7 +1081,7 @@ workflow {
     // is GENOTYPED into a plain VCF first (GVCFToVCF) because PharmCAT detects and
     // refuses a gVCF outright. From there both are the same lane as a VCF upload,
     // liftover included. A GRCh37/hg19 file is lifted over to GRCh38 next; everything
-    // downstream (PyPGx, PharmCAT) is GRCh38-only, so skipping that step would analyse
+    // downstream (PyPGx, PharmCAT) is GRCh38-only, so skipping that step would analyze
     // it on the wrong coordinates. The three share one branch deliberately: each of the
     // other two IS a VCF once converted, and a second copy of the liftover decision is a
     // second copy to drift.

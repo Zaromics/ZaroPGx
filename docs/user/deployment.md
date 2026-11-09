@@ -70,7 +70,7 @@ The `Upgrade` headers carry the WebSocket the upload page uses for live progress
 
 ## What leaves the machine
 
-Analyses run on the host; uploads and reports stay in `data/`. Outside connections:
+Analyzes run on the host; uploads and reports stay in `data/`. Outside connections:
 
 - At install and update: the repository from GitHub, the images from Docker Hub.
 - On first start: PharmCAT's reference data from Zenodo, and reference genomes and chain
@@ -102,7 +102,7 @@ back. Start the database again afterwards with `docker compose up -d`.
 
 The heavy work runs in `gatk-api` (memory limit 28 GB), `pypgx` (20 GB) and `zarohla`
 (HLA typing; its scratch, `ZAROPGX_SCRATCH`, needs tens of GB for a whole genome). VCF
-analyses are light. Uploads are deleted when their job ends unless `KEEP_UPLOADS=true`;
+analyzes are light. Uploads are deleted when their job ends unless `KEEP_UPLOADS=true`;
 reports are kept until you delete them.
 
 ## Logs

@@ -68,7 +68,7 @@ def classify_build(reference_genome: str) -> MitoBuild:
     # Order matters: "hg19" must be tested before "38", because reference
     # filenames like "hg19_to_hg38_lifted.fasta" name both builds and contain
     # "38" as the liftover target -- the detected/uploaded build is hg19, and
-    # that evidence must not be discarded in favour of the substring match on
+    # that evidence must not be discarded in favor of the substring match on
     # the target. It must also be tested before the generic "37" check,
     # because a detector may report "hg19" and "GRCh37" for genuinely
     # different files, and "GRCh37" contains "37" but not "hg19".
@@ -114,7 +114,7 @@ def classify_from_mito_contig(
     bcftools-written headers normally carry length=, but hand-built and
     third-party VCFs often don't, and falling through to classify_build(name)
     unconditionally in that case would silently reintroduce the exact bug
-    this function exists to prevent: a real hg19 file, labelled "GRCh37" by
+    this function exists to prevent: a real hg19 file, labeled "GRCh37" by
     file_processor's collapse, would take the rename-only (never lifted)
     plan.
 

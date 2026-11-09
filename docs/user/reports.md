@@ -27,7 +27,7 @@ The sections, in order. Each starts on a new page; sections that must fit a page
 fitted to it.
 
 **Cover.** Sample ID, report ID and date, and the reference build if the file was lifted
-over. **Methodology** says how the sample was analysed and whose guidelines PharmCAT applies
+over. **Methodology** says how the sample was analyzed and whose guidelines PharmCAT applies
 (CPIC, DPWG, FDA), PharmCAT's allele-definition build and guideline data version, and how
 positions the file did not cover were treated. It also says how many of the variants
 behind PyPGx's calls the run could find a population frequency for, and names any
@@ -45,7 +45,7 @@ version nobody has verified. Read these first.
 **Executive Summary.** The 25 genes PharmCAT reports on, on one page, the same genes in the
 same order in every report. Each row has the diplotype, the phenotype and, where the
 guideline uses one, the activity score. A reference call is shown as PharmCAT labels it
-(CFTR's as "Reference/Reference"; the notes give the allele's name). A gene the data did not call is a grey "Not called"
+(CFTR's as "Reference/Reference"; the notes give the allele's name). A gene the data did not call is a gray "Not called"
 row. A ⚠ beside a gene marks a call that may be wrong, and the notes say why: most of its
 reads had mapping quality 0, or some of its positions were read as the reference with
 nothing to show it. The page is a right-hand page, and its notes are on the page behind
@@ -130,7 +130,7 @@ note either.
 
 **Deletions in CYP2C19 and SLCO1B1.** PyPGx has no copy-number model for *CYP2C19* or
 *SLCO1B1*, so ZaroPGx checks them itself, from the read depth PyPGx measures on a GRCh38
-whole-genome alignment, normalised against the same control gene (*VDR*): the median copy
+whole-genome alignment, normalized against the same control gene (*VDR*): the median copy
 number of each 5 kb across the gene, where a run of three or more stretches under 1.35
 copies, with a median of at most 1.2, is a deletion of one copy, and under 0.4 of both (a
 deletion under 15 kb is not called). A deletion is named by the exons it takes:
@@ -196,7 +196,7 @@ variants their allele definitions name, and nothing else: a rare variant that st
 protein, if no definition lists it, leaves the gene reported as normal. Every run also
 reads every other variant in the coding exons, and splice sites, of 52 genes: every gene
 PharmCAT has allele definitions for (IFNL3 aside, which it types by one variant outside
-its exons), and the drug-metabolising enzymes and transporters PyPGx types. PharmCAT's
+its exons), and the drug-metabolizing enzymes and transporters PyPGx types. PharmCAT's
 genes include CFTR, RYR1, CACNA1S, F2 and F5, where a variant can also bear on a disease
 (cystic fibrosis, malignant hyperthermia and some myopathies, thrombophilia or a bleeding
 disorder); the section says so when it lists one. A variant that passes the quality
@@ -244,7 +244,7 @@ lists all of them); and the **Genomic Datafile Header** as uploaded.
 
 ## Labels
 
-Badge colours show what the phenotype says about the gene's function, or the risk
+Badge colors show what the phenotype says about the gene's function, or the risk
 screened, against what is typical. They are not CPIC's EHR priority, which ranks the need
 to act and differs by gene: a CYP3A5 normal metabolizer needs more tacrolimus than the
 standard dose, set on the more common poor metabolizers, yet its badge is green. Whether
@@ -256,9 +256,9 @@ to act is what the drug recommendations say.
 - red: poor metabolism or function, G6PD Deficient, an HLA risk allele positive, Malignant
   Hyperthermia Susceptibility, increased risk of aminoglycoside-induced hearing loss;
 - blue: rapid metabolism and increased function, which is not necessarily better;
-- grey: uncertain and indeterminate results, unresolved calls ("A or B"), and the rest.
+- gray: uncertain and indeterminate results, unresolved calls ("A or B"), and the rest.
 
-The label is always printed beside the colour.
+The label is always printed beside the color.
 
 | Label | Meaning |
 |---|---|

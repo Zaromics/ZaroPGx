@@ -324,7 +324,7 @@ class JobService:
             # populate_existing() is load-bearing. SessionLocal sets
             # expire_on_commit=False, so an instance this session already loaded is
             # never expired; a plain query would fetch the row and then *discard* it
-            # in favour of the identity-mapped instance. Long-lived background
+            # in favor of the identity-mapped instance. Long-lived background
             # sessions -- the Nextflow poll loop re-reads the job every 5s for the
             # life of a run -- would therefore never observe a write made by another
             # session, so a mid-run cancellation was invisible and the monitor
