@@ -402,10 +402,7 @@ def unmeasured(
         symbol, gene = block.gene_symbol, block.gene_data
         if symbol in counted or block.call_source != "MATCHER":
             continue
-        # Counted on the first source that carries it, not on the first that produces
-        # a finding: the older shape repeats a gene under every guideline source, and
-        # counting its payload twice would say a 19-call report made 28.
-        counted.add(symbol)
+        counted.add(symbol)  # before any count: the payload is the same under each
         printed = _printed(gene)
         if printed is None:
             continue
