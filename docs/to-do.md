@@ -253,11 +253,20 @@ curated: true
     different phenotype. NA18526's NUDT15 `*1/*3` (Intermediate Metabolizer) reads just
     as well as `*3/*6` (Poor Metabolizer), 7,937 bp apart, and nothing in the report said
     so. **Still open:** 42 of the 82 pairs lie within one 2x150 fragment, so the reads
-    could settle them. `docker/pypgx/read_phase.py` already counts the fragments carrying
-    a pair, and the pypgx container mounts `/reference`, where
+    could settle them. **And 13 of the 14 have both their positions in PyPGx's own panel
+    already** (`lexicon/allele-table.csv`, GRCh38Core and GRCh38Tag), so for those the
+    existing `read_phase.json` already counts the fragments over the very pair the call
+    rests on: the app can read the verdict out of a file the run already writes, with no
+    image rebuild. 6 of the 13 lie within one fragment (NAT2 4, UGT1A1 2), so those are
+    the ones a verdict would reach. To cover the rest, `docker/pypgx/read_phase.py` can
+    be handed PharmCAT's own panel: the pypgx container mounts `/reference`, where
     `pharmcat/pharmcat_positions.vcf` carries every position PharmCAT genotypes with its
-    gene in `PX=` — so the same lane can ask the question of PharmCAT's panel without
-    waiting for PharmCAT to run.
+    gene in `PX=`, so the lane can ask the question without waiting for PharmCAT to run.
+    What a note would need beyond the counts: which arrangement the printed call asserts
+    for that pair (cis or trans), which `app/reports/pharmcat_phase.arrangements` knows
+    and currently discards — it keeps the names and the score, not the assignment.
+    **Yield is small and unmeasurable here**: the 61 GeT-RM runs were VCF inputs, so none
+    has a `read_phase.json` at all, and their BAMs were deleted.
   - [DONE Nov 2026, fix/bam-upload-index] The read-phase check never ran on a BAM
     upload: it builds no index, and nothing indexed a BAM uploaded alone where it is
     read (each step indexed its own link to it), so every BAM report said nothing about
