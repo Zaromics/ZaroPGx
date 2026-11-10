@@ -226,6 +226,38 @@ curated: true
     and every phasing change since is a Beagle bug fix, with no mention of read-backed
     phasing; PharmCAT reads `FORMAT/PS` from 3.0 but its phase-sensitive genes are the
     wide ones.
+  - The same question for the calls **PharmCAT** makes, which the read-phase lane
+    deliberately says nothing about (its docstring: "for a gene the report prints
+    PharmCAT's call for, PyPGx's arrangement is not the printed one").
+    **Built 2026-11-10** on `feat/pharmcat-phase-check`. PharmCAT reads an unphased file,
+    so where a gene has two or more heterozygous defining positions it reports the
+    diplotype its allele definitions explain most specifically: `effectivelyPhased` is
+    false on 169 of the 1,159 calls its matcher made over the 61 genomes. The allele
+    definition table this needed is in PharmCAT's own jar, so
+    `docker/pharmcat/definitions.py` publishes the part that answers the question —
+    positions, each allele's required bases and score, each diplotype's phenotype — as a
+    419 kB gzipped digest beside the run data, written at startup and **not committed**,
+    because the definitions are ClinPGx's (CC-BY-SA-4.0). `app/reports/pharmcat_phase.py`
+    reads it at report time, so an older run re-rendered gains the note, as with
+    `rarity.py`. Naming a chromosome took three rules the runs taught: a definition can
+    ask for an IUPAC code (CYP2C19 `*2` wants `R` at chr10:94775507); a position with no
+    call neither fits nor fails (NUDT15 `*5` in HG00277); and an allele's score is how
+    many of its specified positions were read and match — which is PharmCAT's own
+    `matchScore`, agreeing on 1,055 of the 1,078 calls this reproduces. Reproducing the
+    printed call as the best-scoring arrangement is the licence to name the other one:
+    1,078 of 1,132 two-allele calls (95.2%), and the other 54 say nothing.
+    **PharmCAT raises its own `ambiguity` message for 68 of the 82 it could otherwise
+    name** ("The assigned genotype is `*1/*6`; however, `*4/*9` cannot be ruled out"),
+    which the report already prints under the call, so this speaks for the other 14 —
+    0.23 per report, NAT2 5, SLCO1B1 2, NUDT15 2, TPMT 2, UGT1A1 2, G6PD 1 — 7 of them a
+    different phenotype. NA18526's NUDT15 `*1/*3` (Intermediate Metabolizer) reads just
+    as well as `*3/*6` (Poor Metabolizer), 7,937 bp apart, and nothing in the report said
+    so. **Still open:** 42 of the 82 pairs lie within one 2x150 fragment, so the reads
+    could settle them. `docker/pypgx/read_phase.py` already counts the fragments carrying
+    a pair, and the pypgx container mounts `/reference`, where
+    `pharmcat/pharmcat_positions.vcf` carries every position PharmCAT genotypes with its
+    gene in `PX=` — so the same lane can ask the question of PharmCAT's panel without
+    waiting for PharmCAT to run.
   - [DONE Nov 2026, fix/bam-upload-index] The read-phase check never ran on a BAM
     upload: it builds no index, and nothing indexed a BAM uploaded alone where it is
     read (each step indexed its own link to it), so every BAM report said nothing about

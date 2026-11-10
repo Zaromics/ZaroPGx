@@ -73,6 +73,18 @@ copy deleted", "tandem \*68+\*4"; its code is in the interactive report's eviden
 and which alleles a different phasing would give ("\*6 if these variants lie on one
 chromosome").
 
+Where the pairing of a call's variants decides what it is called, and nothing measured it,
+the line beside the diplotype says so and names the other reading: "Pairing not measured;
+the other reading is \*3/\*6, Poor Metabolizer." A file with no phase does not say which
+chromosome each of two heterozygous variants sits on, and for the genes PharmCAT calls it
+reports the diplotype its allele definitions explain most specifically. PharmCAT raises
+its own note for most such calls, which the report prints under the call ("The assigned
+genotype is \*1/\*6; however, \*4/\*9 cannot be ruled out without phased data"); this line
+appears only where PharmCAT raised none, and is read from the same allele definitions, so
+nothing is said twice. For the calls PyPGx makes, the reads themselves are counted instead
+(below). The Methodology section says how many of the run's calls rested on such a pairing,
+how many PharmCAT named itself, and how many this report named.
+
 Genes examined without a call are listed after the table, each with its Call letter (as
 they are in the interactive report's Genes tab, which lists every gene), and with the reason
 when one is known: for a PyPGx gene, no reads over it, or at any of its positions, in the

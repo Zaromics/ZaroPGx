@@ -170,5 +170,15 @@ BCFTOOLS_VER=$(bcftools --version 2>/dev/null | sed -n 's/^bcftools \([0-9][0-9.
 HTSLIB_VER=$(bcftools --version 2>/dev/null | sed -n 's/^Using htslib \([0-9][0-9.]*\).*/\1/p' | head -n1)
 echo "{\"name\":\"PharmCAT\",\"version\":\"${PC_VER:-unknown}\",\"components\":{\"bcftools\":\"${BCFTOOLS_VER:-unknown}\",\"htslib\":\"${HTSLIB_VER:-unknown}\"}}" > /data/versions/pharmcat.json
 
+# PharmCAT's allele definitions and phenotypes, in the small shape the report reads
+# (docker/pharmcat/definitions.py): which other diplotype the same genotypes could have
+# been called, for a call resting on an arrangement an unphased file does not determine.
+# Written beside the run data both containers mount rather than committed, because the
+# definitions are ClinPGx's (CC-BY-SA-4.0, as the Credits page records). Never fatal:
+# without it the report says nothing about arrangements, as every release before it did.
+echo "Publishing PharmCAT's allele definitions..."
+PHARMCAT_VERSION="${PC_VER}" python3 /app/definitions.py \
+    || echo "⚠ Warning: allele definitions were not published; reports will not name arrangement alternatives"
+
 echo "Starting FastAPI app..."
 python3 /app/pharmcat.py
