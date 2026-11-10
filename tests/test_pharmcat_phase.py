@@ -487,7 +487,9 @@ def test_the_paragraph_does_not_promise_a_note_no_row_carries(tmp_path):
     caller-disagreement note, so the finding reached no row -- and the paragraph still
     said "for 1 more this report names it beside the call"."""
     path = _digest(tmp_path, {"TPMT": TPMT})
-    report = _report(_gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer"))
+    report = _report(
+        _gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer")
+    )
     rows = [
         {
             "gene": "TPMT",
