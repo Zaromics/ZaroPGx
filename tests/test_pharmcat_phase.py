@@ -624,7 +624,7 @@ def test_the_published_digest_is_what_the_report_reads(tmp_path, monkeypatch):
 
     published = phase.digest(out)
     assert published["pharmcat_version"] == "3.4.0"
-    assert "CC-BY-SA" in published["licence"]
+    assert "CC-BY-SA" in published["license"]
     report = _report(
         _gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer")
     )

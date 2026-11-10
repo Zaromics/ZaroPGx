@@ -244,7 +244,7 @@ curated: true
     call neither fits nor fails (NUDT15 `*5` in HG00277); and an allele's score is how
     many of its specified positions were read and match — which is PharmCAT's own
     `matchScore`, agreeing on 1,055 of the 1,078 calls this reproduces. Reproducing the
-    printed call as the best-scoring arrangement is the licence to name the other one:
+    printed call as the best-scoring arrangement is the license to name the other one:
     1,078 of 1,132 two-allele calls (95.2%), and the other 54 say nothing.
     **PharmCAT raises its own `ambiguity` message for 68 of the 82 it could otherwise
     name** ("The assigned genotype is `*1/*6`; however, `*4/*9` cannot be ruled out"),

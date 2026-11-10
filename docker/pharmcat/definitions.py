@@ -15,7 +15,7 @@ data both containers share.
 It lives here, and the file is written at runtime rather than committed, because the
 definitions are ClinPGx's (CC-BY-SA-4.0, as the Credits page records), carried by the
 PharmCAT image this project already distributes. Deriving them into the repository would
-put adapted CC-BY-SA data under this repository's own licence, which is not a decision
+put adapted CC-BY-SA data under this repository's own license, which is not a decision
 for a report feature to take.
 
 Standalone by requirement: the pharmcat image has no ``app`` package
@@ -154,7 +154,7 @@ def build(jar_path: Path = JAR, version: Optional[str] = None) -> Dict[str, Any]
     return {
         "format": FORMAT,
         "source": "PharmCAT",
-        "licence": "Allele definitions and phenotypes from ClinPGx (PharmGKB), CC-BY-SA-4.0",
+        "license": "Allele definitions and phenotypes from ClinPGx (PharmGKB), CC-BY-SA-4.0",
         "pharmcat_version": version or os.getenv("PHARMCAT_VERSION") or "",
         "built": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "genes": genes,

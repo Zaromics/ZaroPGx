@@ -426,7 +426,7 @@ def unmeasured(
         top = max(candidate["score"] for candidate in candidates)
         printed_names = frozenset({first, second})
         # Reproducing PharmCAT's own call, as the best-scoring arrangement, is the
-        # licence to name another one. Without it this says nothing.
+        # license to name another one. Without it this says nothing.
         if not any(
             candidate["names"] == printed_names and candidate["score"] == top
             for candidate in candidates
