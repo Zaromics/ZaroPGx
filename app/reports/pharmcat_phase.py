@@ -397,10 +397,15 @@ def unmeasured(
     # genes -> symbol, 2.x wrote genes -> {CPIC|DPWG|FDA} -> symbol, and a gene in the
     # older shape appears under each guideline source that annotates it with the same
     # block, so the first of them answers for it.
+    counted = set()
     for block in iter_gene_blocks(genes):
         symbol, gene = block.gene_symbol, block.gene_data
-        if symbol in found or block.call_source != "MATCHER":
+        if symbol in counted or block.call_source != "MATCHER":
             continue
+        # Counted on the first source that carries it, not on the first that produces
+        # a finding: the older shape repeats a gene under every guideline source, and
+        # counting its payload twice would say a 19-call report made 28.
+        counted.add(symbol)
         printed = _printed(gene)
         if printed is None:
             continue
@@ -436,11 +441,11 @@ def unmeasured(
         # positions two splits can name the same two alleles in either order, and
         # "*4/*46" beside "*46/*4" would read as two readings where there is one.
         others: List[Dict[str, Any]] = []
-        seen = {printed_names}
+        pairs = {printed_names}
         for candidate in candidates:
-            if candidate["names"] in seen:
+            if candidate["names"] in pairs:
                 continue
-            seen.add(candidate["names"])
+            pairs.add(candidate["names"])
             others.append(
                 {"diplotype": candidate["shown"], "phenotype": candidate["phenotype"]}
             )

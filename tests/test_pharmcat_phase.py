@@ -334,6 +334,18 @@ def test_a_call_within_one_fragment_is_counted_as_checkable(tmp_path):
 # --- when it says nothing -------------------------------------------------------
 
 
+def test_a_gene_under_two_guideline_sources_is_counted_once(tmp_path):
+    """PharmCAT 2.x repeats a gene's whole payload under every source that annotates
+    it. Counting it per source said a 19-call report had made 28."""
+    path = _digest(tmp_path, {"TPMT": TPMT})
+    gene = _gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer")
+    nested = {"genes": {"CPIC": {"TPMT": gene}, "DPWG": {"TPMT": dict(gene)}}}
+    result = phase.unmeasured(nested, path)
+    assert result["counts"]["calls"] == 1
+    assert result["counts"]["unphased"] == 1
+    assert list(result["genes"]) == ["TPMT"]
+
+
 def test_nothing_is_said_where_the_printed_call_is_not_reproduced(tmp_path):
     """An alternative to a call this module could not reproduce would be an
     alternative to the wrong thing, which is worse than silence -- the rule
