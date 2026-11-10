@@ -532,6 +532,7 @@ def annotate_genes(
     found = result.get("genes") or {}
     if not found:
         return result
+    marked: Dict[str, Any] = {}
     for row in rows or []:
         if not isinstance(row, dict) or not pharmcat_called(row):
             continue
@@ -550,6 +551,26 @@ def annotate_genes(
         if not shown or not _same(shown, finding["printed"]):
             continue
         row["pharmcat_phase"] = dict(finding, call_note=call_note(finding))
+        marked[str(row.get("gene") or "").strip().upper()] = finding
+    # The paragraph counts what the report printed, not what could have been printed.
+    # A finding reaches no row when another note already speaks for that call, or when
+    # the row shows a different diplotype, or when the gene has no row at all -- and a
+    # paragraph saying "for 1 more this report names it beside the call" beside no such
+    # note is the inconsistency a real NA18526 render turned up.
+    counts = result.get("counts") or {}
+    counts["could_name"] = int(counts.get("named") or 0)
+    counts["named"] = len(marked)
+    counts["within_reach"] = sum(
+        1 for finding in marked.values() if finding.get("within_reach")
+    )
+    counts["differs"] = sum(
+        1
+        for finding in marked.values()
+        for alternative in finding.get("alternatives") or []
+        if alternative.get("phenotype")
+        and finding.get("phenotype")
+        and alternative["phenotype"] != finding["phenotype"]
+    )
     return result
 
 
@@ -586,11 +607,14 @@ def coverage_note(result: Optional[Mapping[str, Any]]) -> Optional[str]:
             "in its notes under the call. "
         )
     if named:
+        # "more" only after PharmCAT's own count, or it is more than nothing.
         note += (
-            f"For {named} more, read from the same definitions, this report names it "
-            "beside the call. "
+            f"For {named} {'more' if warned else 'of them'}, read from the same "
+            "definitions, this report names it beside the call. "
         )
-    elif warned < unphased_calls:
+    elif warned < unphased_calls and not int(counts.get("could_name") or 0):
+        # Only where nothing was found, not merely where nothing was printed: a
+        # reading another note already speaks for is not "no other reading".
         note += (
             "For the rest, these definitions allow no other reading of the variants "
             "that were found. "

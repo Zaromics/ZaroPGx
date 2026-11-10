@@ -482,6 +482,30 @@ def test_only_a_row_pharmcat_called_is_marked(tmp_path):
     assert "pharmcat_phase" not in rows[1]
 
 
+def test_the_paragraph_does_not_promise_a_note_no_row_carries(tmp_path):
+    """A real NA18526 render turned this up: its NUDT15 row already carried the
+    caller-disagreement note, so the finding reached no row -- and the paragraph still
+    said "for 1 more this report names it beside the call"."""
+    path = _digest(tmp_path, {"TPMT": TPMT})
+    report = _report(_gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer"))
+    rows = [
+        {
+            "gene": "TPMT",
+            "call_source": "MATCHER",
+            "diplotype": "*1/*3A",
+            "caller_disagreement": {"call_note": "PyPGx read this as *3B/*3C."},
+        }
+    ]
+    result = phase.annotate_genes(rows, report, path)
+    assert "pharmcat_phase" not in rows[0]
+    assert result["counts"]["named"] == 0
+    assert result["counts"]["could_name"] == 1
+    note = phase.coverage_note(result)
+    assert "this report names it beside the call" not in note
+    # Nor does it claim the definitions allow no other reading, because they do.
+    assert "no other reading" not in note
+
+
 def test_a_row_the_callers_already_disagree_on_is_left_alone(tmp_path):
     """caller_agreement.py has already said the printed call is one of two readings;
     a second note of the same shape would read as a second doubt."""
@@ -506,7 +530,8 @@ def test_the_paragraph_counts_them_and_says_where_the_definitions_came_from(tmp_
     report = _report(
         _gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer")
     )
-    note = phase.coverage_note(phase.annotate_genes([], report, path))
+    rows = [{"gene": "TPMT", "call_source": "MATCHER", "diplotype": "*1/*3A"}]
+    note = phase.coverage_note(phase.annotate_genes(rows, report, path))
     assert "1 of the 1 calls it made here rests on such an arrangement" in note
     assert "this report names it beside the call" in note
     assert "only how they are paired" in note
@@ -523,7 +548,11 @@ def test_the_paragraph_credits_pharmcat_for_the_ones_it_warned_about(tmp_path):
         {"exception_type": "ambiguity", "message": "*3B/*3C cannot be ruled out."}
     ]
     ours = _gene("UGT1A1", UGT1A1_HETS, ("*1", "*80+*28"), "Intermediate Metabolizer")
-    note = phase.coverage_note(phase.unmeasured(_report(warned, ours), path))
+    rows = [
+        {"gene": "TPMT", "call_source": "MATCHER", "diplotype": "*1/*3A"},
+        {"gene": "UGT1A1", "call_source": "MATCHER", "diplotype": "*1/*80+*28"},
+    ]
+    note = phase.coverage_note(phase.annotate_genes(rows, _report(warned, ours), path))
     assert "2 of the 2 calls it made here rest on such an arrangement" in note
     assert "PharmCAT names the other reading itself for 1 of them" in note
     assert "For 1 more, read from the same definitions" in note
