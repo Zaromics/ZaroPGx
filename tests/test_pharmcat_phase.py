@@ -437,6 +437,178 @@ def test_nothing_is_said_where_pharmcat_warned_about_it_itself(tmp_path):
     assert result["counts"]["named"] == 0
 
 
+# --- PharmCAT's own warning, moved up beside the call ---------------------------
+
+# What PharmCAT writes for the case these tests use, word for word in its shape:
+# 87 to 110 characters over the 61 GeT-RM genomes, always opening by naming the call
+# it is about.
+PCAT_WARNING = (
+    "The assigned genotype is *1/*3A; however, *3B/*3C cannot be ruled out "
+    "without phased data."
+)
+
+
+def _warned_row(**extra) -> dict:
+    """A TPMT row as ``attach_pharmcat_messages`` leaves it: PharmCAT's ambiguity
+    message among the gene's entries, in the shape pharmcat_messages._entry builds."""
+    row = {
+        "gene": "TPMT",
+        "call_source": "MATCHER",
+        "diplotype": "*1/*3A",
+        "pharmcat_messages": [
+            {
+                "kind": "ambiguity",
+                "rule": "TPMT *1/*3A warning",
+                "gene": "TPMT",
+                "paragraphs": [PCAT_WARNING],
+            }
+        ],
+    }
+    row.update(extra)
+    return row
+
+
+def _warned_gene() -> dict:
+    gene = _gene("TPMT", TPMT_HETS, ("*1", "*3A"), "Intermediate Metabolizer")
+    gene["messages"] = [
+        {
+            "rule_name": "TPMT *1/*3A warning",
+            "exception_type": "ambiguity",
+            "message": PCAT_WARNING,
+        }
+    ]
+    return gene
+
+
+def test_pharmcats_own_warning_moves_up_beside_the_call():
+    """It says of 68 of the 82 what this module says of the other 14, and said it
+    first. Both belong in one place, or a reader who learns to look beside the call
+    reads the 68 as unqualified."""
+    row = _warned_row()
+    report = _report(_warned_gene())
+    assert phase.place_warnings([row], report) == ["TPMT"]
+    assert row["pharmcat_ambiguity"]["source"] == "PharmCAT"
+    assert row["pharmcat_ambiguity"]["call_note"] == PCAT_WARNING
+
+
+def test_the_warning_is_pharmcats_words_and_is_not_abridged():
+    """Beside the call is where this report speaks in its own voice, so a quotation
+    there is named and left alone -- no shortening, no rewriting into this report's
+    phrasing."""
+    row = _warned_row()
+    phase.place_warnings([row], _report(_warned_gene()))
+    note = row["pharmcat_ambiguity"]["call_note"]
+    assert note == PCAT_WARNING
+    assert note.startswith("The assigned genotype is")
+    assert "cannot be ruled out without phased data." in note
+
+
+def test_the_entry_stays_on_the_row_marked_as_placed():
+    """The list under the gene table reads ``placed`` and skips it
+    (templates/_pharmcat_messages.html), so the sentence is on the page once; the row
+    keeps it, so the API and the interactive gene data are unchanged."""
+    row = _warned_row()
+    phase.place_warnings([row], _report(_warned_gene()))
+    assert [m["placed"] for m in row["pharmcat_messages"]] == [True]
+    assert row["pharmcat_messages"][0]["paragraphs"] == [PCAT_WARNING]
+
+
+def test_every_warning_on_a_gene_goes_beside_the_call_not_just_the_first():
+    """One per gene in all 61 GeT-RM genomes, so this is for the shape: leaving a
+    second below the table while the first sits beside the call would be the split
+    this move exists to end."""
+    row = _warned_row()
+    second = (
+        "The assigned genotype is *1/*3A; however, *3C/*3B cannot be ruled out "
+        "without phased data."
+    )
+    row["pharmcat_messages"].append(
+        {
+            "kind": "ambiguity",
+            "rule": "TPMT *1/*3A second warning",
+            "gene": "TPMT",
+            "paragraphs": [second],
+        }
+    )
+    assert phase.place_warnings([row], _report(_warned_gene())) == ["TPMT"]
+    assert row["pharmcat_ambiguity"]["call_note"] == f"{PCAT_WARNING} {second}"
+    assert all(m["placed"] for m in row["pharmcat_messages"])
+
+
+def test_a_warning_is_not_placed_beside_a_call_it_is_not_about(tmp_path):
+    """PharmCAT's sentence opens by naming the genotype it qualifies, so beside a row
+    showing anything else it would contradict the cell next to it. The in-repo
+    unphased example is exactly this: CYP2B6 and SLCO1B1 carry ambiguity messages and
+    PharmCAT printed several diplotypes for each, which the report shows joined with
+    "or"."""
+    row = _warned_row(diplotype="*3B/*3C")
+    assert phase.place_warnings([row], _report(_warned_gene())) == []
+    assert "pharmcat_ambiguity" not in row
+    assert "placed" not in row["pharmcat_messages"][0]
+
+
+def test_a_warning_is_not_placed_where_pharmcat_printed_several_diplotypes():
+    gene = _warned_gene()
+    gene["sourceDiplotypes"].append(
+        {"allele1": {"name": "*3B"}, "allele2": {"name": "*3C"}, "phenotypes": []}
+    )
+    row = _warned_row()
+    assert phase.place_warnings([row], _report(gene)) == []
+    assert "pharmcat_ambiguity" not in row
+
+
+def test_only_one_of_the_two_notes_is_ever_on_a_call(tmp_path):
+    """The slot takes PharmCAT's sentence where PharmCAT wrote one and this report's
+    where it did not. ``unmeasured`` already skips what PharmCAT warned about; this is
+    the other side of it, on the rows."""
+    path = _digest(tmp_path, {"TPMT": TPMT, "UGT1A1": UGT1A1})
+    ours = _gene("UGT1A1", UGT1A1_HETS, ("*1", "*80+*28"), "Intermediate Metabolizer")
+    rows = [
+        _warned_row(),
+        {"gene": "UGT1A1", "call_source": "MATCHER", "diplotype": "*1/*80+*28"},
+    ]
+    phase.annotate_genes(rows, _report(_warned_gene(), ours), path)
+    warned, derived = rows
+    assert warned.get("pharmcat_ambiguity") and not warned.get("pharmcat_phase")
+    assert derived.get("pharmcat_phase") and not derived.get("pharmcat_ambiguity")
+
+
+def test_pharmcats_warning_is_placed_even_where_the_callers_disagree(tmp_path):
+    """This module holds its own note back there -- two notes of its own about one
+    call read as two doubts -- but PharmCAT's is a first-party statement the report
+    has always shown, and "these alleles, paired the other way" is not the point a
+    disagreement makes, which is different alleles."""
+    path = _digest(tmp_path, {"TPMT": TPMT})
+    row = _warned_row(caller_disagreement={"call_note": "PyPGx names *1/*3B."})
+    phase.annotate_genes([row], _report(_warned_gene()), path)
+    assert row["pharmcat_ambiguity"]["call_note"] == PCAT_WARNING
+    assert "pharmcat_phase" not in row
+
+
+def test_the_paragraph_says_where_pharmcats_own_words_went(tmp_path):
+    path = _digest(tmp_path, {"TPMT": TPMT})
+    rows = [_warned_row()]
+    note = phase.coverage_note(
+        phase.annotate_genes(rows, _report(_warned_gene()), path)
+    )
+    assert (
+        "PharmCAT names the other reading itself for it, in its own words beside "
+        "the call." in note
+    )
+
+
+def test_the_paragraph_claims_no_place_for_a_warning_that_reached_no_row(tmp_path):
+    """The inconsistency a real NA18526 render turned up for the other half: a
+    paragraph pointing beside the call, and no note there."""
+    path = _digest(tmp_path, {"TPMT": TPMT})
+    rows = [_warned_row(diplotype="*3B/*3C")]
+    note = phase.coverage_note(
+        phase.annotate_genes(rows, _report(_warned_gene()), path)
+    )
+    assert "in its own words." in note
+    assert "beside the call" not in note
+
+
 def test_a_message_that_rules_nothing_out_does_not_silence_the_note(tmp_path):
     """Most of PharmCAT's messages are about something else: a reference allele, a
     reverse-complement footnote, a drug's own text."""
@@ -758,6 +930,72 @@ def test_the_note_and_the_paragraph_reach_the_page_and_the_pdf(monkeypatch, tmp_
     assert "The file PharmCAT read carries no phase" in printed
     # The Executive Summary is laid out to one page (app/reports/pdf_fit.py), so an
     # added note must not push it over.
+    summary = [
+        index
+        for index, pdf_page in enumerate(document.pages)
+        if any(
+            getattr(box, "element_tag", "") == "div"
+            and getattr(box, "element", None) is not None
+            and box.element.get("id") == "exec-summary"
+            for box in pdf_page._page_box.descendants()
+        )
+    ]
+    assert len(summary) == 1, f"the Executive Summary ran to {len(summary)} pages"
+
+
+def test_pharmcats_own_warning_reaches_the_page_beside_the_call(monkeypatch, tmp_path):
+    """The whole point of the move: the sentence is where a reader of the call will
+    meet it, named as PharmCAT's, and on the page once -- not also in the list of
+    PharmCAT's notes under the gene table."""
+    import re
+
+    import app.reports.generator as generator_module
+
+    path = _digest(tmp_path, {"TPMT": TPMT})
+    monkeypatch.setattr(phase, "DIGEST", path)
+    for key in list(generator_module.REPORT_CONFIG):
+        if key.startswith(("write_", "show_")):
+            monkeypatch.setitem(
+                generator_module.REPORT_CONFIG, key, key == "write_html"
+            )
+    data = _unphased_example()
+    for genes in data["genes"].values():
+        if isinstance(genes, dict) and "TPMT" in genes:
+            genes["TPMT"]["messages"] = [
+                {
+                    "rule_name": "TPMT *1/*3A warning",
+                    "exception_type": "ambiguity",
+                    "message": PCAT_WARNING,
+                }
+            ]
+    result = generator_module.generate_report(
+        {"data": data}, str(tmp_path), {"id": "p1"}, job_id=None
+    )
+    page = (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
+    assert page.count(PCAT_WARNING) == 1, "PharmCAT's sentence is on the page twice"
+    # In a call note, with PharmCAT named: beside the call is this report's own voice.
+    note = re.search(
+        r'<div class="call-note[^"]*">\s*'
+        r'<span class="pharmcat-message-source">PharmCAT:</span>\s*'
+        + re.escape(PCAT_WARNING),
+        page,
+    )
+    assert note, "PharmCAT's warning is not a call note beside the call"
+    # And this module says nothing where PharmCAT has spoken.
+    assert "Pairing not measured" not in page
+    assert "in its own words beside the call" in page
+
+    document, _ = generator_module.render_pdf_document(page)
+    printed = " ".join(
+        (getattr(box, "text", "") or "").strip()
+        for pdf_page in document.pages
+        for box in pdf_page._page_box.descendants()
+    )
+    # Compared without any whitespace: the note sits in a 19%-wide column, so
+    # WeasyPrint not only breaks the sentence into a text box per line but breaks
+    # inside "*3B/*3C" to do it, and rejoining with a space invents "*3B/ *3C".
+    squeezed = "".join(printed.split())
+    assert "".join(PCAT_WARNING.split()) in squeezed
     summary = [
         index
         for index, pdf_page in enumerate(document.pages)

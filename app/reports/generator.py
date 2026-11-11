@@ -4667,9 +4667,12 @@ def generate_report(
     # definitions this names the other reading, beside the call
     # (app/reports/pharmcat_phase.py). Only where PharmCAT has not said it itself --
     # it raises an "ambiguity" message for 68 of the 82 such calls over the 61 GeT-RM
-    # genomes, and the report prints those under the call, so this speaks for the
-    # other 14. Read at report time from the report JSON, so it costs the run nothing
-    # and an older run re-rendered gains it -- as rarity.py does.
+    # genomes, so this speaks for the other 14. The same call also moves PharmCAT's own
+    # sentence up beside the call it is about (place_warnings), out of the list under
+    # the gene table: one qualification, one place, whichever of the two wrote it.
+    # Read at report time from the report JSON, so it costs the run nothing and an
+    # older run re-rendered gains it -- as rarity.py does. It runs after
+    # attach_pharmcat_messages above, which is what puts those messages on the rows.
     try:
         _pharmcat_phase = pharmcat_phase.annotate_genes(
             data.get("genes", []), pharmcat_report

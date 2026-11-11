@@ -248,9 +248,16 @@ curated: true
     1,078 of 1,132 two-allele calls (95.2%), and the other 54 say nothing.
     **PharmCAT raises its own `ambiguity` message for 68 of the 82 it could otherwise
     name** ("The assigned genotype is `*1/*6`; however, `*4/*9` cannot be ruled out"),
-    which the report already prints under the call, so this speaks for the other 14 —
+    so this speaks for the other 14 —
     0.23 per report, NAT2 5, SLCO1B1 2, NUDT15 2, TPMT 2, UGT1A1 2, G6PD 1 — 7 of them a
-    different phenotype. NA18526's NUDT15 `*1/*3` (Intermediate Metabolizer) reads just
+    different phenotype. **PharmCAT's own sentence moved up beside the call with it**
+    (`place_warnings`), out of the list of PharmCAT's notes under the gene table where it
+    used to print: a reader who learned to look beside the call read the 68 as
+    unqualified. One slot, two possible authors, never both — PharmCAT's text unabridged
+    and under its name (68 of 68 placed over the 61 genomes; each is 87–110 characters,
+    1.11 per run, and every one names the diplotype its row shows, which is the condition
+    for placing it). The Methodology paragraph says "in its own words beside the call"
+    only where every one of them reached a row. NA18526's NUDT15 `*1/*3` (Intermediate Metabolizer) reads just
     as well as `*3/*6` (Poor Metabolizer), 7,937 bp apart, and nothing in the report said
     so. **Still open:** 42 of the 82 pairs lie within one 2x150 fragment, so the reads
     could settle them. **And 13 of the 14 have both their positions in PyPGx's own panel

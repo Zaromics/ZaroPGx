@@ -12,9 +12,12 @@ reading.
 Most of those it says something about. 26 it could not resolve at all and printed as
 alternatives, which the report already shows (``app/pharmcat/report_json.py``'s
 ``unresolved_call`` joins them with "or"), and for others it raises an ``ambiguity``
-message -- "The assigned genotype is ``*1/*6``; however, ``*4/*9`` cannot be ruled out" --
-which the report prints under the call. **Where PharmCAT has said it, this module says
-nothing**: a second copy of one fact is the mistake #226 fixed for the rarity alert.
+message -- "The assigned genotype is ``*1/*6``; however, ``*4/*9`` cannot be ruled out".
+**Where PharmCAT has said it, this module says nothing**: a second copy of one fact is
+the mistake #226 fixed for the rarity alert. ``place_warnings`` puts PharmCAT's own
+sentence where this one goes, beside the call, so the reader meets the qualification in
+one place whichever of the two wrote it; it is PharmCAT's text, unabridged and named as
+PharmCAT's.
 
 What is left is the calls PharmCAT prints as one answer and says nothing about. Over the
 61 GeT-RM genomes this module can name another reading for 82 of them, and PharmCAT's own
@@ -70,6 +73,14 @@ here contradicts anything, which is the distinction Alerts and Warnings carries 
 only a call note). The call note names the alternative and its phenotype where that
 differs; the paragraph carries the reassurance that which alleles were found is not in
 question, only how they are paired.
+
+One slot, two possible authors. A call whose pairing is in question carries exactly one
+line: PharmCAT's own sentence where PharmCAT raised one (68 of the 82), this module's
+where it did not (14). Both render through ``call_notes`` in
+``templates/_pypgx_evidence.html``; PharmCAT's is prefixed with its name, because beside
+the call is where this report speaks in its own voice and a quotation there has to say
+whose it is. ``templates/_pharmcat_messages.html`` skips what was placed, so the list
+under the gene table does not repeat it.
 """
 
 from __future__ import annotations
@@ -81,6 +92,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from app.pharmcat.pharmcat_messages import is_ambiguity
 from app.pharmcat.report_json import iter_gene_blocks
 from app.reports.copy_number import pharmcat_called
 
@@ -321,29 +333,23 @@ def arrangements(
     return found, hets
 
 
-#: PharmCAT's own ambiguity message: "The assigned genotype is *1/*6; however, *4/*9
-#: cannot be ruled out ...". It raises one per gene, with the drugs it bears on, and the
-#: report prints them under the call. Where it has said this, saying it again is a second
-#: copy of one fact -- the mistake #226 fixed for the rarity alert.
-AMBIGUITY = "cannot be ruled out"
-
-
 def pharmcat_warned(gene: Mapping[str, Any]) -> bool:
     """Whether PharmCAT itself said this call's arrangement is not the only reading.
 
     Over the 61 GeT-RM genomes it says so for 68 of the 82 calls this module can name
     an alternative for, naming the same alternative in every one of the 68. The 14 it
-    is silent about are what is left to say: NAT2 5, SLCO1B1 2, NUDT15 2, TPMT 2,
-    UGT1A1 2, G6PD 1.
+    is silent about are what is left for this module to say: NAT2 5, SLCO1B1 2,
+    NUDT15 2, TPMT 2, UGT1A1 2, G6PD 1.
+
+    ``AMBIGUITY``/``is_ambiguity`` live in ``app/pharmcat/pharmcat_messages.py``, which
+    owns PharmCAT's messages; ``place_warnings`` uses the same predicate on the entries
+    that module put on the rows, so the two halves can never disagree about which
+    message this is.
     """
-    for message in gene.get("messages") or []:
-        if not isinstance(message, Mapping):
-            continue
-        if str(message.get("exception_type") or "").lower() == "ambiguity":
-            return True
-        if AMBIGUITY in str(message.get("message") or ""):
-            return True
-    return False
+    return any(
+        isinstance(message, Mapping) and is_ambiguity(message)
+        for message in gene.get("messages") or []
+    )
 
 
 def _printed(gene: Mapping[str, Any]) -> Optional[Tuple[str, str, Optional[str]]]:
@@ -518,6 +524,91 @@ def _same(left: Any, right: Any) -> bool:
     )
 
 
+def _source_call(report: Optional[Mapping[str, Any]]) -> Dict[str, str]:
+    """gene -> the one diplotype PharmCAT's matcher printed for it.
+
+    Genes it printed as several, or as a list of haplotypes (DPYD, RYR1), are absent:
+    a note naming an alternative to a call the reader cannot see is worse than silence,
+    the ground ``annotate_genes`` and ``read_phase.unreached_alternative`` both stand on.
+    """
+    genes = (report or {}).get("genes")
+    if not isinstance(genes, Mapping):
+        return {}
+    printed: Dict[str, str] = {}
+    for block in iter_gene_blocks(genes):
+        symbol = str(block.gene_symbol or "").strip().upper()
+        if not symbol or symbol in printed or block.call_source != "MATCHER":
+            continue
+        call = _printed(block.gene_data)
+        if call is not None:
+            printed[symbol] = f"{call[0]}/{call[1]}"
+    return printed
+
+
+def place_warnings(
+    rows: Sequence[Any], report: Optional[Mapping[str, Any]]
+) -> List[str]:
+    """Move PharmCAT's own ambiguity message up beside the call it is about.
+
+    PharmCAT says of 68 of the 82 unmeasured arrangements in the GeT-RM set what this
+    module says of the other 14, and said it first. Until now its sentence printed in
+    the list of notes below the gene table while this report's printed in the table, so
+    a reader who learned to look beside the call read the 68 as unqualified. They are
+    one fact in one place now: the warned call carries PharmCAT's sentence, the rest
+    carry this report's, and never both (``annotate_genes`` skips what PharmCAT warned
+    about).
+
+    PharmCAT's words are not touched -- ``pharmcat_messages.paragraphs`` has already
+    stripped its markup and collapsed its whitespace, which is all that is done to them
+    -- and the note names PharmCAT as their author, because beside the call is where
+    this report speaks in its own voice.
+
+    Placed only where the row shows the diplotype the message is about: the message
+    opens by naming it ("The assigned genotype is *1/*80+*28; however ..."), so beside a
+    row showing anything else it would contradict the cell next to it. Over the 61
+    GeT-RM genomes all 68 sit on a single printed diplotype, none on a gene PharmCAT
+    called phased, and none names a genotype other than the printed one.
+
+    The entry stays in the row's ``pharmcat_messages`` -- the payload the API and the
+    interactive report's gene data carry is unchanged -- marked ``placed`` so the list
+    below the table does not print it twice. Returns the genes it placed one for.
+    """
+    printed = _source_call(report)
+    placed: List[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict) or not pharmcat_called(row):
+            continue
+        symbol = str(row.get("gene") or "").strip().upper()
+        call = printed.get(symbol)
+        shown = row.get("diplotype_display") or row.get("diplotype")
+        if not call or not shown or not _same(shown, call):
+            continue
+        # Every ambiguity message on the gene, not the first: all of them qualify the
+        # one call, and leaving a second below the table while the first sits beside
+        # the call would be the split this change exists to end. PharmCAT raises one
+        # per gene in all 61 GeT-RM genomes, so this is for a shape, not a case.
+        found = [
+            entry
+            for entry in row.get("pharmcat_messages") or []
+            if isinstance(entry, dict)
+            and is_ambiguity(entry)
+            and " ".join(entry.get("paragraphs") or []).strip()
+        ]
+        if not found:
+            continue
+        for entry in found:
+            entry["placed"] = True
+        row["pharmcat_ambiguity"] = {
+            "source": "PharmCAT",
+            "rules": [entry.get("rule") or "" for entry in found],
+            "call_note": " ".join(
+                " ".join(entry.get("paragraphs") or []).strip() for entry in found
+            ),
+        }
+        placed.append(symbol)
+    return placed
+
+
 def annotate_genes(
     rows: Sequence[Any],
     report: Optional[Mapping[str, Any]],
@@ -529,8 +620,17 @@ def annotate_genes(
     Left alone where ``caller_agreement`` already said the printed call is one of two
     readings: two notes making the same shape of point about one call, one from the
     callers disagreeing and one from the definitions, would read as two separate doubts.
+    PharmCAT's own warning is not held back there, and ``place_warnings`` runs whatever
+    this half finds: it is a first-party statement about its own call, the report has
+    always shown it, and the point it makes -- these alleles, paired the other way -- is
+    not the point a disagreement makes, which is different alleles.
     """
     result = unmeasured(report, path)
+    # PharmCAT's own sentence, for the calls it warned about itself, moved up into the
+    # same slot. Done whatever ``unmeasured`` found, including when it found nothing:
+    # a run can have warnings to place and no alternatives of its own to name.
+    counts = result.setdefault("counts", {})
+    counts["placed"] = len(place_warnings(rows, report))
     found = result.get("genes") or {}
     if not found:
         return result
@@ -559,7 +659,6 @@ def annotate_genes(
     # the row shows a different diplotype, or when the gene has no row at all -- and a
     # paragraph saying "for 1 more this report names it beside the call" beside no such
     # note is the inconsistency a real NA18526 render turned up.
-    counts = result.get("counts") or {}
     counts["could_name"] = int(counts.get("named") or 0)
     counts["named"] = len(marked)
     counts["within_reach"] = sum(
@@ -590,6 +689,7 @@ def coverage_note(result: Optional[Mapping[str, Any]]) -> Optional[str]:
     if not calls or not unphased_calls:
         return None
     warned = int(counts.get("pharmcat_warned") or 0)
+    placed = int(counts.get("placed") or 0)
     named = int(counts.get("named") or 0)
     within = int(counts.get("within_reach") or 0)
     version = str(counts.get("pharmcat_version") or "")
@@ -603,10 +703,19 @@ def coverage_note(result: Optional[Mapping[str, Any]]) -> Optional[str]:
     # Said in this order because it is the order of authority: PharmCAT's own warning
     # first, this report's reading of its definitions second, and silence last.
     if warned:
+        # Where the report put every one of them beside its call, the paragraph says
+        # so; where one did not reach a row -- the row shows a different diplotype, or
+        # the gene has none -- it says only that PharmCAT named it, which is true
+        # wherever its words ended up. Promising a note no row carries is the
+        # inconsistency a real NA18526 render turned up for the other half.
         note += (
             f"PharmCAT names the other reading itself for "
             f"{'it' if warned == 1 and unphased_calls == 1 else f'{warned} of them'}, "
-            "in its notes under the call. "
+            + (
+                "in its own words beside the call. "
+                if placed == warned
+                else "in its own words. "
+            )
         )
     if named:
         # "more" only after PharmCAT's own count, or it is more than nothing.
