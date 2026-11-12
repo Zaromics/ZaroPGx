@@ -348,8 +348,10 @@ Open:
   read in the paper or its PMC copy: CYP2C9, CYP2D6 (PMC8579245), CYP3A4, CYP3A5,
   CYP4F2, DPYD, TPMT and NUDT15 (both PMC9808500). Only **CYP2C19** (`*2, *3, *17`) is
   still `SECONDARY`, and not for want of trying: Europe PMC reports PMID 29474986 with
-  no PMCID, `isOpenAccess=N` and `inEPMC=N`, and jmdjournal.org, ScienceDirect and the
-  institutional repository mirrors answer 403 or a bot challenge. Its list agrees across
+  no PMCID, `isOpenAccess=N` and `inEPMC=N`, jmdjournal.org, ScienceDirect and the
+  institutional repository mirrors answer 403 or a bot challenge, and the authors' own
+  abstract states the two-tier framework without listing the alleles. No public text
+  carries them. Its list agrees across
   three independent secondary sources. **Reading it needs institutional access** — the
   one item here an owner can close and an agent cannot.
   `tests/test_amp_tier1.py` pins which genes are in which set, so the distinction cannot

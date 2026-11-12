@@ -72,7 +72,10 @@ from typing import Any, Dict, FrozenSet, Iterable, Optional, Tuple
 #: isOpenAccess=N and inEPMC=N, and jmdjournal.org, ScienceDirect and the institutional
 #: repository mirrors answer 403 or a bot challenge. Its list agrees across three
 #: independent secondary sources, so it is not a guess, but nobody here has read it in
-#: the paper and this field is what says so. Reading it needs institutional access.
+#: the paper and this field is what says so. The authors' own abstract was checked too
+#: and states the two-tier framework and its criteria without listing the alleles, so
+#: there is no public text that carries them: reading it needs institutional access.
+#: Every route is recorded here so the search is not repeated from scratch.
 PRIMARY = "primary"
 SECONDARY = "secondary"
 
