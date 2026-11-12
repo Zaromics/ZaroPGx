@@ -1021,6 +1021,24 @@ workflow {
     // vcf/bam are let through, which is not the same as skip_gatk doing nothing on them:
     // a GRCh37 vcf still goes through LiftoverVCF below, which is a gatk-api process.
     // See params.skip_gatk's comment at the top of this file.
+    // PyPGx must not run on a consumer array, and the combination is refused rather
+    // than left to fail downstream. PyPGx reads a position the chip does not carry as
+    // homozygous reference and its outside calls override PharmCAT's no-calls, which is
+    // the confident wrong answer these inputs were refused for in the first place -- so
+    // this is a correctness guard, not a convenience one. The app always sets the flag
+    // (FileProcessor._plan_consumer_array sets needs_pypgx=False, which upload_router
+    // turns into --skip_pypgx), so this fires only for a pipeline run made by hand.
+    // Without it that run dies at `pypgx_result.outside.ifEmpty(...)` with "Missing
+    // process or function", which says nothing about what is actually wrong.
+    if (!params.skip_pypgx && ['23andme', 'ancestry'].contains(params.input_type)) {
+        error(
+            "--input_type ${params.input_type} requires --skip_pypgx: PyPGx reads a " +
+            "position a genotyping array does not carry as homozygous reference, and " +
+            "its outside calls override PharmCAT's no-calls. Running it on an array " +
+            "produces a confidently wrong report rather than an incomplete one."
+        )
+    }
+
     if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf', 'gvcf', '23andme', 'ancestry'].contains(params.input_type)) {
         error(
             "--skip_gatk is not compatible with --input_type ${params.input_type}: " +

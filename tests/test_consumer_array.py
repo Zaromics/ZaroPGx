@@ -434,3 +434,29 @@ def test_the_conversion_step_is_registered_with_a_stage_and_a_duration():
     assert STEP_TO_STAGE["array_to_vcf"] is WorkflowStage.GATK
     assert "array_to_vcf" in WorkflowProgressCalculator.STEP_EXPECTED_SECONDS
     assert "array_to_vcf" in WorkflowProgressCalculator.CANONICAL_STEP_ORDER
+
+
+def test_main_nf_refuses_to_run_pypgx_on_an_array():
+    """A correctness guard, not a convenience one.
+
+    PyPGx reads a position the chip does not carry as homozygous reference and its
+    outside calls override PharmCAT's no-calls -- the confident wrong answer these
+    inputs were refused for. The app always sets the flag (needs_pypgx=False becomes
+    --skip_pypgx), so this fires only for a pipeline run made by hand; FOUND by previewing
+    the DAG, where the combination died at `pypgx_result.outside.ifEmpty(...)` with
+    "Missing process or function", which says nothing about what is wrong.
+    """
+    from pathlib import Path
+
+    main_nf = (
+        Path(__file__).resolve().parent.parent / "pipelines" / "pgx" / "main.nf"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "!params.skip_pypgx && ['23andme', 'ancestry'].contains(params.input_type)"
+        in main_nf
+    )
+    assert "requires --skip_pypgx" in main_nf
+    # The reason, not just the rule: a guard whose message does not say why invites
+    # being switched off.
+    assert "homozygous reference" in main_nf
