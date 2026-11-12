@@ -364,3 +364,81 @@ def test_an_ordinary_run_says_nothing_about_tier_1(template_name):
 
     assert "AMP/CAP" not in text
     assert "*1/*1" in text, "and the supported verdict is still shown"
+
+
+# --------------------------------------------------------------------------
+# A realistic sparse panel, measured through the real pipeline
+# --------------------------------------------------------------------------
+
+# MEASURED 2026-11-12. PharmCAT's own complete example VCF was run through the full
+# `pharmcat_pipeline` twice: once as shipped, and once with the single row for rs7900194
+# deleted -- a panel that does not interrogate that position. These are the
+# uncalledHaplotypes PharmCAT reported for CYP2C9 in each run.
+#
+# rs7900194 defines CYP2C9*8, and this is AMP's own published example of the harm: a
+# patient heterozygous for it, tested on an assay without it, "may be assigned a
+# genotype of *1/*1 (normal function) rather than *1/*8 ... potentially creating a
+# health care disparity." Deleting one row from a complete file reproduces it exactly.
+PANEL_COMPLETE_CYP2C9 = ["*86", "*87", "*88", "*89", "*90", "*91", "*94"]
+PANEL_WITHOUT_RS7900194_CYP2C9 = [
+    "*27",
+    "*8",
+    "*86",
+    "*87",
+    "*88",
+    "*89",
+    "*90",
+    "*91",
+    "*94",
+]
+
+
+def test_a_complete_input_keeps_cyp2c9_despite_seven_unassessable_alleles():
+    """The negative half, on real pipeline output. Those seven are rare alleles no VCF
+    can assess, and none is Tier 1 -- so the verdict stands."""
+    rows = [{"gene": "CYP2C9", "diplotype": "*1/*1", "diplotype_display": "*1/*1"}]
+
+    withheld = withhold_inadequate_calls(
+        rows, _report({"CYP2C9": PANEL_COMPLETE_CYP2C9})
+    )
+
+    assert withheld == []
+    assert rows[0]["diplotype"] == "*1/*1"
+
+
+def test_a_panel_missing_one_tier_1_position_loses_the_verdict():
+    """The positive half, from the same file with one row deleted. The only difference
+    between this and the test above is rs7900194, and it is the difference between
+    reporting "Normal Metabolizer" to a possible *1/*8 patient and declining."""
+    rows = [
+        {
+            "gene": "CYP2C9",
+            "diplotype": "*1/*1",
+            "diplotype_display": "*1/*1",
+            "phenotype": "Normal Metabolizer",
+        }
+    ]
+
+    withheld = withhold_inadequate_calls(
+        rows, _report({"CYP2C9": PANEL_WITHOUT_RS7900194_CYP2C9})
+    )
+
+    assert withheld == ["CYP2C9"]
+    assert rows[0]["diplotype"] == ""
+    assert rows[0]["phenotype"] == ""
+    assert rows[0]["tier1_withheld"]["missing"] == [
+        "*8"
+    ], "only the Tier 1 gap, not *27"
+    assert "*8" in rows[0]["no_call_note"]
+
+
+def test_only_the_tier_1_allele_is_named_not_every_unassessable_one():
+    """Nine alleles were unassessable in that run and only one of them is Tier 1.
+    Listing all nine would bury the actionable fact in noise."""
+    rows = [{"gene": "CYP2C9", "diplotype": "*1/*1", "diplotype_display": "*1/*1"}]
+    withhold_inadequate_calls(rows, _report({"CYP2C9": PANEL_WITHOUT_RS7900194_CYP2C9}))
+
+    note = rows[0]["no_call_note"]
+
+    for rare in ("*86", "*87", "*94", "*27"):
+        assert rare not in note, f"{rare} is not Tier 1 and must not be listed"

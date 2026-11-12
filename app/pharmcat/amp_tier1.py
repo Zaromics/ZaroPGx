@@ -67,11 +67,12 @@ from typing import Any, Dict, FrozenSet, Iterable, Optional, Tuple
 #: distinction earned itself: an early secondary summary of CYP2D6 omitted *41, and
 #: reading the paper (PMC8579245) settled that it belongs in Tier 1.
 #:
-#: The three still marked SECONDARY -- CYP2C19, TPMT and NUDT15 -- agree across three
-#: independent secondary sources each, and their primary texts were unreachable at every
-#: route tried (jmdjournal.org and ScienceDirect answer 403; the institutional repository
-#: copies answer a bot challenge). They are not guesses, but they have not been read in
-#: the paper, and that is what this field says.
+#: ONE entry is still SECONDARY: CYP2C19 (*2, *3, *17). It is paywalled rather than
+#: merely awkward to reach -- Europe PMC reports PMID 29474986 with no PMCID,
+#: isOpenAccess=N and inEPMC=N, and jmdjournal.org, ScienceDirect and the institutional
+#: repository mirrors answer 403 or a bot challenge. Its list agrees across three
+#: independent secondary sources, so it is not a guess, but nobody here has read it in
+#: the paper and this field is what says so. Reading it needs institutional access.
 PRIMARY = "primary"
 SECONDARY = "secondary"
 
@@ -155,14 +156,19 @@ TIER1: Dict[str, Tier1Set] = {
         source=PRIMARY,
     ),
     "TPMT": Tier1Set(
+        # Read in the paper (PMC9808500). It also excludes TPMT *8 and *33 "owing to
+        # their uncertain function", *4 as below the Tier 2 frequency cutoff, and *41
+        # as poorly characterized and triallelic with *3C -- none of which belongs in a
+        # Tier 1 set, and all of which a reader might otherwise expect here.
         alleles=frozenset({"*2", "*3A", "*3B", "*3C"}),
         citation=(
             "Pratt VM et al. TPMT and NUDT15 Genotyping Recommendations: A Joint "
             "Consensus Recommendation of AMP, CPIC, CAP, DPWG, ESPT and PharmGKB. "
-            "J Mol Diagn 2022. NOTE: a 2026 CPIC thiopurine guideline update exists "
-            "and may revise this set; re-read before relying on it."
+            "J Mol Diagn 2022;24(10):1051-1063. PMID 35931343, PMCID PMC9808500. "
+            "NOTE: a 2026 CPIC thiopurine guideline update exists and may revise this "
+            "set; re-read before relying on it."
         ),
-        source=SECONDARY,
+        source=PRIMARY,
     ),
     "NUDT15": Tier1Set(
         # *3 ALONE. NUDT15*2 is Tier 2, not Tier 1 -- an easy and consequential
@@ -171,9 +177,9 @@ TIER1: Dict[str, Tier1Set] = {
         citation=(
             "Pratt VM et al. TPMT and NUDT15 Genotyping Recommendations: A Joint "
             "Consensus Recommendation of AMP, CPIC, CAP, DPWG, ESPT and PharmGKB. "
-            "J Mol Diagn 2022."
+            "J Mol Diagn 2022;24(10):1051-1063. PMID 35931343, PMCID PMC9808500."
         ),
-        source=SECONDARY,
+        source=PRIMARY,
     ),
     "DPYD": Tier1Set(
         # Seven variants, in PharmCAT's spelling. AMP writes them as bare c. notation;

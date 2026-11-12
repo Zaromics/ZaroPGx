@@ -344,14 +344,18 @@ partial data, and keeps ABCG2, IFNL3 and VKORC1.
 
 Open:
 
-- **Three Tier 1 lists still need a primary read.** Read in the paper or its PMC copy:
-  CYP2C9, **CYP2D6** (PMC8579245), CYP3A4, CYP3A5, CYP4F2, DPYD. Still `SECONDARY`:
-  CYP2C19 (`*2, *3, *17`), TPMT (`*2, *3A, *3B, *3C`) and NUDT15 (`*3`) — each agrees
-  across three independent secondary sources, but jmdjournal.org and ScienceDirect
-  answer 403 and the institutional repository copies answer a bot challenge, so no route
-  tried reached the text. `tests/test_amp_tier1.py` pins which genes are in which set,
-  so the distinction cannot drift. Reading CYP2D6 was worth it: a secondary summary had
-  omitted `*41`, which the published Tier 1 carries.
+- **One Tier 1 list still needs a primary read, and it is paywalled.** Eight of nine are
+  read in the paper or its PMC copy: CYP2C9, CYP2D6 (PMC8579245), CYP3A4, CYP3A5,
+  CYP4F2, DPYD, TPMT and NUDT15 (both PMC9808500). Only **CYP2C19** (`*2, *3, *17`) is
+  still `SECONDARY`, and not for want of trying: Europe PMC reports PMID 29474986 with
+  no PMCID, `isOpenAccess=N` and `inEPMC=N`, and jmdjournal.org, ScienceDirect and the
+  institutional repository mirrors answer 403 or a bot challenge. Its list agrees across
+  three independent secondary sources. **Reading it needs institutional access** — the
+  one item here an owner can close and an agent cannot.
+  `tests/test_amp_tier1.py` pins which genes are in which set, so the distinction cannot
+  drift. Reading the primaries paid for itself twice: a secondary summary had omitted
+  CYP2D6 `*41`, and NUDT15's Tier 1 is `*3` alone where `*2` is the better-known name
+  and is Tier 2.
 - **CYP2D6 adequacy does not cover copy number.** AMP's CYP2D6 Tier 1 also requires
   interrogating gene duplications/multiplications, which is not an allele in
   `uncalledHaplotypes` and cannot be judged from it. "Adequate" for CYP2D6 therefore

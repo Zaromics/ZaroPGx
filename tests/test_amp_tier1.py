@@ -114,8 +114,19 @@ def test_which_tier_1_lists_have_been_read_in_the_paper():
     secondary sources -- but it must not quietly come to look as settled as one that was
     read. Moving a gene between these sets is a deliberate act that edits this test.
     """
-    read_in_the_paper = {"CYP2C9", "CYP2D6", "CYP3A4", "CYP3A5", "CYP4F2", "DPYD"}
-    secondary_only = {"CYP2C19", "TPMT", "NUDT15"}
+    read_in_the_paper = {
+        "CYP2C9",
+        "CYP2D6",
+        "CYP3A4",
+        "CYP3A5",
+        "CYP4F2",
+        "DPYD",
+        "TPMT",
+        "NUDT15",
+    }
+    # CYP2C19 alone, and paywalled rather than awkward: Europe PMC reports PMID
+    # 29474986 with no PMCID and isOpenAccess=N. Reading it needs institutional access.
+    secondary_only = {"CYP2C19"}
 
     assert read_in_the_paper | secondary_only == set(TIER1)
     for gene in read_in_the_paper:
