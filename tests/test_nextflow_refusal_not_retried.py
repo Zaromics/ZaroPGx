@@ -64,9 +64,14 @@ def _run(block: str, status: str, tmp_path: Path) -> subprocess.CompletedProcess
 
 
 def test_every_guarded_call_site_is_covered():
-    """All nine --fail-with-body sites; none left on the old exit-1-for-all form."""
+    """All ten --fail-with-body sites; none left on the old exit-1-for-all form.
+
+    Ten since 2026-11-12, when ArrayToVCF added gatk-api's /array-to-vcf for consumer
+    genotyping arrays. The count is the point: a new call site that forgets the
+    `case "$HTTP_CODE" in 4??) exit 65` arm would retry a refusal.
+    """
     text = MAIN_NF.read_text(encoding="utf-8")
-    assert len(_call_sites()) == 9
+    assert len(_call_sites()) == 10
     assert "if ! curl -sS --fail-with-body" not in text
 
 

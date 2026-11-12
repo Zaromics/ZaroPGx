@@ -170,6 +170,12 @@ class WorkflowOptions(BaseModel):
     # "gvcf_to_vcf" step in workflow_registry and vetoes "bcf_to_vcf" there; drives the
     # GVCFToVCF process in pipelines/pgx/main.nf. Always set with needs_conversion.
     needs_gvcf_genotyping: bool = False
+    # Consumer genotyping array (23andMe, AncestryDNA) -> GRCh38 VCF on PharmCAT's own
+    # positions, keyed by rs identifier (gatk-api's /array-to-vcf). Mints the
+    # "array_to_vcf" step in workflow_registry and drives main.nf's ArrayToVCF process.
+    # Set with needs_conversion; NOT with needs_liftover, because the positions come
+    # from PharmCAT's GRCh38 list rather than from the chip's own coordinates.
+    needs_array_conversion: bool = False
     # GRCh37/hg19 VCF -> lifted to GRCh38 via gatk-api's Picard LiftoverVcf before
     # analysis (workflow_registry mints the "liftover" step off this flag). Set from
     # the DETECTED build (header inspection), never from the reference_genome form

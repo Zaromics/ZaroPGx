@@ -57,6 +57,12 @@ except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
         SHORT_READ_PLATFORMS,
         detect_fastq_platform,
     )
+# The chip-export reader, same two-path import and same reason: the app plans the upload
+# from this module and this endpoint converts with it, so one copy decides both.
+try:
+    import consumer_array  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
+    from app.api.utils import consumer_array
 # The liftover chain's pinned SHA-256 and its check, shared with the mtDNA service
 # the same way (Dockerfile.gatk-api copies the file in beside this one).
 try:
@@ -4487,6 +4493,264 @@ async def bcf_to_vcf(
         logger.exception(f"Error in BCF to VCF conversion: {e}")
         await _fail_step(job_client, f"BCF to VCF conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"BCF to VCF conversion failed: {str(e)}")
+    finally:
+        _cleanup_dir(work_dir)
+
+
+# ---------------------------------------------------------------------------
+# Consumer genotyping array -> GRCh38 VCF on PharmCAT's positions (/array-to-vcf)
+#
+# The whole conversion is `consumer_array`, which is pure over text and shared with the
+# app so the pre-upload plan and this endpoint cannot disagree. What lives here is the
+# I/O and the vouching.
+#
+# NOT a liftover lane, and that is the measured part: a chip's coordinates are GRCh37 and
+# the obvious route is `bcftools convert --tsv2vcf` then /liftover-vcf, which SILENTLY
+# DROPS rs6025 (Factor V Leiden) -- a homozygous-reference chip row is `REF=T ALT=.`, the
+# reference allele differs between builds there, and Picard cannot swap a REF with an ALT
+# that is not present. Seven of PharmCAT's 1,226 positions are exposed to it. A chip
+# reports observed BASES, which belong to the DNA and not to a reference, so the rsID is
+# the key and PharmCAT's own GRCh38 record supplies REF/ALT. No chain, no b37 reference,
+# and the output is already on the positions PharmCAT will read.
+#
+# The output is deliberately restricted to PharmCAT's position list. Everything else on
+# the chip is off-panel for every tool in this stack, and PyPGx does not run on this lane
+# at all (its absent-is-reference reading is the original reason arrays were refused).
+# ---------------------------------------------------------------------------
+
+
+def contig_lengths_from_fai(fai_path):
+    """{contig: length} from a FASTA index, or {} when it cannot be read.
+
+    Only used to declare the contigs the output actually uses, so a missing .fai costs
+    the header's `length=` attributes and nothing else -- PharmCAT's preprocessor
+    normalizes against its own reference regardless.
+    """
+    lengths = {}
+    try:
+        with open(fai_path) as handle:
+            for line in handle:
+                fields = line.split('\t')
+                if len(fields) >= 2:
+                    try:
+                        lengths[fields[0]] = int(fields[1])
+                    except (TypeError, ValueError):
+                        continue
+    except OSError as exc:
+        logger.warning(f"Could not read contig lengths from {fai_path}: {exc}")
+    return lengths
+
+
+def convert_array_to_vcf(job_label, input_path, work_dir, output_vcf, positions_path):
+    """Read a vendor chip export onto PharmCAT's positions; counts for the report.
+
+    Blocking -- call it through asyncio.to_thread under _to_thread_semaphore, like every
+    other conversion here. A 600,000-row export is read once in Python, which is seconds,
+    but the bgzip and index are subprocesses.
+
+    Every failure path raises HTTPException, so a caller that returns normally can promise
+    `output_vcf` exists, is BGZF-framed and holds at least one record.
+
+    An export that maps to NO PharmCAT position is a 422, not an empty success: it means
+    the file is not the chip it claims to be, or its rs identifiers are from a panel this
+    release's PharmCAT does not read, and either way an empty VCF downstream reads as "no
+    variants found" -- a clinical statement rather than the wrong-input it actually is.
+    """
+    if not os.path.exists(positions_path):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"PharmCAT's position list is not staged at {positions_path}, and this "
+                "conversion reads a chip onto it. Stage the reference tree (see "
+                "genome-downloader) before uploading a genotyping array."
+            ),
+        )
+
+    with open(input_path, 'r', errors='replace') as handle:
+        reading = consumer_array.array_genotypes(handle)
+    if reading.vendor_shape is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No genotype rows could be read from this file. A 23andMe export has "
+                "four tab-separated columns (rsid, chromosome, position, genotype) and "
+                "an AncestryDNA export has five, the last two being the two alleles. "
+                f"{reading.total:,} row(s) were examined."
+            ),
+        )
+
+    with open(positions_path) as handle:
+        by_rsid = consumer_array.positions_by_rsid(handle)
+    mapped = consumer_array.map_to_positions(reading.genotypes, by_rsid)
+    if not mapped.records:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This {reading.vendor_shape} export carries no genotype at any of "
+                f"PharmCAT's {len(by_rsid):,} rs-identified positions "
+                f"({len(reading.genotypes):,} usable genotypes read, "
+                f"{mapped.off_panel:,} of them off-panel). There is nothing to analyze, "
+                "and an empty result would read downstream as 'no variants found'."
+            ),
+        )
+
+    lengths = contig_lengths_from_fai(f"{REFERENCE_PATHS['hg38']}.fai")
+    plain = os.path.join(work_dir, 'array.vcf')
+    with open(plain, 'w') as handle:
+        handle.write(
+            consumer_array.vcf_text(mapped, lengths, sample=stored_stem(
+                os.path.basename(input_path)) or 'SAMPLE')
+        )
+    _run_tool(
+        job_label,
+        ['bcftools', 'view', '-O', 'z', '-o', output_vcf, plain],
+        'Compressing the converted array (bcftools view)',
+    )
+    if not os.path.exists(output_vcf) or os.path.getsize(output_vcf) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "bcftools view exited 0 but wrote no bgzipped VCF from the converted "
+                "array; refusing to treat this as a valid conversion."
+            ),
+        )
+    if not _looks_gzipped(output_vcf):
+        _discard_output(output_vcf)
+        raise HTTPException(
+            status_code=500,
+            detail=f"The converted array {output_vcf} is not compressed at all.",
+        )
+    if not vcf_has_records(output_vcf):
+        _discard_output(output_vcf)
+        raise HTTPException(
+            status_code=422,
+            detail="The converted array is a valid but empty VCF (no records).",
+        )
+
+    index_path = f"{output_vcf}.tbi"
+    try:
+        indexed = subprocess.run(
+            ['bcftools', 'index', '-t', '-f', output_vcf],
+            capture_output=True,
+            check=False,
+        )
+        if indexed.returncode != 0 or not os.path.exists(index_path):
+            index_path = None
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(f"Job {job_label}: could not index {output_vcf}: {exc}")
+        index_path = None
+
+    logger.info(
+        f"Job {job_label}: {reading.vendor_shape} export -> {len(mapped.records)} of "
+        f"PharmCAT's {len(by_rsid)} rs-identified positions "
+        f"({len(reading.genotypes)} usable genotypes, {reading.no_calls} no-calls, "
+        f"{reading.indels} indel-coded, {len(mapped.unmappable)} unmappable)"
+    )
+    return {
+        'vcf_path': output_vcf,
+        'vcf_index': index_path,
+        'vcf_size_bytes': os.path.getsize(output_vcf),
+        'vendor_shape': reading.vendor_shape,
+        'n_rows_read': reading.total,
+        'n_genotypes_usable': len(reading.genotypes),
+        'n_no_calls': reading.no_calls,
+        'n_indel_coded': reading.indels,
+        'n_malformed': reading.malformed,
+        'n_off_panel': mapped.off_panel,
+        'n_unmappable': len(mapped.unmappable),
+        'unmappable_rsids': mapped.unmappable[:20],
+        'n_pharmcat_positions_rsid': len(by_rsid),
+        'n_positions_carried': len(mapped.records),
+        'genes_touched': dict(sorted(mapped.genes.items())),
+    }
+
+
+@app.post("/array-to-vcf")
+async def array_to_vcf(
+    file: UploadFile = File(...),
+    reference_genome: str = Form("hg38"),
+    patient_id: Optional[str] = Form(None),
+    report_id: Optional[str] = Form(None),
+    job_id: Optional[str] = Form(None),
+    step_name: Optional[str] = Form("array_to_vcf"),
+):
+    """Convert a 23andMe or AncestryDNA export into a GRCh38 VCF on PharmCAT's positions.
+
+    `reference_genome` is accepted because callers post the same form to every conversion
+    route, and is not read: the output build is GRCh38 by construction, since the
+    positions come from PharmCAT's own GRCh38 list rather than from the chip.
+    """
+    job_client = None
+    work_dir = None
+    output_dir = None
+    try:
+        if job_id:
+            try:
+                job_client = JobClient(job_id=job_id, step_name=step_name)
+                await job_client.start_step(
+                    f"Reading {file.filename} onto PharmCAT's positions"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize workflow client: {e}")
+                job_client = None
+
+        local_job_id = str(uuid.uuid4())
+        work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+        filename = safe_upload_name(file.filename or "input.txt", local_job_id)
+        input_path = os.path.join(work_dir, filename)
+        output_dir = conversion_output_dir(local_job_id, job_id, patient_id)
+        output_vcf = os.path.join(output_dir, f"{stored_stem(filename)}.vcf.gz")
+
+        with open(input_path, "wb") as fh:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                fh.write(chunk)
+
+        if job_client:
+            await job_client.log_progress(
+                f"File uploaded: {os.path.getsize(input_path)} bytes",
+                {"input_path": input_path},
+            )
+
+        async with _to_thread_semaphore:
+            result = await asyncio.to_thread(
+                convert_array_to_vcf,
+                local_job_id,
+                input_path,
+                work_dir,
+                output_vcf,
+                PHARMCAT_POSITIONS_PATH,
+            )
+
+        if job_client:
+            await job_client.log_progress("Array conversion completed", result)
+            await job_client.complete_step(
+                f"{result['n_positions_carried']} of PharmCAT's "
+                f"{result['n_pharmcat_positions_rsid']} rs-identified positions carried"
+            )
+
+        return {
+            "success": True,
+            "job_id": local_job_id,
+            "vcf": result["vcf_path"],
+            "message": (
+                f"Read {result['vendor_shape']} export onto "
+                f"{result['n_positions_carried']} of PharmCAT's positions"
+            ),
+            **result,
+        }
+
+    except HTTPException as e:
+        _cleanup_dir(output_dir)
+        logger.error(f"Array conversion failed: {e.detail}")
+        await _fail_step(job_client, f"Array conversion failed: {e.detail}")
+        raise
+    except Exception as e:
+        _cleanup_dir(output_dir)
+        logger.exception(f"Error in array conversion: {e}")
+        await _fail_step(job_client, f"Array conversion failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Array conversion failed: {str(e)}"
+        )
     finally:
         _cleanup_dir(work_dir)
 

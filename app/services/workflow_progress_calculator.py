@@ -121,6 +121,9 @@ class WorkflowProgressCalculator:
         "header_analysis": 2,
         "bcf_to_vcf": 60,  # (*) bcftools view, a few minutes at most
         "gvcf_to_vcf": 120,  # (*) GenotypeGVCFs at PharmCAT's positions only
+        # Reading a chip export is one pass over a text file plus a bgzip: seconds, not
+        # minutes, and it does not grow with the genome the way the conversions above do.
+        "array_to_vcf": 20,
         "liftover": 60,  # (*) Picard LiftoverVcf
         "gatk_cram_sam_to_bam": 1970,
         "hla_typing": 245,
@@ -160,6 +163,7 @@ class WorkflowProgressCalculator:
         # A GRCh37 BCF is converted first and lifted second.
         "bcf_to_vcf",
         "gvcf_to_vcf",
+        "array_to_vcf",
         "liftover",
         "gatk_cram_sam_to_bam",
         "hla_typing",

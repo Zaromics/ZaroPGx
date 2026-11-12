@@ -1140,11 +1140,16 @@ def test_main_nf_has_a_bcf_branch_that_converts_first():
     stage the upload onward.
     """
     text = MAIN_NF.read_text(encoding="utf-8")
-    conditions = re.findall(r"params\.input_type (?:==|in) (\[[^\]]*\]|'[a-z]+')", text)
+    # `[a-z0-9]`, not `[a-z]`: "23andme" begins with digits, and a letters-only
+    # token pattern could not see it -- so this could not check any input type with
+    # a digit in its name, which is the member it was asked about first.
+    conditions = re.findall(
+        r"params\.input_type (?:==|in) (\[[^\]]*\]|'[a-z0-9]+')", text
+    )
     branched_on = {
         token
         for condition in conditions
-        for token in re.findall(r"'([a-z]+)'", condition)
+        for token in re.findall(r"'([a-z0-9]+)'", condition)
     }
 
     assert "vcf" in branched_on, "main.nf no longer branches on input_type; re-audit"
@@ -1156,9 +1161,17 @@ def test_main_nf_has_a_bcf_branch_that_converts_first():
     )
     # The shared branch really is shared: vcf, bcf and gvcf all enter here, which is
     # what keeps one copy of the liftover decision.
-    assert re.search(
-        r"else if \(params\.input_type in \['vcf', 'bcf', 'gvcf'\]\)", text
-    ), "the converted-input branch no longer serves all three of vcf/bcf/gvcf"
+    # Membership, not the exact list: the branch gained '23andme' and 'ancestry' when
+    # consumer arrays began being read onto PharmCAT's positions. The property defended
+    # here is that vcf/bcf/gvcf still share ONE branch -- hence one copy of the liftover
+    # decision -- not that nothing else may ever join them.
+    shared = re.search(r"else if \(params\.input_type in \[([^\]]*)\]\)", text)
+    assert shared, "main.nf no longer has a shared converted-input branch"
+    members = set(re.findall(r"'([a-z0-9]+)'", shared.group(1)))
+    assert {"vcf", "bcf", "gvcf"} <= members, (
+        "the converted-input branch no longer serves all three of vcf/bcf/gvcf: "
+        f"{sorted(members)}"
+    )
 
 
 def test_what_reaches_pharmcat_on_the_bcf_lane_is_a_converted_vcf():
@@ -1483,11 +1496,16 @@ def test_every_submittable_input_type_has_a_branch_in_main_nf():
     prevent, restored by an edit to the wrong half.
     """
     text = MAIN_NF.read_text(encoding="utf-8")
-    conditions = re.findall(r"params\.input_type (?:==|in) (\[[^\]]*\]|'[a-z]+')", text)
+    # `[a-z0-9]`, not `[a-z]`: "23andme" begins with digits, and a letters-only
+    # token pattern could not see it -- so this could not check any input type with
+    # a digit in its name, which is the member it was asked about first.
+    conditions = re.findall(
+        r"params\.input_type (?:==|in) (\[[^\]]*\]|'[a-z0-9]+')", text
+    )
     branched_on = {
         token
         for condition in conditions
-        for token in re.findall(r"'([a-z]+)'", condition)
+        for token in re.findall(r"'([a-z0-9]+)'", condition)
     }
 
     missing = ur.NEXTFLOW_INPUT_TYPES - branched_on

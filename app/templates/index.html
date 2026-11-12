@@ -2880,6 +2880,7 @@
                 // the same way by the backend (workflow_stages.py maps "gvcf_to_vcf"
                 // to WorkflowStage.GATK). Same trap as the two above if missing.
                 'gvcf_to_vcf': 'stageGATK',
+                'array_to_vcf': 'stageGATK',
                 'pypgx_analysis': 'stagePyPGx',
                 'pypgx_bam2vcf': 'stagePyPGx',       // Both PyPGx steps map to the same stage
                 // mtDNA calling runs in its own "mtdna" sidecar, immediately before

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 
 from app.api.models import ResolvedStep, WorkflowOptions
 
@@ -31,7 +31,14 @@ class StepTemplate:
     # models.WorkflowStepTemplate) before anything starts planning from it. Two
     # templates rely on it now (gatk_cram_sam_to_bam and bcf_to_vcf), so the gap is
     # wider than when it was written.
-    unless: Optional[str] = None
+    #
+    # One field name, or several: needs_conversion was a two-armed switch (BCF or gVCF)
+    # and became a three-armed one when consumer arrays joined the VCF lane
+    # (needs_array_conversion). A single veto name would have minted bcf_to_vcf onto
+    # every array job -- a bcftools re-encode of a file that is not a BCF, hanging at
+    # [pending] forever because main.nf never posts it, which is the exact symptom this
+    # field's comments keep recording.
+    unless: Optional[Union[str, Tuple[str, ...]]] = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +64,7 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         "needs_report",
         "needs_conversion",
         "needs_gvcf_genotyping",
+        "needs_array_conversion",
         "needs_liftover",
         "is_provisional",
         "unsupported",
@@ -91,7 +99,10 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
             "bcf_to_vcf",
             "gatk-api",
             when="needs_conversion",
-            unless="needs_gvcf_genotyping",
+            # Both other arms of the needs_conversion switch: a gVCF's work is
+            # gvcf_to_vcf and a consumer array's is array_to_vcf, neither of which is a
+            # bcftools re-encode.
+            unless=("needs_gvcf_genotyping", "needs_array_conversion"),
         ),
         # gVCF -> plain genotyped VCF via gatk-api's GATK GenotypeGVCFs endpoint
         # (/gvcf-to-vcf). Registered for the same reason as every conversion here --
@@ -104,6 +115,12 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         # a two-armed switch rather than an ordering. Both sit before "liftover" for
         # the same reason: a file that needs converting is converted and THEN lifted.
         StepTemplate("gvcf_to_vcf", "gatk-api", when="needs_gvcf_genotyping"),
+        # Consumer array -> GRCh38 VCF on PharmCAT's positions (gatk-api's
+        # /array-to-vcf). A third arm of the same switch: the three conversion flags
+        # are set by mutually exclusive branches of determine_workflow, so this sits
+        # beside the two above rather than after them. Before "liftover" like them,
+        # though this lane never needs one -- its output is GRCh38 by construction.
+        StepTemplate("array_to_vcf", "gatk-api", when="needs_array_conversion"),
         # GRCh37/hg19 VCF -> GRCh38 via gatk-api's Picard LiftoverVcf. Registered
         # here because main.nf's LiftoverVCF process posts step_name=liftover to the
         # JobClient: a step name with no template is never minted onto the Job, so
@@ -193,7 +210,10 @@ def resolve_steps(workflow_type: str, options: WorkflowOptions) -> List[Resolved
             if not bool(getattr(options, tmpl.when, False)):
                 continue
         if tmpl.unless is not None:
-            if bool(getattr(options, tmpl.unless, False)):
+            vetoes = (
+                (tmpl.unless,) if isinstance(tmpl.unless, str) else tuple(tmpl.unless)
+            )
+            if any(bool(getattr(options, name, False)) for name in vetoes):
                 continue
         resolved.append(
             ResolvedStep(

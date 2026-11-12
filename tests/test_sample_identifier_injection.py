@@ -129,6 +129,13 @@ runner = _load_runner()
 EXPECTED_INTERPOLATIONS = {
     "bam",
     "bcf",
+    # Audited 2026-11-12: ArrayToVCF's `path` input, the staged consumer-array export.
+    # Same class as the bam/bcf/cram/fastq/gvcf/sam/vcf path inputs here -- Nextflow
+    # escapes path-typed inputs, and the name is server-side: the upload reached disk
+    # through safe_upload_name(), which is what keeps an attacker-chosen filename out of
+    # argv in the first place. It is sent to gatk-api as a curl -F file=@ operand, not
+    # interpolated into any shell word of its own.
+    "chip",
     "cram",
     "fastq",
     # Audited 2026-09-26: FastqToBAM's second mate. A `path` input, the same kind as

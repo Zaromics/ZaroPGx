@@ -64,6 +64,9 @@ COPY app/utils/shared_input.py /job-client/
 # The FASTQ platform detector, shared with the app so the pre-upload plan and
 # /align-fastq reach the same verdict about @RG PL:.
 COPY app/api/utils/fastq_platform.py /app/
+# The chip-export reader, for /array-to-vcf. Canonical copy lives in the app so the
+# pre-upload plan and the conversion cannot disagree; see gatk_api.py's import.
+COPY app/api/utils/consumer_array.py /app/
 # The liftover chain's pinned SHA-256, checked before /liftover-vcf uses it.
 COPY app/utils/liftover_chain.py /app/
 # PyPGx's gene and allele tables (PyPGx 0.27.0's, in lexicon/): /gvcf-to-vcf records

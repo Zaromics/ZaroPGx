@@ -423,29 +423,40 @@ TWENTYTHREE_AND_ME_BYTES = (
 )
 
 
-def test_23andme_upload_is_refused_before_a_job_exists(upload):
-    """No main.nf branch, and no intention of building one: see the refusal copy."""
+def test_23andme_upload_starts_a_job(upload):
+    """There is a main.nf branch now (ArrayToVCF), so the upload is carried rather than
+    refused. What keeps it honest is downstream: PyPGx does not run, and the AMP/CAP
+    Tier 1 gate withholds any gene the chip cannot determine."""
     resp = upload(("genome.txt", TWENTYTHREE_AND_ME_BYTES))
 
-    assert resp.status_code == 400, resp.text
-    assert "23andme" in resp.json()["detail"].lower()
-    assert upload.created_patients == []
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["file_type"] == "23andme"
+    options = resp.json()["workflow"]["options"]
+    assert options["needs_array_conversion"] is True
+    assert options["needs_pypgx"] is False
 
 
-def test_23andme_refusal_gives_the_real_reason_not_a_missing_converter(upload):
-    """The old copy said the conversion "is not implemented yet", which promised
-    the feature by describing its absence -- and was not the reason anyway. The
-    conversion is trivial; what is wrong is that PyPGx reads the positions a chip
-    lacks as homozygous reference and its call overrides PharmCAT's no-call."""
-    detail = upload(("genome.txt", TWENTYTHREE_AND_ME_BYTES)).json()["detail"].lower()
+def test_the_23andme_plan_describes_the_lane_not_a_missing_converter(upload):
+    """The copy once said the conversion "is not implemented yet", which promised the
+    feature by describing its absence -- and was not the reason anyway. Both halves are
+    now obsolete in the other direction: the conversion exists, so the copy must
+    describe what it does rather than what it lacks or what it will one day be.
+    """
+    body = upload(("genome.txt", TWENTYTHREE_AND_ME_BYTES)).json()
+    options = body["workflow"]["options"]
+    text = " ".join(options["warnings"] + options["recommendations"]).lower()
 
-    assert "not implemented" not in detail
-    assert "in development" in detail  # refused for now, support to come
-    assert "cyp2d6" in detail  # the gene the coverage gap actually ruins
-    assert "homozygous reference" in detail  # the mechanism
-    # And an accepted input to go and get instead.
-    for accepted in ("vcf", "bam", "cram", "sam"):
-        assert accepted in detail
+    # Neither flavour of aspirational copy, in either direction.
+    assert "not implemented" not in text
+    assert "in development" not in text
+    assert not (options["unsupported_reason"] or "")
+    # What the lane actually does, and the limits that remain true.
+    assert "rs identifier" in text
+    assert "cyp2d6" in text  # the gene the coverage gap actually ruins
+    assert "not run on this input" in text  # PyPGx, the original obstacle
+    # And the better input, still named.
+    for better in ("vcf", "bam", "cram", "sam"):
+        assert better in text
 
 
 def _array_workflow(file_type):
@@ -465,40 +476,50 @@ def _array_workflow(file_type):
 
 
 @pytest.mark.parametrize("vendor", ["TWENTYTHREE_AND_ME", "ANCESTRY_DNA"])
-def test_array_workflow_is_not_flagged_provisional(vendor):
-    """``is_provisional`` means "analysed anyway, provisionally". Nothing is analysed."""
+def test_array_workflow_is_flagged_provisional(vendor):
+    """``is_provisional`` means "analyzed anyway, provisionally", and that is now the
+    honest description: the input IS analyzed, on under a fifth of PharmCAT's positions.
+    It was False while nothing was analyzed at all."""
     from app.api.models import FileType
 
     workflow = _array_workflow(getattr(FileType, vendor))
 
-    assert workflow["unsupported"] is True
-    assert workflow["is_provisional"] is False
+    assert workflow["unsupported"] is False
+    assert workflow["is_provisional"] is True
 
 
 @pytest.mark.parametrize("vendor", ["TWENTYTHREE_AND_ME", "ANCESTRY_DNA"])
-def test_a_refused_array_does_not_plan_a_bcf_conversion(vendor):
-    """``needs_conversion`` mints a real bcf_to_vcf step (workflow_registry).
+def test_an_array_plans_its_own_conversion_and_not_a_bcf_one(vendor):
+    """``needs_conversion`` is shared by three conversions, and must draw only one.
 
-    The 23andMe branch used to set it for a conversion that did not exist, back
-    when the flag drew nothing. Now it would plan a bcftools re-encode of a file
-    that is not a BCF and is not being analysed -- so it must stay False, along
-    with every other needs_* flag on a refused input.
+    The 23andMe branch once set this flag for a conversion that did not exist, back when
+    it drew nothing. It draws a real step now -- so the question is which. An array sets
+    needs_conversion (which is what keeps gatk_cram_sam_to_bam vetoed) plus
+    needs_array_conversion, and `bcf_to_vcf`'s veto had to grow a third arm to match:
+    without it an array job minted a bcftools re-encode of a file that is not a BCF,
+    hanging at [pending] forever because main.nf never posts it.
     """
-    from app.api.models import FileType
+    from app.api.models import FileType, WorkflowOptions
+    from app.services.workflow_registry import resolve_steps
 
     workflow = _array_workflow(getattr(FileType, vendor))
 
-    for flag in (
-        "needs_conversion",
-        "needs_gatk",
-        "needs_alignment",
-        "needs_hla",
-        "needs_pypgx",
-        "needs_pypgx_bam2vcf",
-        "needs_mtdna",
-        "needs_liftover",
-    ):
-        assert workflow[flag] is False, flag
+    assert workflow["needs_conversion"] is True
+    assert workflow["needs_array_conversion"] is True
+    assert workflow["needs_gvcf_genotyping"] is False
+    # Nothing that needs reads, and nothing that would override PharmCAT's no-calls.
+    for absent in ("needs_alignment", "needs_hla", "needs_pypgx", "needs_mtdna"):
+        assert workflow[absent] is False, absent
+
+    options = WorkflowOptions(
+        **{k: v for k, v in workflow.items() if k in WorkflowOptions.model_fields}
+    )
+    minted = [s.step_name for s in resolve_steps("genomic_analysis", options)]
+
+    assert "array_to_vcf" in minted
+    assert "bcf_to_vcf" not in minted, "an array must not plan a BCF re-encode"
+    assert "gvcf_to_vcf" not in minted
+    assert "gatk_cram_sam_to_bam" not in minted
 
 
 def test_grch37_vcf_is_analysed_supported_via_liftover():

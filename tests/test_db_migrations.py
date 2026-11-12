@@ -88,10 +88,18 @@ def test_every_accepted_input_can_record_its_header():
     fresh = _allowed_file_formats(
         (root / "init" / "00_complete_database_schema.sql").read_text(encoding="utf-8")
     )
+    # The LATEST migration that sets this constraint, found rather than named: each new
+    # accepted input type needs its own migration file (a database that already applied
+    # an earlier one will never re-run it), and a hardcoded filename here would keep
+    # checking a stale copy while the real one drifted.
+    constraint_migrations = sorted(
+        path
+        for path in _DEFAULT_MIGRATIONS_DIR.glob("*.sql")
+        if "file_format" in path.read_text(encoding="utf-8")
+    )
+    assert constraint_migrations, "no migration sets the file_format CHECK"
     migrated = _allowed_file_formats(
-        (_DEFAULT_MIGRATIONS_DIR / "06_allow_gvcf_file_format.sql").read_text(
-            encoding="utf-8"
-        )
+        constraint_migrations[-1].read_text(encoding="utf-8")
     )
     wanted = {t.upper() for t in NEXTFLOW_INPUT_TYPES}
     assert wanted <= fresh

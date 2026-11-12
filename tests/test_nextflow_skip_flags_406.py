@@ -239,8 +239,9 @@ def test_every_curl_call_site_fails_on_http_errors_or_is_annotated_exempt():
     # it typed HLA from raw FASTQ and crashed on every panel FASTQ without HLA capture,
     # so the FASTQ lane now types from the aligned BAM through OptiTypeHLAFromBAM.
     # 12 with UnlistedVariants' call to pypgx's /unlisted-variants, 13 with
-    # PyPGxReadPhase's to /read-phase.
-    assert len(calls) == 13, f"curl call-site count changed to {len(calls)}; re-audit"
+    # PyPGxReadPhase's to /read-phase, 14 with ArrayToVCF's to gatk-api's
+    # /array-to-vcf (consumer genotyping arrays, 2026-11-12).
+    assert len(calls) == 14, f"curl call-site count changed to {len(calls)}; re-audit"
     for call in calls:
         if any(endpoint in call for endpoint in EXEMPT_CURL_ENDPOINTS):
             continue
@@ -253,12 +254,13 @@ def test_guarded_curl_failures_surface_the_server_message():
     """--fail-with-body is only useful if the body and curl's diagnostic get out."""
     text, calls = _curl_call_sites()
     guarded = [call for call in calls if "--fail-with-body" in call]
-    # 9: MtdnaCall (Task 9), BcfToVCF and GVCFToVCF are guarded like every other
+    # 10: MtdnaCall (Task 9), BcfToVCF and GVCFToVCF are guarded like every other
     # call site except the two DELIBERATELY EXEMPT ones. One fewer than before because
-    # OptiTypeHLAFromFastq -- a guarded site -- was removed with its process.
-    assert len(guarded) == 9, f"{len(guarded)} guarded call sites, expected 9"
+    # OptiTypeHLAFromFastq -- a guarded site -- was removed with its process; one more
+    # with ArrayToVCF (2026-11-12).
+    assert len(guarded) == 10, f"{len(guarded)} guarded call sites, expected 10"
     echo = "returned an error (HTTP $HTTP_CODE):"
-    assert text.count(echo) == 9, "each guarded call must echo the body"
+    assert text.count(echo) == 10, "each guarded call must echo the body"
     # `2>service.log` buried curl's own error in a work-dir file nobody reads; -sS puts
     # it on stderr, where Nextflow picks it up into .command.err and the error report.
     for swallowed in ("2>gatk.log", "2>hla.log", "2>pypgx_bam2vcf.log"):

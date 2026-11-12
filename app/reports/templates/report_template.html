@@ -1285,6 +1285,9 @@
            pharmacogene positions read from the data, or filled in?), and a reader who
            sees one without the other cannot tell which they are looking at. Renders
            only when the run actually genotyped a gVCF. #}
+        {% if array_provenance %}
+            {{ array_provenance|safe }}
+        {% endif %}
         {% if gvcf_provenance %}
             {{ gvcf_provenance|safe }}
         {% endif %}

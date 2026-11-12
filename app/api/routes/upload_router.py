@@ -184,7 +184,14 @@ def _nextflow_max_wait_seconds() -> float:
 # `*.g.vcf*` because PharmCAT condemns that filename before reading a byte. Not every
 # gVCF is accepted -- a non-GATK (`<*>`) flavour and a GRCh37 one are refused at
 # FileProcessor, each for a reason the conversion cannot get past.
-NEXTFLOW_INPUT_TYPES = frozenset({"vcf", "bcf", "gvcf", "bam", "cram", "sam", "fastq"})
+# "23andme" and "ancestry" joined this on 2026-11-12: main.nf's ArrayToVCF reads the
+# chip onto PharmCAT's own positions by rs identifier before anything downstream sees
+# it, and the AMP/CAP Tier 1 gate is what stops a gene the chip cannot determine from
+# being given a verdict anyway. Both halves had to exist before the type could be
+# carried; see FileProcessor._plan_consumer_array.
+NEXTFLOW_INPUT_TYPES = frozenset(
+    {"vcf", "bcf", "gvcf", "bam", "cram", "sam", "fastq", "23andme", "ancestry"}
+)
 
 
 def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
@@ -2004,6 +2011,7 @@ async def upload_genomic_data(
             needs_report=wf.get("needs_report", True),
             needs_conversion=wf.get("needs_conversion", False),
             needs_gvcf_genotyping=wf.get("needs_gvcf_genotyping", False),
+            needs_array_conversion=wf.get("needs_array_conversion", False),
             needs_liftover=wf.get("needs_liftover", False),
             is_provisional=wf.get("is_provisional", False),
             unsupported=wf.get("unsupported", False),
@@ -2379,6 +2387,7 @@ async def inspect_file_header(
                 "unsupported_reason": None,
                 "needs_conversion": False,
                 "needs_gvcf_genotyping": False,
+                "needs_array_conversion": False,
                 "needs_liftover": False,
                 "needs_gatk": False,
                 "needs_alignment": False,
@@ -2409,6 +2418,9 @@ async def inspect_file_header(
                         # buildPlannedWorkflowHTML and workflow_registry.
                         "needs_conversion": wf.get("needs_conversion", False),
                         "needs_gvcf_genotyping": wf.get("needs_gvcf_genotyping", False),
+                        "needs_array_conversion": wf.get(
+                            "needs_array_conversion", False
+                        ),
                         # The rest of the needs_* flags the planned-workflow panel
                         # reads. They are forwarded because this endpoint has already
                         # run the real determine_workflow -- the same call the upload
