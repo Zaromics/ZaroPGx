@@ -499,3 +499,48 @@ def test_covered_but_uncertain_positions_are_not_called_uncovered():
     )
     assert "423 were not covered by the file" in paragraph
     assert "13 more were covered but not called with confidence" in paragraph
+
+
+# --------------------------------------------------------------------------
+# A GRCh37 gVCF: the positions were not the ones PharmCAT ships
+# --------------------------------------------------------------------------
+
+
+def test_the_paragraph_says_when_the_positions_were_expressed_in_another_build():
+    """The reader is owed this for two reasons: the positions this run emitted reference
+    calls over are not the ones PharmCAT ships, and it is the step that used to make a
+    GRCh37 gVCF refusable at all."""
+    paragraph = _paragraph(dict(FULL_STATS, positions_expressed_in="GRCh37"))
+
+    assert "This file is on GRCh37" in paragraph
+    assert "position list was expressed in GRCh37" in paragraph
+    assert "lifted back to GRCh38" in paragraph
+    # That a shortfall is refused rather than quietly genotyped over.
+    assert "refuses rather than genotyping over a partial list" in paragraph
+    # And the one thing this lane gives up, said plainly.
+    assert "PyPGx's own coverage is not vouched for" in paragraph
+    # The lane's own claims survive beside it.
+    assert CALLED_DATA_CLAIM in paragraph
+    assert "1,180 of PharmCAT's 1,226 positions" in paragraph
+
+
+def test_a_grch38_gvcf_says_nothing_about_expressing_positions():
+    """It used the list as PharmCAT ships it, so there is nothing to report."""
+    paragraph = _paragraph()
+
+    assert "expressed in" not in paragraph
+    assert "GRCh37" not in paragraph
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_the_lifted_positions_sentence_reaches_both_lanes(template_name):
+    text = _text(
+        _render(
+            template_name,
+            gvcf_provenance=_paragraph(
+                dict(FULL_STATS, positions_expressed_in="GRCh37")
+            ),
+        )
+    )
+
+    assert "position list was expressed in GRCh37" in text

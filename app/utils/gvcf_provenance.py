@@ -191,11 +191,31 @@ def gvcf_provenance_paragraph(
     else:
         normalized = ""
 
+    # Whether PharmCAT's own position list had to be expressed in the file's build.
+    # PharmCAT ships it in GRCh38 coordinates only, so a GRCh37 gVCF is genotyped over a
+    # lifted copy of it and the result is lifted back -- the reader is owed that, because
+    # the positions this run emitted reference calls over are not the ones PharmCAT
+    # ships, and because it is the step that used to make this input refusable.
+    lifted_build = output_data.get("positions_expressed_in")
+    if lifted_build:
+        lifted = (
+            f"This file is on {escape(str(lifted_build))}, so PharmCAT's position list "
+            f"was expressed in {escape(str(lifted_build))} to genotype it and the "
+            "result was lifted back to GRCh38 — the same liftover a "
+            f"{escape(str(lifted_build))} VCF upload takes. All of PharmCAT's positions "
+            "lift in both directions; the conversion refuses rather than genotyping "
+            "over a partial list. PyPGx's own coverage is not vouched for on this lane: "
+            "its gene regions are GRCh38, so the genes are read as an uploaded VCF's "
+            "instead of from the reference blocks. "
+        )
+    else:
+        lifted = ""
+
     return (
         "<p><strong>gVCF genotyping:</strong> This gVCF was genotyped with GATK "
         "<code>GenotypeGVCFs</code> over PharmCAT's positions "
         "(<code>--include-non-variant-sites</code>) before analysis. "
-        f"{normalized}{coverage}{assume_ref}Genotypes are re-derived from the recorded "
+        f"{normalized}{lifted}{coverage}{assume_ref}Genotypes are re-derived from the recorded "
         "likelihoods and may differ from the original caller's; low-confidence sites "
         "are no-calls. An indel PharmCAT cannot match stays a no-call, as with a plain "
         "VCF.</p>"

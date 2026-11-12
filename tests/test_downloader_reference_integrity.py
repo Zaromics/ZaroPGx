@@ -37,6 +37,9 @@ PINNED = {
     "pharmcat_positions": "63f49b9004b6a5ca921deebe8ec59f8e45f6990543e07b7890c0d6201f5e69fc",
     "pharmcat_regions": "9755c524125481c6140e9996e9569b8fb01544322ee704e854f2f7c6eaf4e14a",
     "hg19_to_hg38_chain": "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d",
+    # The reverse chain, GRCh38 -> GRCh37, which expresses PharmCAT's GRCh38-only
+    # position list in a GRCh37 gVCF's coordinates. Never applied to sample data.
+    "hg38_to_hg19_chain": "14a712e8e147d9fc8e9d87d51977b46f6f8ddb93efbe5d0843d86b6205f587b1",
 }
 ANALYSIS_SET = "3b103f4742abfd54938fb0333e19ad067635c8eb86f1dbf0ce44b165c4292b50"
 

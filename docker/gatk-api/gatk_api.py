@@ -21,6 +21,7 @@ import shutil
 import traceback
 import re  # Add regex module for header parsing
 import random
+import hashlib  # keys the derived GRCh37 position list on the GRCh38 one
 import gzip  # bgzipped VCF headers -- see detect_reference()
 from typing import List, Dict, Optional, Any
 import asyncio
@@ -62,6 +63,7 @@ except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
 try:
     from liftover_chain import (  # pyright: ignore[reportMissingImports]
         CHAIN_SHA256,
+        REVERSE_CHAIN_SHA256,
         PHARMCAT_POSITIONS_SHA256,
         chain_mismatch,
         pinned_mismatch,
@@ -69,6 +71,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - the out-of-container path
     from app.utils.liftover_chain import (
         CHAIN_SHA256,
+        REVERSE_CHAIN_SHA256,
         PHARMCAT_POSITIONS_SHA256,
         chain_mismatch,
         pinned_mismatch,
@@ -275,6 +278,10 @@ REFERENCE_PATHS = {
 # normalisation in run_liftover_pipeline(), which exists solely because of that fact.
 LIFTOVER_CHAIN_PATHS = {
     ('GRCh37', 'GRCh38'): os.path.join(REFERENCE_DIR, 'chain', 'hg19ToHg38.over.chain.gz'),
+    # The reverse direction, used only to express PharmCAT's GRCh38-only position list in
+    # GRCh37 coordinates so a GRCh37 gVCF can be genotyped at positions it contains.
+    # Never used on sample data: see derive_grch37_positions.
+    ('GRCh38', 'GRCh37'): os.path.join(REFERENCE_DIR, 'chain', 'hg38ToHg19.over.chain.gz'),
 }
 LIFTOVER_CHAIN_SHA256 = CHAIN_SHA256
 
@@ -4537,6 +4544,183 @@ async def bcf_to_vcf(
 PHARMCAT_GVCF_NAME_RE = re.compile(r'\.(g|genomic)\.vcf(\.b?gz)?$', re.IGNORECASE)
 
 
+# PharmCAT's position list in GRCh37 coordinates, so a GRCh37 gVCF can be genotyped at
+# positions it actually contains.
+#
+# This is the whole reason a GRCh37 gVCF used to be refused. A gVCF's value is the
+# reference-confidence pass emitted over PharmCAT's own position list, that list exists in
+# GRCh38 coordinates only, and genotyping a GRCh37 file at GRCh38 positions selects the
+# wrong loci SILENTLY -- GATK checks an interval list against the reference dictionary,
+# not against biology. The two ways round it that were considered and rejected are in
+# FileProcessor._refuse_grch37_gvcf: genotype at the wrong loci, or throw away the
+# reference blocks and emit variants only, which degenerates to the plain VCF the user
+# could have made themselves while the report still claims its hom-refs are called data.
+#
+# Lifting the LIST is the third way, and it is the one that keeps the lane's value.
+# MEASURED 2026-11-12 with UCSC's hg38ToHg19 chain and Picard LiftoverVcf: all 1,226
+# positions lift GRCh38 -> GRCh37, and all 1,226 lift back to the EXACT same GRCh38
+# coordinate -- 0 rejected and 0 moved in either direction. 7 lift by REF/ALT swap, which
+# costs nothing here because only the coordinates are used: GATK reads this file as an
+# interval list.
+#
+# ALL-OR-NOTHING, deliberately. If the lift ever drops a position, the pass would run
+# over a partial list and every dropped position would come back a no-call for a reason
+# nobody could see in the output. So the derivation refuses unless the lifted list holds
+# exactly as many records as the GRCh38 one.
+#
+# CACHED under /reference, keyed on the GRCh38 list's own SHA-256. That is what makes a
+# PharmCAT bump safe: a new position list has a new digest, so it derives a new file and
+# the stale one is simply never named again. Re-deriving costs one Picard run (~10 s at
+# -Xmx4g; 3g OOMs).
+GRCH37_POSITIONS_HEAP = '4g'
+
+
+def _is_grch37(source_build):
+    """Whether this build name means GRCh37, in any of the spellings that reach here.
+
+    The app sends what the header inspector detected and main.nf passes it through, so
+    'GRCh37', 'hg19' and 'b37' all arrive. Matched the same way main.nf's own liftover
+    gate matches them, so the two cannot disagree about which files get lifted.
+    """
+    return str(source_build or '').strip().lower() in {'grch37', 'hg19', 'b37'}
+
+
+def grch37_positions_path(positions_path, digest):
+    """Where the GRCh37 copy of `positions_path` lives, for a GRCh38 list of `digest`."""
+    stem = os.path.basename(positions_path).rsplit('.vcf', 1)[0]
+    return os.path.join(
+        os.path.dirname(positions_path), f'{stem}.GRCh37.{digest[:12]}.vcf'
+    )
+
+
+def derive_grch37_positions(job_label, positions_path, work_dir):
+    """PharmCAT's position list in GRCh37 coordinates; its path. Cached.
+
+    Blocking (a Picard run), so call it from the same to_thread the conversion uses.
+
+    Raises HTTPException rather than returning a partial list: see the ALL-OR-NOTHING
+    note above. A file that already exists for this digest is returned untouched, so the
+    first GRCh37 gVCF of a release pays for it and the rest do not.
+    """
+    with open(positions_path, 'rb') as handle:
+        digest = hashlib.sha256(handle.read()).hexdigest()
+    cached = grch37_positions_path(positions_path, digest)
+    wanted = count_vcf_records(positions_path)
+    if os.path.exists(cached):
+        have = count_vcf_records(cached)
+        if have == wanted:
+            logger.info(
+                f"Job {job_label}: reusing the GRCh37 position list at {cached} "
+                f"({have} records)"
+            )
+            return cached
+        # A cache file that disagrees with the list it was derived from is not a cache
+        # hit; it is a file to replace. Truncated by a full disk, most likely.
+        logger.warning(
+            f"Job {job_label}: {cached} holds {have} of {wanted} positions; re-deriving"
+        )
+
+    chain = LIFTOVER_CHAIN_PATHS.get(('GRCh38', 'GRCh37'))
+    if not chain or not os.path.exists(chain):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The GRCh38->GRCh37 liftover chain is not staged at {chain}, and it is "
+                "what expresses PharmCAT's positions in this file's coordinates. Stage "
+                "the reference tree (genome-downloader fetches it) before uploading a "
+                "GRCh37 gVCF."
+            ),
+        )
+    mismatch = pinned_mismatch(
+        chain, REVERSE_CHAIN_SHA256, "The GRCh38->GRCh37 liftover chain"
+    )
+    if mismatch:
+        raise HTTPException(status_code=500, detail=mismatch)
+
+    reference = REFERENCE_PATHS['hg19']
+    if not os.path.exists(reference):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The GRCh37 reference is not staged at {reference}; LiftoverVcf needs "
+                "it to write the lifted position list."
+            ),
+        )
+    ensure_sequence_dictionary(reference)
+
+    lifted = os.path.join(work_dir, 'pharmcat_positions.GRCh37.vcf')
+    rejected = os.path.join(work_dir, 'pharmcat_positions.GRCh37.rejected.vcf')
+    _run_tool(
+        job_label,
+        [
+            'gatk', '--java-options', f'-Xmx{GRCH37_POSITIONS_HEAP}', 'LiftoverVcf',
+            '-I', positions_path,
+            '-O', lifted,
+            '--CHAIN', chain,
+            '-R', reference,
+            '--REJECT', rejected,
+            '--WARN_ON_MISSING_CONTIG', 'true',
+            # Only the coordinates are read from this file -- GATK takes it as an
+            # interval list -- so a swapped REF/ALT is not a problem to recover from,
+            # it is a position to keep. 7 of the 1,226 need this.
+            '--RECOVER_SWAPPED_REF_ALT', 'true',
+        ],
+        "Expressing PharmCAT's positions in GRCh37 coordinates (Picard LiftoverVcf)",
+    )
+    got = count_vcf_records(lifted)
+    if got != wanted:
+        dropped = count_vcf_records(rejected) if os.path.exists(rejected) else None
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Expressing PharmCAT's {wanted} positions in GRCh37 coordinates "
+                f"yielded {got}"
+                + (f" ({dropped} rejected)" if dropped is not None else "")
+                + ". Genotyping over a partial list would turn every dropped position "
+                "into a no-call with nothing in the output to explain it, so this is "
+                "refused instead. All 1,226 lifted cleanly when measured, so a shortfall "
+                "means the chain or the position list has changed."
+            ),
+        )
+    # Staged on the DESTINATION filesystem and then renamed, not moved across one.
+    # work_dir is under TEMP_DIR and the cache sits on the /reference bind mount, so a
+    # bare os.replace between them raises EXDEV -- the same trap run_liftover_pipeline
+    # documents for its MT passthrough. shutil.move would work but copies, and a copy is
+    # not atomic: a second job deriving at the same time could read a half-written list
+    # as a cache hit. Renaming within one filesystem is atomic, so a reader sees either
+    # the old file or a complete new one. (The count check on the cache-hit path above is
+    # the second line of defence, for a file truncated some other way.)
+    # mkstemp in the destination directory, not a pid-suffixed name: two gatk-api
+    # containers (or one restarted inside the same pid namespace) can share a pid, and
+    # the point of staging is that no two writers collide.
+    handle, staging = tempfile.mkstemp(
+        dir=os.path.dirname(cached), prefix=f"{os.path.basename(cached)}.partial."
+    )
+    os.close(handle)
+    try:
+        shutil.copyfile(lifted, staging)
+        os.replace(staging, cached)
+    finally:
+        if os.path.exists(staging):
+            os.unlink(staging)
+    logger.info(
+        f"Job {job_label}: derived {cached} ({got} of {wanted} positions, all of them)"
+    )
+    return cached
+
+
+def count_vcf_records(path):
+    """Data rows in a VCF, reading plain or gzipped text. 0 when it cannot be read."""
+    try:
+        with open(path, 'rb') as probe:
+            opener = gzip.open if probe.read(2) == b'\x1f\x8b' else open
+        with opener(path, 'rt', errors='replace') as handle:
+            return sum(1 for line in handle if line and not line.startswith('#'))
+    except OSError as exc:
+        logger.warning(f"Could not count records in {path}: {exc}")
+        return 0
+
+
 def build_genotype_gvcfs_argv(
     reference_path,
     input_path,
@@ -5676,7 +5860,13 @@ def _run_tool(job_label, argv, what, status_code=500):
 
 
 def convert_gvcf_to_vcf(
-    job_label, input_path, work_dir, output_vcf, reference_path, positions_path
+    job_label,
+    input_path,
+    work_dir,
+    output_vcf,
+    reference_path,
+    positions_path,
+    source_build=None,
 ):
     """Genotype a gVCF into a plain VCF, index it, and vouch for the result.
 
@@ -5761,6 +5951,32 @@ def convert_gvcf_to_vcf(
         'Indexing the uploaded gVCF (bcftools index)',
     )
 
+    # 1c. A GRCh37 gVCF is genotyped against GRCh37 coordinates, so every interval list
+    # and every position comparison below has to be in the file's own build. PharmCAT's
+    # list is GRCh38-only, so it is expressed in GRCh37 once and cached
+    # (derive_grch37_positions). Genotyping a GRCh37 file at GRCh38 positions selects the
+    # wrong loci SILENTLY -- GATK checks an interval list against the reference
+    # dictionary, not against biology -- which is why this lane was refused until the
+    # list could be lifted.
+    #
+    # The output of the PGx pass is therefore in GRCh37 too, and PharmCAT is GRCh38-only.
+    # Three outputs leave this function with three different coordinate needs:
+    #   * the merged VCF stays GRCh37 and main.nf's existing LiftoverVCF step lifts it,
+    #     with the reject accounting that step already does;
+    #   * the PharmCAT sidecar is lifted HERE, because nothing downstream lifts it;
+    #   * the mtDNA sidecar keeps reading the unlifted merged VCF, which is what avoids
+    #     pushing chrM through an hg19-sourced chain (see main.nf's own comment: it
+    #     shifts MT-RNR1 by 2 and would report a pathogenic m.1555A>G at 1553).
+    lifted_to_grch37 = _is_grch37(source_build)
+    # The GRCh38 list is kept under its own name because the HONEST COUNTS at the end of
+    # this function intersect PharmCAT's positions with the sidecar, and the sidecar is
+    # GRCh38 whatever the input was. Comparing the GRCh37 list against it matches nothing
+    # -- measured: every GRCh37 gVCF reported "0 of 1,226 positions covered" while the
+    # pass had in fact called 1,225 of them.
+    grch38_positions_path = positions_path
+    if lifted_to_grch37:
+        positions_path = derive_grch37_positions(job_label, positions_path, work_dir)
+
     # 2. The PGx pass.
     _run_tool(
         job_label,
@@ -5792,6 +6008,73 @@ def convert_gvcf_to_vcf(
     with open(fixed_text, 'w', encoding='utf-8') as fh:
         fh.writelines(fixed_lines)
     pharmcat_vcf = output_vcf[: -len('.vcf.gz')] + '.pharmcat.vcf.gz'
+    if lifted_to_grch37:
+        # The one output this function has to lift itself: PharmCAT is GRCh38-only and
+        # nothing downstream touches this file (main.nf's LiftoverVCF takes the merged
+        # VCF, not the sidecar). Through the same run_liftover_pipeline the /liftover-vcf
+        # endpoint uses, so the reject-rate guard and the vouching are the ones already
+        # trusted for a GRCh37 VCF upload -- and its MT special-casing is inert here,
+        # because PharmCAT's position list carries no chrM at all.
+        #
+        # MEASURED: all 1,226 positions lift back to the exact GRCh38 coordinate they
+        # came from, so a reject here means something changed rather than that some
+        # positions are expected to fall out.
+        grch38_text = os.path.join(work_dir, 'pgx_positions.grch38.vcf')
+        rejected = os.path.join(work_dir, 'pgx_positions.grch38.rejected.vcf')
+        chain = LIFTOVER_CHAIN_PATHS[('GRCh37', 'GRCh38')]
+        mismatch = pinned_mismatch(chain, CHAIN_SHA256, "The liftover chain")
+        if mismatch:
+            raise HTTPException(status_code=500, detail=mismatch)
+        before = count_vcf_records(fixed_text)
+        # Picard directly, with an explicit heap, rather than through
+        # run_liftover_pipeline. Two reasons, both about this file specifically:
+        #
+        # * MEMORY. That helper passes no --java-options, so GATK sizes its own heap from
+        #   the container -- fine for /liftover-vcf, which runs the lift alone, but this
+        #   runs straight after two GenotypeGVCFs passes in the same container and was
+        #   OOM-killed when measured. The heap is set explicitly instead, and it is sized
+        #   by the REFERENCE rather than by the record count: 2g dies with
+        #   "java.lang.OutOfMemoryError: Java heap space" on these same 1,226 records,
+        #   because Picard holds the GRCh38 sequence it checks each lifted REF against.
+        #   GRCH37_POSITIONS_HEAP is the measured figure for exactly this file (4g; 3g
+        #   OOMs), so the two lifts of it share one constant.
+        # * A BETTER GUARD IS AVAILABLE. The helper's reject-RATE guard suits an unknown
+        #   upload. This file is PharmCAT's own position list and every one of its 1,226
+        #   positions is measured to round-trip, so the honest check is an exact count:
+        #   anything less means the chain or the list changed, not that some positions
+        #   were expected to fall out. The helper's contig renaming and MT special-casing
+        #   are both inert here anyway -- this file is chr-named and carries no chrM.
+        _run_tool(
+            job_label,
+            [
+                'gatk', '--java-options', f'-Xmx{GRCH37_POSITIONS_HEAP}',
+                'LiftoverVcf',
+                '-I', fixed_text,
+                '-O', grch38_text,
+                '--CHAIN', chain,
+                '-R', REFERENCE_PATHS['hg38'],
+                '--REJECT', rejected,
+                '--WARN_ON_MISSING_CONTIG', 'true',
+                '--RECOVER_SWAPPED_REF_ALT', 'true',
+            ],
+            "Lifting PharmCAT's positions back to GRCh38 (Picard LiftoverVcf)",
+        )
+        after = count_vcf_records(grch38_text)
+        if after != before:
+            dropped = count_vcf_records(rejected) if os.path.exists(rejected) else None
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Lifting PharmCAT's positions back to GRCh38 kept {after} of "
+                    f"{before}"
+                    + (f" ({dropped} rejected)" if dropped is not None else "")
+                    + ". PharmCAT would then be handed a partial position list and every "
+                    "dropped position would read as a no-call with nothing in the output "
+                    "to explain it. All 1,226 round-tripped when measured, so a "
+                    "shortfall means the chain or the position list has changed."
+                ),
+            )
+        fixed_text = grch38_text
     _run_tool(
         job_label,
         ['bcftools', 'view', '-O', 'z', '-o', pharmcat_vcf, fixed_text],
@@ -5806,9 +6089,29 @@ def convert_gvcf_to_vcf(
     # UNCOVERED_GENES_HEADER_KEY), in the header of the file the merge starts from.
     # `bcftools concat` carries a header line of either input into its output
     # (measured, bcftools 1.24); the output is checked for it below.
-    uncovered, without_reads, measured = gvcf_coverage(
-        job_label, staged, pypgx_gene_table_path(), pypgx_allele_table_path(), work_dir
-    )
+    if lifted_to_grch37:
+        # NOT measured, and said so rather than measured wrongly. gvcf_coverage reads
+        # PyPGx's gene regions in GRCh38 (pypgx_gene_spans_grch38), which select the
+        # wrong loci on a GRCh37 file -- CYP2D6's GRCh38 window sits roughly 400 kb from
+        # its GRCh37 one. Lifting PyPGx's tables too would be a second derived coordinate
+        # set to keep right, so this lane emits the "never measured" form instead: the
+        # wrapper then reads these genes as an uploaded VCF's and checks them for
+        # genotypes (position_evidence), which is correct and already tested. The cost is
+        # that a GRCh37 gVCF's reference blocks do not vouch for PyPGx's coverage; the
+        # PharmCAT half of the lane, which is the half worth having, is unaffected.
+        uncovered, without_reads, measured = [], {}, []
+        logger.info(
+            f"Job {job_label}: PyPGx coverage not measured for a GRCh37 gVCF "
+            "(its gene regions are GRCh38); the genes are read as an uploaded VCF's"
+        )
+    else:
+        uncovered, without_reads, measured = gvcf_coverage(
+            job_label,
+            staged,
+            pypgx_gene_table_path(),
+            pypgx_allele_table_path(),
+            work_dir,
+        )
     uncovered_line = f"##{UNCOVERED_GENES_HEADER_KEY}={','.join(uncovered) or '.'}"
     unread = ",".join(
         f"{g}:{';'.join(str(p) for p in sorted(ps))}"
@@ -5984,7 +6287,8 @@ def convert_gvcf_to_vcf(
     # there is no second number to forget. The numerator is an INTERSECTION against that
     # same set, and counts only positions that came back with a called genotype; see
     # count_positions_with_calls for the two ways a row count gets this wrong.
-    pharmcat_positions = read_vcf_positions(positions_path)
+    # Against the GRCh38 list, to match the GRCh38 sidecar these counts describe.
+    pharmcat_positions = read_vcf_positions(grch38_positions_path)
     n_pharmcat_positions = len(pharmcat_positions)
     n_pgx_positions_called = count_positions_with_calls(pharmcat_positions, pharmcat_vcf)
     # Covered-but-uncertain positions are no-calls too, but not "not covered".
@@ -6012,6 +6316,11 @@ def convert_gvcf_to_vcf(
         # for a GATK gVCF, which is passed through untouched.
         'symbolic_allele_renamed_from': (symbolic or {}).get('flavour'),
         'n_symbolic_alleles_renamed': (symbolic or {}).get('renamed'),
+        # Whether PharmCAT's positions had to be expressed in the file's own build to
+        # genotype it, so the report can say so: the positions this run emitted
+        # reference calls over are not the ones PharmCAT ships, and the reader is owed
+        # that. None for a GRCh38 gVCF, which uses the list as shipped.
+        'positions_expressed_in': 'GRCh37' if lifted_to_grch37 else None,
     }
 
 
@@ -6019,6 +6328,12 @@ def convert_gvcf_to_vcf(
 async def gvcf_to_vcf(
     file: UploadFile = File(...),
     reference_genome: str = Form("hg38"),
+    # The build the UPLOAD is expressed against, as the app detected it -- not the build
+    # to report on. A GRCh37 gVCF is genotyped against GRCh37 coordinates and its
+    # PharmCAT sidecar is lifted to GRCh38 before it leaves; main.nf lifts the merged
+    # VCF. Defaults to empty, which means GRCh38 and the behaviour from before this
+    # existed, so a caller that does not send it is unaffected.
+    source_build: str = Form(""),
     patient_id: Optional[str] = Form(None),
     report_id: Optional[str] = Form(None),
     job_id: Optional[str] = Form(None),
@@ -6075,6 +6390,23 @@ async def gvcf_to_vcf(
                 ),
             )
         reference_path = REFERENCE_PATHS[target_key]
+        # A GRCh37 gVCF is GENOTYPED against GRCh37 -- GenotypeGVCFs reads the
+        # reference the file's own records are expressed against, and handing it GRCh38
+        # would be exactly the wrong-loci failure this lane exists to avoid.
+        # `reference_genome` above stays the TARGET build (GRCh38, where the result is
+        # reported); the SOURCE reference is chosen here from the build the app detected.
+        # The PharmCAT sidecar is lifted to GRCh38 before it leaves this endpoint, and
+        # main.nf's existing LiftoverVCF step lifts the merged VCF.
+        if _is_grch37(source_build):
+            reference_path = REFERENCE_PATHS['hg19']
+            # No job label yet -- this runs before local_job_id is minted below, and
+            # referencing it here was a NameError on every GRCh37 gVCF until flake8's
+            # undefined-name gate caught it. The file's name is what identifies the
+            # request at this point, as it does for the other pre-staging logging.
+            logger.info(
+                f"GRCh37 gVCF {file.filename!r}: genotyping against {reference_path}, "
+                "with PharmCAT's positions expressed in GRCh37"
+            )
         if not os.path.exists(reference_path):
             raise HTTPException(
                 status_code=400,
@@ -6197,6 +6529,7 @@ async def gvcf_to_vcf(
                 output_vcf,
                 reference_path,
                 PHARMCAT_POSITIONS_PATH,
+                source_build,
             )
 
         coverage = (

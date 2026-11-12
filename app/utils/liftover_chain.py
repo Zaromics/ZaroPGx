@@ -1,4 +1,4 @@
-"""The pinned SHA-256 of UCSC's hg19ToHg38.over.chain.gz, and a cached check of it.
+"""The pinned SHA-256s of UCSC's liftover chains, and a cached check of them.
 
 genome-downloader stages the chain on the shared /reference and checks it against
 this pin when it downloads it (docker/genome-downloader/downloader_api.py carries
@@ -22,6 +22,16 @@ from typing import Dict, Optional, Tuple
 # 227,698 bytes, unchanged since 2014: see the hg19_to_hg38_chain entry in
 # docker/genome-downloader/downloader_api.py for where it comes from.
 CHAIN_SHA256 = "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d"
+
+# UCSC's hg38ToHg19.over.chain.gz, 1,246,411 bytes. The REVERSE direction, and it is
+# never applied to sample data: it exists only so PharmCAT's GRCh38-only position list
+# can be expressed in GRCh37 coordinates, which is what lets a GRCh37 gVCF be genotyped
+# at positions it actually contains (gatk-api's derive_grch37_positions). Same provenance
+# treatment as the chain above -- see the hg38_to_hg19_chain entry in
+# docker/genome-downloader/downloader_api.py.
+REVERSE_CHAIN_SHA256 = (
+    "14a712e8e147d9fc8e9d87d51977b46f6f8ddb93efbe5d0843d86b6205f587b1"
+)
 
 # PharmCAT's position list, per release, as genome-downloader pins it
 # (PHARMCAT_SHA256 in its downloader_api.py; a test keeps the two equal). gatk-api's
