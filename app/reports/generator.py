@@ -109,6 +109,11 @@ from app.reports.provenance import (
     called_by_text,
     resolve_called_by,
 )
+from app.reports.tier1_gate import (
+    mark_recommendations_without_a_call,
+    withheld_alert,
+    withhold_inadequate_calls,
+)
 from app.services.pharmcat_data_service import PharmCATDataService
 from app.utils.env import env_flag
 from app.utils.literature import (
@@ -4484,6 +4489,40 @@ def generate_report(
         logger.warning(f"Failed to build canonical diplotypes: {canon_e}")
     # The note beside each flagged gene's call; the alert above says why.
     annotate_alt_locus(data.get("genes", []), alt_locus)
+    # A verdict the data cannot support. AMP/CAP publish, per gene, the minimum set of
+    # alleles a clinical genotyping assay should assess, and PharmCAT reports which
+    # alleles it could NOT assess -- so where one of that minimum set is among them, the
+    # call is withheld instead of shown (app/reports/tier1_gate.py). MEASURED: PharmCAT
+    # itself declines a gene it has no position for, but given a little data it reported
+    # CYP2C9 Normal Metabolizer, Activity Score 2.0 from 2 of its 88 positions. Runs
+    # before attach_pharmcat_messages, so PharmCAT's own when-not-called notes land on a
+    # row that is already not called, and before the Executive Summary reads the rows.
+    # Nothing is withheld on any of this repo's PharmCAT fixtures; see
+    # tests/test_tier1_gate.py.
+    try:
+        tier1_withheld = withhold_inadequate_calls(
+            data.get("genes", []), pharmcat_report
+        )
+        if tier1_withheld:
+            marked = mark_recommendations_without_a_call(
+                template_recommendations, tier1_withheld
+            )
+            tier1_alert = withheld_alert(data.get("genes", []))
+            if tier1_alert:
+                workflow_warnings.append(tier1_alert)
+            logger.info(
+                "AMP/CAP Tier 1 incomplete, verdict withheld for %d gene(s): %s; "
+                "%d recommendation(s) left without a call",
+                len(tier1_withheld),
+                ", ".join(tier1_withheld),
+                marked,
+            )
+    except Exception as e:
+        # A gate that cannot run must not cost the report its gene rows. It fails OPEN
+        # here, which is the one place in this feature that does: the calls stay as
+        # PharmCAT made them, which is the behavior from before this existed.
+        logger.warning("AMP/CAP Tier 1 gate not applied: %s", e, exc_info=True)
+
     # PharmCAT's own messages, on the final gene rows and the recommendations;
     # those with no row to sit on are passed to the templates. A report.json that
     # does not parse as expected costs its messages, not the report.
