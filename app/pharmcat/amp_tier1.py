@@ -63,9 +63,15 @@ from typing import Any, Dict, FrozenSet, Iterable, Optional, Tuple
 
 #: Where a Tier 1 list came from, and how sure we are of it. A list taken from a
 #: secondary source is still usable -- it gates the same way -- but it is marked, so a
-#: reader can tell which entries have been read in the paper and which have not. The
-#: search that produced the secondary ones warned that an early CYP2D6 summary
-#: disagreed with the published version, which is exactly why this field exists.
+#: reader can tell which entries have been read in the paper and which have not. That
+#: distinction earned itself: an early secondary summary of CYP2D6 omitted *41, and
+#: reading the paper (PMC8579245) settled that it belongs in Tier 1.
+#:
+#: The three still marked SECONDARY -- CYP2C19, TPMT and NUDT15 -- agree across three
+#: independent secondary sources each, and their primary texts were unreachable at every
+#: route tried (jmdjournal.org and ScienceDirect answer 403; the institutional repository
+#: copies answer a bot challenge). They are not guesses, but they have not been read in
+#: the paper, and that is what this field says.
 PRIMARY = "primary"
 SECONDARY = "secondary"
 
@@ -108,11 +114,17 @@ TIER1: Dict[str, Tier1Set] = {
         source=SECONDARY,
     ),
     "CYP2D6": Tier1Set(
-        # Includes *41. An earlier secondary summary omitted it; the published list
-        # carries it, which is the disagreement the source field exists for. The gene
-        # duplication/multiplication Tier 1 also names is NOT an allele in
-        # uncalledHaplotypes and cannot be checked here -- app/reports/copy_number.py
-        # is what says whether the input could show copy number at all.
+        # Read in the paper (PMC8579245): Tier 1 is "CYP2D6 *2 to *6, *9, *10, *17,
+        # *29, and *41"; Tier 2 is "*7, *8, *12, *14, *15, *21, *31, *40, *42, *49,
+        # *56, and *59" plus CYP2D6/CYP2D7 hybrid genes. INCLUDES *41 -- an earlier
+        # secondary summary omitted it, which is the disagreement the source field
+        # exists for, and reading the paper is what settled it.
+        #
+        # "Interrogation of CYP2D6 gene duplications/multiplications is included in
+        # Tier 1" as well, and that CANNOT be checked here: a duplication is not an
+        # allele in uncalledHaplotypes. So an adequate CYP2D6 by this table is adequate
+        # on its SNV alleles only -- app/reports/copy_number.py is what says whether the
+        # input could show copy number, and its caveat stands beside this one.
         alleles=frozenset(
             {"*2", "*3", "*4", "*5", "*6", "*9", "*10", "*17", "*29", "*41"}
         ),
@@ -121,9 +133,10 @@ TIER1: Dict[str, Tier1Set] = {
             "Selection: A Joint Consensus Recommendation of the Association for "
             "Molecular Pathology, College of American Pathologists, Dutch "
             "Pharmacogenetics Working Group, and European Society for "
-            "Pharmacogenomics and Personalized Therapy. J Mol Diagn 2021."
+            "Pharmacogenomics and Personalized Therapy. J Mol Diagn "
+            "2021;23(9):1047-1064. PMID 34118403, PMCID PMC8579245."
         ),
-        source=SECONDARY,
+        source=PRIMARY,
     ),
     "CYP3A4": Tier1Set(
         alleles=frozenset({"*22"}),
@@ -146,7 +159,8 @@ TIER1: Dict[str, Tier1Set] = {
         citation=(
             "Pratt VM et al. TPMT and NUDT15 Genotyping Recommendations: A Joint "
             "Consensus Recommendation of AMP, CPIC, CAP, DPWG, ESPT and PharmGKB. "
-            "J Mol Diagn 2022."
+            "J Mol Diagn 2022. NOTE: a 2026 CPIC thiopurine guideline update exists "
+            "and may revise this set; re-read before relying on it."
         ),
         source=SECONDARY,
     ),

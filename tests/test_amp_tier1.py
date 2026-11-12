@@ -106,6 +106,47 @@ def test_nothing_is_withheld_without_a_citation():
         assert "J Mol Diagn" in tier1.citation, gene
 
 
+def test_which_tier_1_lists_have_been_read_in_the_paper():
+    """Pinned so the evidence behind each gate cannot drift unnoticed.
+
+    These are clinical allele sets. A list nobody has read in the primary paper still
+    gates -- it is the best available evidence and it agrees across three independent
+    secondary sources -- but it must not quietly come to look as settled as one that was
+    read. Moving a gene between these sets is a deliberate act that edits this test.
+    """
+    read_in_the_paper = {"CYP2C9", "CYP2D6", "CYP3A4", "CYP3A5", "CYP4F2", "DPYD"}
+    secondary_only = {"CYP2C19", "TPMT", "NUDT15"}
+
+    assert read_in_the_paper | secondary_only == set(TIER1)
+    for gene in read_in_the_paper:
+        assert TIER1[gene].source == PRIMARY, gene
+    for gene in secondary_only:
+        assert TIER1[gene].source == SECONDARY, gene
+
+
+def test_cyp2d6_tier_1_carries_star_41():
+    """The one list a secondary summary got wrong. The published Tier 1 is "*2 to *6,
+    *9, *10, *17, *29, and *41"; omitting *41 would let a run that never assessed it
+    keep a CYP2D6 verdict."""
+    assert "*41" in TIER1["CYP2D6"].alleles
+    assert TIER1["CYP2D6"].alleles == frozenset(
+        {"*2", "*3", "*4", "*5", "*6", "*9", "*10", "*17", "*29", "*41"}
+    )
+
+    assert adequacy("CYP2D6", ["*41"]).inadequate is True
+
+
+def test_cyp2d6_adequacy_does_not_speak_for_copy_number():
+    """AMP's CYP2D6 Tier 1 also requires interrogating gene duplications, which is not
+    an allele in ``uncalledHaplotypes`` and cannot be judged here. So "adequate" for
+    CYP2D6 means its SNV alleles only, and the copy-number caveat is a separate
+    statement that must not be read as covered by this one."""
+    result = adequacy("CYP2D6", [])
+
+    assert result.complete is True
+    assert statement(result) is None, "it says nothing about copy number either way"
+
+
 # --------------------------------------------------------------------------
 # Both directions, on real PharmCAT output
 # --------------------------------------------------------------------------

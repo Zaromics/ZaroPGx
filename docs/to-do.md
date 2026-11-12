@@ -344,10 +344,21 @@ partial data, and keeps ABCG2, IFNL3 and VKORC1.
 
 Open:
 
-- **Verify the remaining Tier 1 lists against the primary papers.** CYP2C9, CYP3A4,
-  CYP3A5, CYP4F2 and DPYD were read in the paper or its PMC copy. CYP2C19, CYP2D6, TPMT
-  and NUDT15 came from secondary summaries and are marked `SECONDARY` in the table; one
-  CYP2D6 summary omitted `*41`, which the published list carries, so these need reading.
+- **Three Tier 1 lists still need a primary read.** Read in the paper or its PMC copy:
+  CYP2C9, **CYP2D6** (PMC8579245), CYP3A4, CYP3A5, CYP4F2, DPYD. Still `SECONDARY`:
+  CYP2C19 (`*2, *3, *17`), TPMT (`*2, *3A, *3B, *3C`) and NUDT15 (`*3`) — each agrees
+  across three independent secondary sources, but jmdjournal.org and ScienceDirect
+  answer 403 and the institutional repository copies answer a bot challenge, so no route
+  tried reached the text. `tests/test_amp_tier1.py` pins which genes are in which set,
+  so the distinction cannot drift. Reading CYP2D6 was worth it: a secondary summary had
+  omitted `*41`, which the published Tier 1 carries.
+- **CYP2D6 adequacy does not cover copy number.** AMP's CYP2D6 Tier 1 also requires
+  interrogating gene duplications/multiplications, which is not an allele in
+  `uncalledHaplotypes` and cannot be judged from it. "Adequate" for CYP2D6 therefore
+  means its SNV alleles only; `app/reports/copy_number.py` carries the rest, and the two
+  statements must stay separate.
+- **TPMT/NUDT15 may be stale.** A 2026 CPIC thiopurine guideline update exists and may
+  revise that allele set; the citation in the table says so.
 - **Genes with no AMP minimum set are not gated** (SLCO1B1, CFTR, G6PD, RYR1, NAT2,
   CYP2B6, UGT1A1, F2, F5, ABCG2, IFNL3, CACNA1S). They are reported as before; AMP has
   published no minimum for them. If AMP publishes more, add them here.
