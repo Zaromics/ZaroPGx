@@ -1,0 +1,120 @@
+"""Do the report's own readers still find anything in a real run?
+
+    python scripts/getrm/report_sanity.py RESULTS_DIR
+
+The report is built by readers that walk another tool's output: PharmCAT's report JSON,
+PyPGx's result, OptiType's table. A reader that stops finding what it is looking for does
+not raise -- it returns nothing, the section is left out, and the report looks complete.
+That has happened: PharmCAT 2.x nests gene symbols differently from 1.x, the variants
+traversal found none, and every report shipped without its evidence table until someone
+read one (#232).
+
+Tests pin each reader against a fixture, which is the shape production wrote on the day
+the test was written. This asks the other question -- what does the current tool version
+actually write -- by running the readers over a directory of real runs and reporting what
+they found. It is a sweep, not an assertion: numbers to read, not a pass or fail, because
+"3 genes have variants" is only alarming next to the 9 the rest of the corpus shows.
+
+Run it on the GeT-RM results after a release, or on any directory `scripts/getrm/run.py`
+has written. The checks are cheap: JSON in, counts out, no reads and no database.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import Dict, List
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO))
+
+from app.pharmcat.report_json import extract_display_call  # noqa: E402
+from app.reports import pharmcat_variants, tier1_gate  # noqa: E402
+
+
+def _spread(name: str, values: List[float], note: str = "") -> str:
+    if not values:
+        return f"{name:38s} nothing to measure"
+    return (
+        f"{name:38s} min {min(values):>6g}  median {statistics.median(values):>6g}  "
+        f"max {max(values):>6g}" + (f"   {note}" if note else "")
+    )
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("results", type=Path, help="one directory per sample")
+    args = ap.parse_args()
+
+    samples = sorted(p for p in args.results.iterdir() if p.is_dir())
+    genes_listed: List[float] = []
+    positions_read: List[float] = []
+    positions_differing: List[float] = []
+    positions_unread: List[float] = []
+    rows_seen: List[float] = []
+    withheld_per_run: List[float] = []
+    withheld_by_gene: Counter = Counter()
+    silent: Dict[str, List[str]] = {"variants": [], "calls": []}
+
+    for sample in samples:
+        report_path = sample / "pharmcat.json"
+        if not report_path.exists():
+            continue
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        collected = pharmcat_variants.collect(report)
+        genes = collected.get("genes") or []
+        genes_listed.append(len(genes))
+        positions_read.append(collected.get("genotyped") or 0)
+        positions_differing.append(collected.get("differing") or 0)
+        positions_unread.append(collected.get("unread") or 0)
+        if not genes:
+            silent["variants"].append(sample.name)
+
+        rows = [
+            {
+                "gene": gene,
+                "diplotype": extract_display_call(block) or "",
+                "phenotype": None,
+            }
+            for gene, block in (report.get("genes") or {}).items()
+        ]
+        rows_seen.append(len(rows))
+        if not any(row["diplotype"] for row in rows):
+            silent["calls"].append(sample.name)
+
+        withheld = tier1_gate.withhold_inadequate_calls(rows, report)
+        withheld_per_run.append(len(withheld))
+        withheld_by_gene.update(withheld)
+
+    print(f"{len(genes_listed)} run(s) under {args.results}\n")
+    print(_spread("genes with a variants table", genes_listed))
+    print(_spread("positions PharmCAT read", positions_read))
+    print(_spread("positions differing from reference", positions_differing))
+    print(_spread("positions it could not read", positions_unread))
+    print(_spread("gene rows in the report", rows_seen))
+    print(_spread("calls withheld (AMP/CAP Tier 1)", withheld_per_run))
+    if withheld_by_gene:
+        print(
+            "\nwithheld by gene: "
+            + ", ".join(f"{g} {n}" for g, n in withheld_by_gene.most_common())
+        )
+
+    problems = 0
+    for reader, empty in silent.items():
+        if empty:
+            problems += len(empty)
+            print(
+                f"\n{reader}: nothing found in {len(empty)} run(s): {', '.join(empty[:5])}"
+            )
+    if not problems:
+        print("\nEvery reader found something in every run.")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
