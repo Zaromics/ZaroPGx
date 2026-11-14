@@ -159,3 +159,64 @@ GeT-RM assay — an independent caller reading the same reads agrees with it. An
 one call a restrictively licensed second caller would fix for us is this one, which
 the reads settle on their own; across the full 31 Cyrius ties us at 28, so adjudication
 is not merely worth building first — it is the only one of the two that gains anything.
+
+## The same question of PharmCAT's own calls, 2026-11-14
+
+The check above is scoped to PyPGx-printed calls, because PyPGx's arrangement is not
+PharmCAT's and a note about it would question a call the reader cannot see. The obvious
+next question is whether to extend it. `pharmcat_arrangement.py` answers it the same way:
+PharmCAT's allele definitions say which of the two printed alleles carries the alt at each
+heterozygous position, so two alts on one allele are a cis assertion and one each a trans
+assertion; the fragments are counted by the production counter, unchanged.
+
+Over 60 GeT-RM genomes, 1,140 calls PharmCAT's matcher made itself:
+
+| | |
+|---|---|
+| calls resting on 2+ heterozygous defining variants | 167 |
+| of those, with a pair a fragment can reach (≤1 kb) | 68 |
+| pairs within reach | 96 |
+| pairs the reads decide | 73 |
+| compared against the printed call | 69 |
+| **contradictions** | **0** |
+
+Not for want of power. 23 of the 69 are *trans* assertions — the falsifiable kind, where
+a single cis fragment would be a finding — and every one came back unanimous, including
+SLCO1B1 `*14/*41` at 23 fragments and TPMT `*3A/*16` at 31. Where PharmCAT commits to an
+arrangement and the reads can see it, PharmCAT is right. That is the expected shape: it
+does not phase statistically, it enumerates every consistent diplotype and discloses all
+of them, and the three calls here showing several are exactly the ones asserting nothing.
+
+**So do not extend the report check.** It would add a surface and a maintenance burden for
+a check that found nothing in 60 reference genomes.
+
+The per-gene table is the finding worth keeping:
+
+| gene | asserts an arrangement | pair within reach | decided |
+|---|---|---|---|
+| UGT1A1 | 26 | 26 | 24 |
+| CYP2C19 | 24 | **0** | 0 |
+| NAT2 | 23 | 23 | 32 |
+| SLCO1B1 | 21 | 10 | 12 |
+| DPYD | 20 | 2 | 2 |
+| CYP2B6 | 18 | **0** | 0 |
+| CYP4F2 | 9 | 2 | 0 |
+| RYR1 | 8 | 1 | 1 |
+| TPMT | 5 | 1 | 1 |
+| CYP3A5 | 4 | 0 | 0 |
+| G6PD | 3 | 2 | 0 |
+| others | 6 | 1 | 1 |
+
+(Pairs can outnumber calls: NAT2's 23 calls carry 32 decided pairs between them.)
+
+**CYP2C19 and CYP2B6 assert 42 arrangements between them and not one is reachable** —
+their defining variants are kilobases apart, so no short-read fragment will ever carry
+two. That is a property of the input, not of the depth or the caller: these calls cannot
+be checked this way at any coverage. UGT1A1 and NAT2 sit at the other end, every call
+reachable, because their defining variants are packed within a few hundred bases.
+
+Which turns the question around. The useful thing is not another check that finds nothing;
+it is that the report is equally silent about a call the reads confirmed and a call no
+fragment could ever reach. "This arrangement rests on 0 fragments" is a fact about
+CYP2C19 and CYP2B6 on every short-read run, and the report does not say it. That is a
+report decision rather than a measurement, so it is noted here and not made here.
