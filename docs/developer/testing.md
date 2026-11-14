@@ -50,8 +50,20 @@ turns the mtDNA step and the CRAM reference cache off.
 | `test_grch37_liftover_pipeline` | GRCh37 VCF | `ZAROPGX_E2E_REFERENCE=1` |
 
 The reference lanes need a populated `./reference` (the genome downloader's). Each test also
-checks that every report link the job returns resolves. FASTQ and mtDNA have no end-to-end
-test.
+checks that every report link the job returns resolves.
+
+**CI does not set `ZAROPGX_E2E_REFERENCE`**, and nothing in the workflow populates a full
+`./reference`, so on every pull request those five lanes skip: the e2e job runs the VCF
+pipeline, the UI smoke test and the DAG compile checks, and reports the rest as "8
+skipped". The step passes `-rs` so each skip prints its own reason rather than hiding in a
+count. To run them, populate `./reference` and set the variable:
+
+```bash
+ZAROPGX_E2E_REFERENCE=1 uv run pytest -m e2e -rs --zaropgx-e2e
+```
+
+FASTQ and mtDNA have no end-to-end test at all: alignment needs the `.img` index and
+minutes of CPU, and `compose.e2e.yml` switches mtDNA off.
 
 `test_ui_smoke` uses the page the way a person does: it opens every stage's popup in the
 light and the dark theme and requires each text to meet WCAG AA contrast against the card

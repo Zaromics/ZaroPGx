@@ -204,7 +204,13 @@ jobs:
         env:
           ZAROPGX_E2E: "1"
           ZAROPGX_E2E_BASE_URL: http://127.0.0.1:18765
-        run: uv run pytest -m e2e -q --tb=short --zaropgx-e2e
+        # -rs names every skip and its reason. Without it the job's only trace of
+        # the lanes it did not run is a bare "8 skipped", and those eight are the
+        # reference-dependent ones -- BAM, CRAM, SAM, HLA, GRCh37 liftover -- which
+        # nothing here sets ZAROPGX_E2E_REFERENCE for. A gap that prints its own name
+        # on every run is a decision; one that hides behind a count is an accident
+        # waiting to be inherited.
+        run: uv run pytest -m e2e -q -rs --tb=short --zaropgx-e2e
 
       - name: Dump logs on failure
         if: failure()
