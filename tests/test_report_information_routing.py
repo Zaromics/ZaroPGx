@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from app.reports.marks import CAUTION_SVG, TYPED_MARKS
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPORT = REPO_ROOT / "app" / "reports" / "templates" / "report_template.html"
 FILE_PROCESSOR = REPO_ROOT / "app" / "api" / "utils" / "file_processor.py"
@@ -178,9 +180,26 @@ LEGACY_VCF = [
     "<p>⚠️ CYP2D6 typing will be performed with degraded accuracy.</p>",
 ]
 
+# What file_processor has stored since the marks became SVG: the same warnings,
+# each opened by the drawn mark. LEGACY_VCF is a job stored before that.
+STORED_VCF = [
+    f"<p>{CAUTION_SVG} VCF datafiles lack the necessary raw information to perform "
+    "complete pharmacogenomic analysis. The analysis can proceed, however, the "
+    "results will be incomplete and have degraded accuracy.</p>",
+    f"<p>{CAUTION_SVG} HLA typing can not be performed.</p>",
+    f"<p>{CAUTION_SVG} CYP2D6 typing will be performed with degraded accuracy.</p>",
+    f"<p>{CAUTION_SVG} All genes with phenotypes affected by structural variants and "
+    "copy-number variants will be evaluated with degraded accuracy.</p>",
+]
+
 
 def _lines(alert):
     return re.findall(r"<p>(.*?)</p>", alert)
+
+
+def _drawn(legacy_paragraph):
+    """The same line as a legacy one, with the mark drawn instead of typed."""
+    return f"{CAUTION_SVG} " + legacy_paragraph[3:-4].split(maxsplit=1)[1]
 
 
 def test_the_uploads_warnings_are_one_alert_a_line_each_every_line_marked():
@@ -192,7 +211,7 @@ def test_the_uploads_warnings_are_one_alert_a_line_each_every_line_marked():
     assert alert.startswith('<div class="input-warnings">')
     lines = _lines(alert)
     assert len(lines) == 3, lines
-    assert all(line.startswith("⚠️") for line in lines), lines
+    assert all(line.startswith(CAUTION_SVG) for line in lines), lines
     assert lines[0].endswith(
         "analysis. The analysis can proceed, however, the results will be "
         "incomplete and have degraded accuracy."
@@ -212,8 +231,8 @@ def test_a_titled_alert_keeps_its_own_box_in_its_place():
     )
     assert len(alerts) == 2, alerts
     assert _lines(alerts[0]) == [
-        "⚠️ Could not analyze original WGS file: x.",
-        "⚠️ HLA typing can not be performed.",
+        f"{CAUTION_SVG} Could not analyze original WGS file: x.",
+        _drawn(LEGACY_VCF[2]),
     ]
     assert alerts[1] == rescue
     assert input_warnings_alert([]) == []
@@ -229,9 +248,66 @@ def test_plain_text_is_a_warning_of_its_own_and_escaped():
         [LEGACY_VCF[0], "Could not analyze original WGS file: <class 'OSError'>."]
     )
     assert _lines(alert) == [
-        LEGACY_VCF[0][3:-4],
-        "⚠️ Could not analyze original WGS file: &lt;class &#x27;OSError&#x27;&gt;.",
+        _drawn(LEGACY_VCF[0]),
+        f"{CAUTION_SVG} Could not analyze original WGS file: "
+        "&lt;class &#x27;OSError&#x27;&gt;.",
     ]
+
+
+def test_todays_warnings_are_a_line_each_not_one_run_on_line():
+    """The warnings as file_processor stores them now, each opened by the drawn
+    mark. Read for the typed character, every one of them looked unmarked, so
+    each continued the line before it: a VCF's six standing caveats rendered as
+    a single paragraph, which is what the report shipped until this was fixed.
+    """
+    from app.reports.generator import input_warnings_alert
+
+    (alert,) = input_warnings_alert(STORED_VCF)
+    lines = _lines(alert)
+
+    assert len(lines) == len(STORED_VCF), lines
+    assert [line.count("<svg") for line in lines] == [1] * len(STORED_VCF), lines
+    assert all(line.startswith(CAUTION_SVG) for line in lines), lines
+    assert lines[1].endswith("HLA typing can not be performed."), lines[1]
+
+
+def test_no_line_carries_two_marks():
+    """The doubled mark the report showed: a typed one this function added in
+    front of the drawn one already in the text."""
+    from app.reports.generator import input_warnings_alert
+
+    for stored in (STORED_VCF, LEGACY_VCF):
+        (alert,) = input_warnings_alert(stored)
+        for line in _lines(alert):
+            assert line.count("<svg") == 1, line
+            assert not any(mark in line for mark in TYPED_MARKS), line
+
+
+def test_a_job_stored_before_the_marks_were_drawn_renders_the_drawn_mark():
+    """Its warnings carry the character. Rendering them as stored would put a
+    thin monochrome triangle beside drawn ones in the same box."""
+    from app.reports.generator import input_warnings_alert
+
+    (alert,) = input_warnings_alert(LEGACY_VCF)
+
+    assert TYPED_MARKS[0] not in alert
+    assert alert.count("<svg") == 3, alert
+
+
+def test_a_continuation_still_continues_the_line_before_it():
+    """The behavior the marked/unmarked split exists for: a paragraph with no
+    mark is the previous warning's second sentence, not a warning."""
+    from app.reports.generator import input_warnings_alert
+
+    (alert,) = input_warnings_alert(
+        [STORED_VCF[1], "<p>And this sentence belongs to it.</p>", STORED_VCF[2]]
+    )
+    lines = _lines(alert)
+
+    assert len(lines) == 2, lines
+    assert lines[0].endswith(
+        "HLA typing can not be performed. And this sentence belongs to it."
+    ), lines[0]
 
 
 def test_every_vcf_warning_the_upload_stores_is_marked():
