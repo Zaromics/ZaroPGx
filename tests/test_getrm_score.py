@@ -260,3 +260,70 @@ def test_the_study_vocabulary_marks_copy_states(score):
     vocab = score.tested_alleles(rows)
     assert {score.HET_DELETION, score.EXTRA_COPIES} <= vocab[("GSTT1", "x")]
     assert score.HET_DELETION not in vocab[("GSTM1", "x")]
+
+
+# --------------------------------------------------------------------------
+# The two summaries
+# --------------------------------------------------------------------------
+
+
+def _row(sample, gene, tentative, verdict, caller="pypgx", role="report"):
+    """One calls.tsv row, in the order score.py writes them."""
+    return (sample, gene, "*1/*2", "yes" if tentative else "", caller, "*1/*3", verdict, "", role)
+
+
+def test_a_tentative_disagreement_is_counted_apart_from_a_firm_one(score, tmp_path):
+    """22 of the 61-sample run's 43 discordances rest on a parenthesised GeT-RM value:
+    one assay, unconfirmed. Mixed into one number they read as the same kind of
+    disagreement as the firm ones, which is what sent the first triage chasing them."""
+    rows = [
+        _row("s1", "CYP2B6", False, "match"),
+        _row("s2", "CYP2B6", False, "discordant"),
+        _row("s3", "CYP2B6", True, "discordant"),
+        _row("s4", "CYP2B6", True, "discordant"),
+    ]
+
+    everything = score.write_summary(tmp_path / "summary.tsv", rows)
+    firm = score.write_summary(tmp_path / "summary_firm.tsv", [r for r in rows if not r[3]])
+
+    assert everything == (1, 4), "one of four agrees when the tentative rows are counted"
+    assert firm == (1, 2), "one of two agrees when they are not"
+
+
+def test_both_summaries_keep_the_same_shape(score, tmp_path):
+    """Same columns, same row per gene/caller/role -- the firm file is the same table
+    over fewer rows, so anything that reads one can read the other."""
+    rows = [
+        _row("s1", "CYP2D6", False, "match"),
+        _row("s2", "CYP2D6", True, "discordant"),
+        _row("s3", "NAT2", True, "discordant"),
+    ]
+
+    score.write_summary(tmp_path / "all.tsv", rows)
+    score.write_summary(tmp_path / "firm.tsv", [r for r in rows if not r[3]])
+    read = lambda name: list(csv.DictReader(open(tmp_path / name), delimiter="\t"))  # noqa: E731
+
+    everything, firm = read("all.tsv"), read("firm.tsv")
+    assert [r["gene"] for r in everything] == ["CYP2D6", "NAT2"]
+    assert [r["gene"] for r in firm] == ["CYP2D6"], "NAT2 had only a tentative row"
+    assert everything[0].keys() == firm[0].keys()
+    assert everything[0]["concordance"] == "0.500" and firm[0]["concordance"] == "1.000"
+
+
+def test_the_unscored_verdicts_stay_out_of_the_concordance(score, tmp_path):
+    """no_call and not_scored are not disagreements; counting them would move the
+    number for reasons that have nothing to do with the calls."""
+    rows = [
+        _row("s1", "CYP2C9", False, "match"),
+        _row("s2", "CYP2C9", False, "no_call"),
+        _row("s3", "CYP2C9", False, "not_scored"),
+        _row("s4", "CYP2C9", False, "match_projected"),
+    ]
+
+    assert score.write_summary(tmp_path / "s.tsv", rows) == (2, 2)
+
+
+def test_the_printed_line_says_how_many_rows_it_is_over(score):
+    """A concordance with no denominator is how a 2-of-2 run reads as perfect."""
+    assert score._say((1, 2)) == "0.5000 (1/2)"
+    assert score._say((0, 0)) == "no rows scored"

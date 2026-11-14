@@ -4,8 +4,15 @@
 
 RESULTS_DIR holds one directory per sample, as run.py writes it: the PharmCAT JSON
 (pharmcat.json), PyPGx's result (pypgx_result.json) and OptiType's (hla_result.json).
-Writes calls.tsv, one row per sample, gene and caller with its verdict, and summary.tsv,
-the counts per gene and caller. A row's role is "report" for the call the report makes,
+Writes calls.tsv, one row per sample, gene and caller with its verdict, and the counts
+per gene and caller twice: summary.tsv over every scored row, and summary_firm.tsv over
+the rows whose GeT-RM value is not tentative.
+
+Both, because the headline number mixes two kinds of disagreement. Of the 43
+discordances in the 61-sample run, 22 rest on a parenthesised GeT-RM value -- one assay,
+unconfirmed -- and disagreeing with those is not the same as disagreeing with a consensus
+two assays reached. The verdict itself is unchanged and still ignores tentativeness, by
+design: it is a comparison, not a judgement about who is right. A row's role is "report" for the call the report makes,
 "second" for PyPGx's own call of a gene the report takes from PharmCAT.
 
 A GeT-RM genotype is not a complete one, so the comparison is made only where both
@@ -439,6 +446,34 @@ def tested_alleles(truth_rows: list) -> dict:
     return vocab
 
 
+VERDICTS = ["match", "match_projected", "discordant", "caller_cannot_name", "no_call", "not_scored"]
+
+
+def write_summary(path: Path, rows) -> "tuple[int, int]":
+    """Counts per gene, caller and role, and the agreed/scored totals over all of them.
+
+    `rows` is what calls.tsv holds, or any subset of it: pass the firm rows and the
+    same table comes back with the tentative ones left out.
+    """
+    counts = defaultdict(Counter)
+    for _sample, gene, _value, _tentative, caller, _called, verdict, _note, role in rows:
+        counts[(gene, caller, role)][verdict] += 1
+    agreed = scored = 0
+    with open(path, "w", newline="") as fh:
+        w = csv.writer(fh, delimiter="\t", lineterminator="\n")
+        w.writerow(("gene", "caller", "role", *VERDICTS, "concordance"))
+        for (gene, caller, role), c in sorted(counts.items()):
+            agree, n = c["match"] + c["match_projected"], sum(c[v] for v in VERDICTS[:4])
+            agreed, scored = agreed + agree, scored + n
+            w.writerow((gene, caller, role, *(c[v] for v in VERDICTS), f"{agree / n:.3f}" if n else ""))
+    return agreed, scored
+
+
+def _say(totals: "tuple[int, int]") -> str:
+    agreed, scored = totals
+    return f"{agreed / scored:.4f} ({agreed}/{scored})" if scored else "no rows scored"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("results", type=Path)
@@ -506,17 +541,12 @@ def main() -> None:
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
         w.writerow(("sample", "gene", "getrm", "tentative", "caller", "zaropgx", "verdict", "note", "role"))
         w.writerows(rows)
-    counts = defaultdict(Counter)
-    for sample, gene, _, _, caller, _, verdict, _, role in rows:
-        counts[(gene, caller, role)][verdict] += 1
-    verdicts = ["match", "match_projected", "discordant", "caller_cannot_name", "no_call", "not_scored"]
-    with open(out_dir / "summary.tsv", "w", newline="") as fh:
-        w = csv.writer(fh, delimiter="\t", lineterminator="\n")
-        w.writerow(("gene", "caller", "role", *verdicts, "concordance"))
-        for (gene, caller, role), c in sorted(counts.items()):
-            agree, scored = c["match"] + c["match_projected"], sum(c[v] for v in verdicts[:4])
-            w.writerow((gene, caller, role, *(c[v] for v in verdicts), f"{agree / scored:.3f}" if scored else ""))
-    print(f"{len(rows)} rows -> {out_dir / 'calls.tsv'}, {out_dir / 'summary.tsv'}")
+    overall = write_summary(out_dir / "summary.tsv", rows)
+    firm = [r for r in rows if not r[3]]
+    overall_firm = write_summary(out_dir / "summary_firm.tsv", firm)
+    print(f"{len(rows)} rows -> {out_dir / 'calls.tsv'}, {out_dir / 'summary.tsv'}, "
+          f"{out_dir / 'summary_firm.tsv'}")
+    print(f"concordance: all {_say(overall)}, firm {_say(overall_firm)}")
 
 
 if __name__ == "__main__":
