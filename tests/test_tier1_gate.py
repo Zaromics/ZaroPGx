@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from app.pharmcat.report_json import iter_gene_blocks
+from app.reports import tier1_gate
 from app.reports.tier1_gate import (
     mark_recommendations_without_a_call,
     withheld_alert,
@@ -442,3 +443,72 @@ def test_only_the_tier_1_allele_is_named_not_every_unassessable_one():
 
     for rare in ("*86", "*87", "*94", "*27"):
         assert rare not in note, f"{rare} is not Tier 1 and must not be listed"
+
+
+# --------------------------------------------------------------------------
+# The Executive Summary reads a second source, and it has to agree
+# --------------------------------------------------------------------------
+
+
+def _tsv_row(gene, diplotype="*1/*2", phenotype="Intermediate Metabolizer"):
+    """A row as generator builds them from PharmCAT's TSV for the summary page."""
+    return {
+        "gene": gene,
+        "rec_lookup_diplotype": diplotype,
+        "rec_lookup_phenotype": phenotype,
+        "rec_lookup_activity_score": None,
+    }
+
+
+def test_a_withheld_gene_leaves_the_summary_rows_too():
+    """The summary is built from PharmCAT's TSV, which this module does not touch, so
+    a gene withheld in the gene table was still printed with its call on the page a
+    reader looks at first. Found on a chip-shaped input: the gene table said CYP2C9 was
+    not called for want of *6, the summary said *1/*2, Intermediate Metabolizer."""
+    rows = [_tsv_row("CYP2C9"), _tsv_row("CYP2C19", "*1/*17", "Rapid Metabolizer")]
+
+    removed = tier1_gate.withhold_from_summary(rows, ["CYP2C9"])
+
+    assert removed == 1
+    assert [row["gene"] for row in rows] == ["CYP2C19"]
+
+
+def test_the_summary_then_shows_the_gene_as_not_called():
+    """What the removal is for. summary_rows prefers the TSV for any gene it carries
+    and falls through to the gene row otherwise -- and the gene row has already been
+    emptied, so the gene reads as not called, exactly as one nothing called does."""
+    from app.reports.generator import summary_rows
+
+    report = _report({"CYP2C9": ["*6"]})
+    genes = _rows_from(report)
+    tier1_gate.withhold_inadequate_calls(genes, report)
+    tsv = [_tsv_row("CYP2C9")]
+
+    before = {row["gene"]: row for row in summary_rows(tsv, genes)}
+    tier1_gate.withhold_from_summary(tsv, ["CYP2C9"])
+    after = {row["gene"]: row for row in summary_rows(tsv, genes)}
+
+    assert before["CYP2C9"]["diplotype"] == "*1/*2", "the leak this fixes"
+    assert not (after["CYP2C9"].get("diplotype") or "").strip()
+    assert after["CYP2C9"].get("called") is not True
+
+
+def test_nothing_is_removed_when_nothing_was_withheld():
+    rows = [_tsv_row("CYP2C9"), _tsv_row("CYP2C19")]
+
+    assert tier1_gate.withhold_from_summary(rows, []) == 0
+    assert tier1_gate.withhold_from_summary(rows, None) == 0
+    assert len(rows) == 2
+
+
+def test_the_gene_name_is_matched_whatever_its_case_or_spacing():
+    rows = [_tsv_row(" cyp2c9 ")]
+
+    assert tier1_gate.withhold_from_summary(rows, ["CYP2C9"]) == 1
+    assert rows == []
+
+
+def test_a_summary_that_is_not_a_list_is_left_alone():
+    """The summary is None when the TSV lane is off; that is not a failure."""
+    assert tier1_gate.withhold_from_summary(None, ["CYP2C9"]) == 0
+    assert tier1_gate.withhold_from_summary([{"not": "a gene row"}], ["CYP2C9"]) == 0

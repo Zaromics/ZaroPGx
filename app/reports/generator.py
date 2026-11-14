@@ -113,6 +113,7 @@ from app.reports.provenance import (
 from app.reports.tier1_gate import (
     mark_recommendations_without_a_call,
     withheld_alert,
+    withhold_from_summary,
     withhold_inadequate_calls,
 )
 from app.services.pharmcat_data_service import PharmCATDataService
@@ -4533,15 +4534,23 @@ def generate_report(
             marked = mark_recommendations_without_a_call(
                 template_recommendations, tier1_withheld
             )
+            # The Executive Summary is built from PharmCAT's TSV, not from these rows,
+            # and summary_rows prefers the TSV for any gene it carries -- so without
+            # this the summary page printed the very call the gene table had just
+            # withheld. In place: the context dict above already holds this list.
+            dropped_from_summary = withhold_from_summary(
+                execsum_rows_from_tsv, tier1_withheld
+            )
             tier1_alert = withheld_alert(data.get("genes", []))
             if tier1_alert:
                 workflow_warnings.append(tier1_alert)
             logger.info(
                 "AMP/CAP Tier 1 incomplete, verdict withheld for %d gene(s): %s; "
-                "%d recommendation(s) left without a call",
+                "%d recommendation(s) left without a call; %d summary row(s) dropped",
                 len(tier1_withheld),
                 ", ".join(tier1_withheld),
                 marked,
+                dropped_from_summary,
             )
     except Exception as e:
         # A gate that cannot run must not cost the report its gene rows. It fails OPEN

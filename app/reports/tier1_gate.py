@@ -183,6 +183,45 @@ def withheld_alert(rows: Optional[Sequence[Any]], max_listed: int = 8) -> Option
     )
 
 
+def withhold_from_summary(
+    summary_rows: Optional[Any], withheld: Optional[Sequence[str]]
+) -> int:
+    """Take the withheld genes out of the Executive Summary's own rows; how many.
+
+    In place, and it has to be done separately because the summary does not read the
+    gene rows this module empties. It is built from PharmCAT's TSV
+    (``generator.execsum_rows_from_tsv``), a second source of the same calls, and
+    ``summary_rows`` prefers it for any gene it carries. So a gene withheld everywhere
+    else -- the gene table, the Alerts box, the FHIR bundle -- was still printed with
+    its diplotype and phenotype on the summary page, which is the page a reader looks
+    at first. MEASURED on a chip-shaped input carrying every rs-identified PharmCAT
+    position: the gene table said "Not called: this run could not assess *6, which the
+    AMP/CAP minimum allele set for CYP2C9 requires" while the summary said
+    "CYP2C9 *1/*2 or *1/*92, Intermediate Metabolizer or Indeterminate".
+
+    Removed rather than emptied: ``summary_rows`` already knows how to show a gene the
+    TSV does not carry -- it falls through to the gene row, which this module has
+    already emptied, and the gene appears as not called, exactly as CYP2D6 does when
+    nothing called it at all. Emptying the row in place would instead produce a third
+    rendering of the same fact.
+    """
+    names = {str(gene or "").strip().upper() for gene in (withheld or []) if gene}
+    if not names or not isinstance(summary_rows, list):
+        return 0
+    keep = [
+        row
+        for row in summary_rows
+        if not (
+            isinstance(row, dict)
+            and str(row.get("gene") or "").strip().upper() in names
+        )
+    ]
+    removed = len(summary_rows) - len(keep)
+    if removed:
+        summary_rows[:] = keep
+    return removed
+
+
 def mark_recommendations_without_a_call(
     recommendations: Optional[Sequence[Any]], withheld: Optional[Sequence[str]]
 ) -> int:
