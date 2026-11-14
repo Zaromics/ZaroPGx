@@ -133,6 +133,18 @@ def test_the_dockerignore_decides_what_is_in_the_context(verify, path, excluded)
     assert verify.ignored(path, patterns) is excluded
 
 
+def test_a_pattern_without_a_separator_matches_only_the_context_root(verify):
+    """Docker matches a .dockerignore pattern against the whole relative path, so
+    `Dockerfile*` excludes the one at the root and not docker/pharmcat/Dockerfile.
+    Reading it as "anywhere" would quietly drop files from the comparison, which is
+    the one failure mode a checker must not have: looking like it checked."""
+    patterns = ["Dockerfile*", "data/"]
+
+    assert verify.ignored("Dockerfile", patterns) is True
+    assert verify.ignored("docker/pharmcat/Dockerfile", patterns) is False
+    assert verify.ignored("data/reports/x.pdf", patterns) is True
+
+
 def test_a_negation_puts_a_file_back(verify):
     patterns = ["docs/", "!docs/requirements.txt"]
 
