@@ -646,6 +646,23 @@ Open:
 - HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
 - Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR
+- Export a GA4GH Phenopacket (schema v2, ISO 4454:2022) beside the FHIR bundle, for
+  research, rare-disease tools and the individual, not hospitals (owner, Nov 2026: hospital
+  export is one goal, not the only one). Not built yet. What fits the schema as designed:
+  the unlisted-variant screen's ClinVar-classified variants (a diagnosis naming ClinVar's
+  condition, holding a `VariantInterpretation` with ClinVar's class, the VCF record, HGVS,
+  gene and zygosity; a prediction-only variant is `NOT_PROVIDED`, its score in the
+  description), the results that name a condition (malignant hyperthermia
+  susceptibility, MT-RNR1 aminoglycoside-induced hearing loss, G6PD deficiency; how to
+  code a susceptibility is to be checked), and the subject, biosample, files and versions.
+  What does not fit: diplotypes, metabolizer phenotypes, activity scores, the CPIC, DPWG
+  and FDA recommendations, withheld verdicts, caller agreement. A variant can only sit in
+  a diagnosis of a disease, so these go nowhere, never into a slot that changes their
+  meaning (a star allele as `PATHOGENIC`); the phenopacket lists the FHIR bundle in
+  `files` instead. To check: whether HPO or another ontology has metabolizer-status terms
+  for `phenotypic_features`. Build with `phenopackets` (PyPI, BSD-3, the schema's own
+  classes); test with `phenopacket-tools validate` (GPL-3.0, test-time only) on the
+  NA12878 30x job. The HL7 Phenomics Exchange IG (its FHIR form) is R4, 1.0.0-ballot only.
 
 ## Security & Privacy
 
