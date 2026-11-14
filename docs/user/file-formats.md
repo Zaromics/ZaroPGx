@@ -153,6 +153,15 @@ pair must be mates of one run. The alignment index must have been built first
 
 Upload both files of a paired-end run. R1 alone can miss heterozygous variants in *CYP2B6* and *CYP2D6*.
 
+Measured end to end (2026-11-14) on the input this lane is for — a targeted panel, not a
+genome: 898,855 read pairs over the 102 pharmacogene intervals, taken from the public
+NA12878 30x alignment and uploaded as a pair. The platform was read out of the read names
+(ILLUMINA, mean read length 150 bp), the reads were aligned, duplicate-marked and run
+through the BAM path, and the report scored **38 of 40 against GeT-RM's consensus for that
+sample (0.950), and 35 of 35 of its firm values (1.000)** — both disagreements resting on
+a parenthesised, single-assay GeT-RM value. HLA came back exact on all three genes:
+A\*01:01/A\*11:01, B\*08:01/B\*56:01, C\*01:02/C\*07:01.
+
 Refused, with the reason:
 
 - **Long reads** (Oxford Nanopore, PacBio). Align them with minimap2 against GRCh38 and upload the BAM or CRAM.
