@@ -78,8 +78,9 @@ ZAROPGX_TAG=<version> docker buildx bake -f docker-bake.hcl --push
 ```
 
 **4. Publish `mtdna` by hand, from that same tree.** It is deliberately not a bake target
-— its base image is around 4.5 GB and would exhaust a GitHub Actions runner's disk, and the
-reason is written at the top of `docker-bake.hcl` — but it is still part of the release.
+— its base image is 2.3 GB to pull and 7.2 GB unpacked, enough to exhaust a GitHub Actions
+runner's disk, and the reason is written at the top of `docker-bake.hcl` — but it is still
+part of the release.
 Its context is the whole repository and it copies four files out of `app/`
 (`utils/liftover_chain.py`, `utils/job_client.py`, `utils/shared_input.py` and `mtdna/`),
 so a build run in a tree still on the previous release ships those files at their previous
