@@ -24,7 +24,7 @@ true of `pipelines/pgx/main.nf` inside the nextflow image.
 Four consequences, all of them present today.
 
 **"What is running?" has two answers.** `ZAROPGX_TAG` fixes the images, and an upgrade
-verifies all eight against their registry digests. Application behaviour comes from the git
+verifies all eight against their registry digests. Application behavior comes from the git
 checkout, which may be at any commit, may be dirty, and may be part-way through an edit.
 Nothing checks that the two agree, and nothing reports the disagreement if they do not.
 
@@ -93,7 +93,7 @@ how this project is worked on.
 | Operability | Images stop being self-contained; distribution needs the repository |
 
 **Pros:** one rule instead of two; no rebuild for any service.
-**Cons:** reproducibility goes: an image would no longer determine behaviour, and the
+**Cons:** reproducibility goes: an image would no longer determine behavior, and the
 digests the upgrade checks would stop meaning anything. Rejected.
 
 ### Option D — keep the split, but make the disagreement loud
@@ -124,7 +124,7 @@ to B so much as the first half of it, and it is worth doing either way.
 
 ## Consequences
 
-**Easier.** A release becomes a single fact: these digests, this behaviour. Rollback is
+**Easier.** A release becomes a single fact: these digests, this behavior. Rollback is
 `ZAROPGX_TAG` alone. An image pulled on another machine behaves the way it does here. The
 DAG compile test and the e2e suite exercise what ships rather than what is checked out.
 
@@ -146,5 +146,5 @@ compile the image's copy, not the checkout's.
 3. [ ] Remove both mounts from `compose.yml`, in a release of its own, with the change in
    `UPGRADING.md` — an install that upgrades without noticing would otherwise start running
    different code with no visible cause.
-4. [ ] Decide whether the mtdna read-back check (release step 4) generalises: after a bake,
+4. [ ] Decide whether the mtdna read-back check (release step 4) generalizes: after a bake,
    assert that a file the release changed is present in each image that carries it.
