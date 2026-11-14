@@ -72,6 +72,18 @@ A gVCF records *reference-confidence blocks* alongside the variant calls. PharmC
 
 PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls. PyPGx reads the genotyped VCF, which keeps no reference blocks, so the conversion also records which of PyPGx's genes, and which of the positions PyPGx defines their alleles at, the blocks show reads over; a gene with none at its positions is not called, and a call missing some says how many it read as the reference. The conversion measures the genes in ZaroPGx's copy of PyPGx's tables, which leaves out *MT-RNR1* (the mtDNA step calls it); a gene it did not measure is read as an uploaded VCF's, and not called without a genotype at its positions. A position the conversion leaves a no-call is not passed to PyPGx; under a call, it is counted in the call's note.
 
+Measured end to end on a real GATK gVCF (2026-11-14): HaplotypeCaller `-ERC GVCF` over the
+102 pharmacogene intervals of the public NA12878 30x alignment, 1,140,050 records, uploaded
+as it was written. The report said *"1,223 of PharmCAT's 1,226 positions carried a call,
+and 0 were not covered by the file and remain no-calls. 3 more were covered but not called
+with confidence"* — which agrees with counting the file's own blocks against PharmCAT's
+positions directly. The calls match GeT-RM's consensus for that sample for every gene a
+gVCF can determine: CYP2C9 \*1/\*2, CYP2C19 \*1/\*2, CYP3A5 \*3/\*3, NAT2 \*4/\*5,
+SLCO1B1 \*1/\*15, TPMT \*1/\*1, and CYP2B6, CYP3A4 and CYP4F2 \*1/\*1. CYP2D6 comes
+back \*3/\*4 against GeT-RM's \*3/(\*68)+\*4, the hybrid being structural and invisible
+without reads, and HLA is not called at all, there being no reads to type it from — both
+expected, and both the limits a gVCF shares with any variant-only input.
+
 The report states:
 
 - **How much of PharmCAT's position list your file covered.** Positions without a reference block are no-calls.
