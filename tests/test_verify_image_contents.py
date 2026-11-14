@@ -206,3 +206,26 @@ def test_the_checked_out_form_is_what_the_image_holds(verify):
 
     source = (REPO / "scripts" / "verify_image_contents.py").read_text(encoding="utf-8")
     assert "cat-file" in source and "--filters" in source
+
+
+def test_a_form_it_cannot_read_stops_the_check(verify):
+    """The one failure a checker must not have is looking like it checked. Both forms
+    below are legal Dockerfile and neither is used here today; if one appears, the
+    files it brings in would otherwise be compared against nothing and reported
+    current."""
+    with pytest.raises(verify.Unparsed):
+        verify.copies('FROM x\nCOPY ["app.py", "/app/"]\n')
+    with pytest.raises(verify.Unparsed):
+        verify.copies("FROM x\nADD app/utils/ /job-client/\n")
+
+
+def test_a_remote_add_is_not_this_checker_s_business(verify):
+    """ADD from a URL brings nothing out of the repository, so it says nothing about
+    whether the tree reached the image."""
+    assert verify.copies("FROM x\nADD https://example.com/tool.tar.gz /opt/\n") == []
+
+
+def test_every_dockerfile_in_this_repository_still_parses(verify):
+    """The guard above is only useful while the eight real ones go through it."""
+    for service in verify.services():
+        verify.copies(service.dockerfile_path.read_text(encoding="utf-8"))

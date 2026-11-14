@@ -37,6 +37,7 @@ import argparse
 import fnmatch
 import hashlib
 import posixpath
+import re
 import shlex
 import subprocess
 import sys
@@ -107,6 +108,10 @@ def services(compose: Path = REPO / "compose.yml") -> List[Service]:
 # --------------------------------------------------------------------------
 
 
+class Unparsed(RuntimeError):
+    """A Dockerfile instruction this checker cannot read, so it must not report."""
+
+
 def copies(dockerfile: str) -> List[Tuple[List[str], str]]:
     """The (sources, destination) of every COPY that takes files from the build context.
 
@@ -128,6 +133,20 @@ def copies(dockerfile: str) -> List[Tuple[List[str], str]]:
             continue
         head, _, rest = stripped.partition(" ")
         word = head.upper()
+        # A form this cannot read must stop the check, not be skipped: a verifier that
+        # quietly ignores an instruction reports "all current" for files it never
+        # looked at, which is worse than not running it. Neither form is used in this
+        # repository today; both are legal Dockerfile.
+        if word == "COPY" and rest.lstrip().startswith("["):
+            raise Unparsed(
+                f"JSON-form COPY is not read by this checker: {stripped[:70]}"
+            )
+        if word == "ADD" and not re.match(
+            r"^(--\S+\s+)*(https?://|git@|github\.com)", rest.strip()
+        ):
+            raise Unparsed(
+                f"ADD from the build context is not read by this checker: {stripped[:70]}"
+            )
         if word == "WORKDIR":
             target = rest.strip()
             workdir = (
