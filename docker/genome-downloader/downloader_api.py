@@ -96,6 +96,14 @@ download_status = {
         "pharmcat_positions": {"progress": 0, "size_mb": 5, "status": "pending"},
         "pharmcat_regions": {"progress": 0, "size_mb": 1, "status": "pending"},
         "hg19_to_hg38_chain": {"progress": 0, "size_mb": 1, "status": "pending"},
+        # Every name in GENOMES needs an entry here. verify_staged_pins() and
+        # _download_genomes() index straight into this dict, and the startup call to
+        # verify_staged_pins() is guarded for OSError only -- so a GENOMES entry added
+        # without one here raises KeyError before uvicorn.run() and the service exits.
+        # Under restart: unless-stopped that is a crash loop, and gatk-api and pypgx
+        # wait on this service's health, so the whole stack stays down.
+        # tests/test_downloader_reference_integrity.py holds the two together.
+        "hg38_to_hg19_chain": {"progress": 0, "size_mb": 1, "status": "pending"},
         "ref_cache_ucsc_hg38": {"progress": 0, "size_mb": 0, "status": "pending"},
         "ref_cache_1kg_analysis_set": {"progress": 0, "size_mb": 3113, "status": "pending"}
     },

@@ -272,3 +272,30 @@ def test_ci_checks_the_zenodo_tarball_too():
     assert ci.index("sha256sum -c -") < ci.index(
         'tar -xf "$RUNNER_TEMP/GRCh38_reference_fasta.tar"'
     )
+
+
+def test_every_genome_has_a_status_entry_the_startup_check_can_index(downloader):
+    """GENOMES and download_status["genomes"] are two hand-written lists of the same
+    names, and the startup path indexes the second by the first.
+
+    Adding the reverse chain to GENOMES alone got the whole stack: verify_staged_pins()
+    raised KeyError before uvicorn.run(), the container exited about six seconds in,
+    and gatk-api and pypgx -- which wait on this service's health -- never started.
+    restart: unless-stopped turns that into a crash loop. Every static test passed and
+    the endpoint answered; only the E2E stack showed it.
+    """
+    named = [g["name"] for g in downloader.GENOMES]
+    missing = [n for n in named if n not in downloader.download_status["genomes"]]
+    assert not missing, (
+        "in GENOMES with no download_status entry to index: "
+        f"{', '.join(missing)} -- the service exits at startup"
+    )
+
+
+def test_the_startup_pin_check_runs_over_every_genome_without_raising(downloader):
+    """The regression itself, rather than the bookkeeping that explains it.
+
+    verify_staged_pins() is called at startup inside `except OSError`, so anything
+    else it raises kills the process. This calls it the way startup does.
+    """
+    assert downloader.verify_staged_pins() is False
