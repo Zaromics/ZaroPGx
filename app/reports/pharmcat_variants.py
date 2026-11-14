@@ -30,6 +30,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from app.pharmcat.report_json import iter_gene_blocks
 from app.reports import rarity
 
 logger = logging.getLogger(__name__)
@@ -73,11 +74,22 @@ def _alleles(names: Sequence[Any]) -> str:
     return ", ".join(items[:MAX_ALLELES]) + f" and {rest} more"
 
 
+def reference_of(variant: Mapping[str, Any]) -> Any:
+    """The base the panel calls the reference at this position.
+
+    PharmCAT 3.x writes ``referenceAllele``; 2.x wrote ``wildtypeAllele``. Reading only
+    the first left every genotype in an older report with no reference to compare
+    against, so nothing differed from it and the table was empty rather than absent --
+    the quieter half of the shape problem the walker above fixes.
+    """
+    return variant.get("referenceAllele") or variant.get("wildtypeAllele")
+
+
 def variant_key(variant: Mapping[str, Any], alt: str) -> str:
     """The variant as the bundle keys it: ``chr10-94781859-G-A``."""
     return (
         f"{variant.get('chromosome')}-{variant.get('position')}"
-        f"-{variant.get('referenceAllele')}-{alt}"
+        f"-{reference_of(variant)}-{alt}"
     )
 
 
@@ -87,7 +99,7 @@ def _rows(gene: Mapping[str, Any]) -> List[Dict[str, Any]]:
     for variant in gene.get("variants") or []:
         if not isinstance(variant, Mapping):
             continue
-        reference = variant.get("referenceAllele")
+        reference = reference_of(variant)
         alts = _alts(variant.get("call"), reference)
         if not alts:
             continue
@@ -130,9 +142,19 @@ def collect(
     if not isinstance(genes, Mapping):
         return {"status": "none"}
     found, genotyped, unread = [], 0, 0
-    for symbol, gene in sorted(genes.items()):
-        if not isinstance(gene, Mapping):
+    seen = set()
+    # Through the walker that knows both shapes PharmCAT has emitted: 3.x writes
+    # genes -> symbol, 2.x wrote genes -> {CPIC|DPWG|FDA} -> symbol
+    # (app/pharmcat/report_json.py). Reading the symbols straight off ``genes`` found
+    # three guideline sources and no variants in the older shape, so the whole table
+    # disappeared without a word -- which is what test_data's own 2.15 report does.
+    # A gene in that shape appears under each source that annotates it, with the same
+    # payload, so the first of them answers for it.
+    for block in sorted(iter_gene_blocks(genes), key=lambda b: b.gene_symbol):
+        symbol, gene = block.gene_symbol, block.gene_data
+        if symbol in seen:
             continue
+        seen.add(symbol)
         panel = [v for v in gene.get("variants") or [] if isinstance(v, Mapping)]
         if not panel:
             continue
