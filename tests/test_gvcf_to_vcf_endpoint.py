@@ -34,6 +34,7 @@ import importlib.util
 import io
 import logging
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -2605,3 +2606,147 @@ def test_a_gatk_file_claims_no_rename_on_the_step_row(
     _post(client, job_id="job-gatk")
 
     assert completed["output_data"]["symbolic_allele_renamed_from"] in (None, "")
+
+
+def test_the_step_row_says_which_build_the_positions_were_expressed_in(
+    client, tools, gatk_api, monkeypatch
+):
+    """A GRCh37 gVCF is genotyped over a lifted copy of PharmCAT's list and the result
+    lifted back. gvcf_provenance.py renders a paragraph saying exactly that from
+    `positions_expressed_in` off the step row -- "the reader is owed that", as its own
+    comment puts it, because the positions this run emitted reference calls over are
+    not the ones PharmCAT ships. The key was in the response body only, so the
+    paragraph never rendered: measured on a real GRCh37 run, whose report described the
+    genotyping and said nothing about the projection or the lift back.
+
+    The conversion is stubbed, as in the rename test above: the projection, its chain
+    pin and its refusal to genotype over a partial list are tested where they live, and
+    what is under test here is the wiring from the worker's result to the row.
+    """
+    completed = {}
+
+    class RecordingJobClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start_step(self, *args, **kwargs):
+            return None
+
+        async def log_progress(self, *args, **kwargs):
+            return None
+
+        async def complete_step(self, message, output_data=None):
+            completed["output_data"] = output_data
+
+    def canned(*args, **kwargs):
+        return {
+            "n_pharmcat_positions": 1226,
+            "n_pgx_positions_called": 1175,
+            "n_positions_absent": 51,
+            "n_positions_uncertain": 0,
+            "vcf_path": "/tmp/out.vcf.gz",
+            "vcf_size_bytes": 1234,
+            "vcf_index": "/tmp/out.vcf.gz.tbi",
+            "pharmcat_vcf_path": "/tmp/out.pharmcat.vcf.gz",
+            "positions_expressed_in": "GRCh37",
+            "symbolic_allele_renamed_from": None,
+            "n_symbolic_alleles_renamed": None,
+        }
+
+    monkeypatch.setattr(gatk_api, "JobClient", RecordingJobClient)
+    monkeypatch.setattr(gatk_api, "convert_gvcf_to_vcf", canned)
+    # The endpoint checks hg19 is staged before it hands off to the worker, which is
+    # the check that makes a GRCh37 upload fail loudly rather than silently; the worker
+    # is stubbed, so the file's contents never matter here.
+    hg19 = pathlib.Path(gatk_api.REFERENCE_DIR) / "hg19"
+    hg19.mkdir(parents=True, exist_ok=True)
+    (hg19 / "ucsc.hg19.fasta").write_bytes(b"")
+
+    body = _post(client, job_id="job-build", source_build="grch37").json()
+
+    assert completed, "complete_step was never called"
+    assert completed["output_data"]["positions_expressed_in"] == "GRCh37"
+    assert (
+        completed["output_data"]["positions_expressed_in"]
+        == body["positions_expressed_in"]
+    )
+    assert completed["output_data"]["n_pgx_positions_called"] == 1175
+
+
+def test_a_grch38_gvcf_claims_no_projection():
+    """None, not "GRCh38": the paragraph's other branch says the positions are
+    PharmCAT's own, and a build name here would make it describe a lift that never
+    happened."""
+    from app.utils.gvcf_provenance import gvcf_provenance_paragraph
+
+    said = gvcf_provenance_paragraph(
+        {
+            "n_pharmcat_positions": 1226,
+            "n_pgx_positions_called": 1223,
+            "n_positions_absent": 0,
+            "positions_expressed_in": None,
+        },
+        absent_to_ref=False,
+        unspecified_to_ref=False,
+    )
+
+    assert "expressed in" not in said
+    assert "lifted back" not in said
+
+
+def test_the_array_conversion_puts_its_counts_on_the_step_row(gatk_api):
+    """app/utils/array_provenance.py reads seven names off the array step's row to say
+    what the reader's OWN file carried -- as against the vendor-manifest figure the
+    upload page quotes, which is an upper bound over every revision of the chip. The
+    endpoint called complete_step with a message and no output_data at all, so that
+    paragraph could not render and the only coverage number in an array report was the
+    manifest's.
+
+    Asserted against the source, because driving this endpoint needs a bcftools that
+    writes real records: what matters is that the keys the report reads are the keys
+    the step is given.
+    """
+    source = pathlib.Path(gatk_api.__file__).read_text(encoding="utf-8")
+    start = source.index("Array conversion completed")
+    block = source[start : start + 1400]
+
+    assert "output_data=" in block, "the array step still reports no output_data"
+    for key in (
+        "vendor_shape",
+        "n_positions_carried",
+        "n_pharmcat_positions_rsid",
+        "n_no_calls",
+        "n_indel_coded",
+        "n_unmappable",
+        "unmappable_rsids",
+    ):
+        assert f'"{key}"' in block, f"{key} never reaches the step row"
+
+
+def test_every_name_the_provenance_modules_read_is_one_a_step_row_carries(gatk_api):
+    """The shape of three defects in one release: a fact the sidecar knows, written
+    where nothing reads it, and a paragraph that silently never renders. Both
+    provenance modules read off the JobStep row and nowhere else, so every name they
+    read has to be a name some step is actually given."""
+    import re
+
+    source = pathlib.Path(gatk_api.__file__).read_text(encoding="utf-8")
+    given = set(re.findall(r'"([a-z_][a-z0-9_]*)":', source)) | set(
+        re.findall(r"'([a-z_][a-z0-9_]*)':", source)
+    )
+    root = pathlib.Path(gatk_api.__file__).resolve().parents[2]
+
+    missing = []
+    for module in ("gvcf_provenance.py", "array_provenance.py"):
+        text = (root / "app" / "utils" / module).read_text(encoding="utf-8")
+        for key in re.findall(
+            r"output_data\.get\(\s*[\"']([a-z_][a-z0-9_]*)[\"']", text
+        ):
+            if key not in given:
+                missing.append(f"{module}: {key}")
+
+    assert (
+        not missing
+    ), "read by a provenance paragraph, never written by gatk-api: " + ", ".join(
+        missing
+    )

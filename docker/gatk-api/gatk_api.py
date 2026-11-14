@@ -4730,9 +4730,28 @@ async def array_to_vcf(
 
         if job_client:
             await job_client.log_progress("Array conversion completed", result)
+            # output_data, not just the message and the log event: only output_data
+            # lands on the JobStep row, and app/utils/array_provenance.py reads these
+            # seven names off it to tell the reader what THEIR file carried -- as
+            # against the vendor-manifest figure the upload page quotes, which is an
+            # upper bound over every revision of the chip. Without them the paragraph
+            # cannot render at all, and the only coverage number in the report is the
+            # manifest's.
             await job_client.complete_step(
                 f"{result['n_positions_carried']} of PharmCAT's "
-                f"{result['n_pharmcat_positions_rsid']} rs-identified positions carried"
+                f"{result['n_pharmcat_positions_rsid']} rs-identified positions carried",
+                output_data={
+                    key: result.get(key)
+                    for key in (
+                        "vendor_shape",
+                        "n_positions_carried",
+                        "n_pharmcat_positions_rsid",
+                        "n_no_calls",
+                        "n_indel_coded",
+                        "n_unmappable",
+                        "unmappable_rsids",
+                    )
+                },
             )
 
         return {
@@ -6821,6 +6840,13 @@ async def gvcf_to_vcf(
             # reference-confidence allele(s)" and the report said nothing at all.
             "symbolic_allele_renamed_from": stats.get('symbolic_allele_renamed_from'),
             "n_symbolic_alleles_renamed": stats.get('n_symbolic_alleles_renamed'),
+            # And the build the positions were expressed in, for the same reason: a
+            # GRCh37 gVCF is genotyped over a lifted copy of PharmCAT's list and the
+            # result lifted back, and gvcf_provenance.py has a paragraph saying so that
+            # could not render -- "the reader is owed that", as its own comment puts it,
+            # the positions this run emitted reference calls over not being the ones
+            # PharmCAT ships.
+            "positions_expressed_in": stats.get('positions_expressed_in'),
         }
         if job_client:
             await job_client.log_progress("gVCF genotyping completed", {
