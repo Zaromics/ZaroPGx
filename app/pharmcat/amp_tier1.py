@@ -96,6 +96,19 @@ class Tier1Set:
 #: minimum set for every gene PharmCAT calls (SLCO1B1, CFTR, G6PD, RYR1, NAT2, CYP2B6,
 #: UGT1A1, F2, F5, ABCG2, IFNL3 and CACNA1S have none here), and silently passing those
 #: would be the fail-open this module exists to avoid.
+#:
+#: WHAT THAT COSTS, MEASURED. An ungated gene on a sparse input still prints whatever
+#: PharmCAT made of the positions it had. Run on a chip-shaped file missing rs4149056,
+#: the report said ``SLCO1B1 *1/*1``, "Normal Function", "Normal transporter function
+#: expected" -- while its own coverage alert, in another section, said "27 of 35
+#: positions without a genotype; alleles not assessable: *2, *5, *6, *8, *10, *11, *15,
+#: *16 and 21 more". GeT-RM's consensus for that sample is ``*1/*15``, decreased
+#: function, which is the allele statin myopathy turns on. The disclosure is real and
+#: the call is not withheld, because no Tier 1 set licenses withholding it.
+#:
+#: That is a deliberate boundary, not an oversight: inventing a minimum set per gene is
+#: exactly what this module refuses to do. It is written down because the arrays lane
+#: calls this gate a prerequisite, and the prerequisite does not extend to these genes.
 TIER1: Dict[str, Tier1Set] = {
     "CYP2C9": Tier1Set(
         # Read in the paper: "CYP2C9 variant alleles recommended as Tier 1 by the AMP
