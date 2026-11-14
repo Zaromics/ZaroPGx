@@ -269,7 +269,17 @@ def test_the_study_vocabulary_marks_copy_states(score):
 
 def _row(sample, gene, tentative, verdict, caller="pypgx", role="report"):
     """One calls.tsv row, in the order score.py writes them."""
-    return (sample, gene, "*1/*2", "yes" if tentative else "", caller, "*1/*3", verdict, "", role)
+    return (
+        sample,
+        gene,
+        "*1/*2",
+        "yes" if tentative else "",
+        caller,
+        "*1/*3",
+        verdict,
+        "",
+        role,
+    )
 
 
 def test_a_tentative_disagreement_is_counted_apart_from_a_firm_one(score, tmp_path):
@@ -284,9 +294,14 @@ def test_a_tentative_disagreement_is_counted_apart_from_a_firm_one(score, tmp_pa
     ]
 
     everything = score.write_summary(tmp_path / "summary.tsv", rows)
-    firm = score.write_summary(tmp_path / "summary_firm.tsv", [r for r in rows if not r[3]])
+    firm = score.write_summary(
+        tmp_path / "summary_firm.tsv", [r for r in rows if not r[3]]
+    )
 
-    assert everything == (1, 4), "one of four agrees when the tentative rows are counted"
+    assert everything == (
+        1,
+        4,
+    ), "one of four agrees when the tentative rows are counted"
     assert firm == (1, 2), "one of two agrees when they are not"
 
 
@@ -301,7 +316,9 @@ def test_both_summaries_keep_the_same_shape(score, tmp_path):
 
     score.write_summary(tmp_path / "all.tsv", rows)
     score.write_summary(tmp_path / "firm.tsv", [r for r in rows if not r[3]])
-    read = lambda name: list(csv.DictReader(open(tmp_path / name), delimiter="\t"))  # noqa: E731
+    read = lambda name: list(
+        csv.DictReader(open(tmp_path / name), delimiter="\t")
+    )  # noqa: E731
 
     everything, firm = read("all.tsv"), read("firm.tsv")
     assert [r["gene"] for r in everything] == ["CYP2D6", "NAT2"]
