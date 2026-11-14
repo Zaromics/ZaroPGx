@@ -8,7 +8,7 @@ title: Input formats
 |---|---|---|
 | VCF (`.vcf`, `.vcf.gz`) | GRCh38; GRCh37/hg19 is lifted over | nothing, or liftover |
 | BCF | as VCF | converted to VCF (bcftools) |
-| gVCF | GRCh38, GATK reference blocks | genotyped (GATK GenotypeGVCFs) |
+| gVCF | GRCh38; GATK `<NON_REF>` or DeepVariant-style `<*>` reference blocks | genotyped (GATK GenotypeGVCFs) |
 | BAM, SAM | GRCh38 | SAM converted to BAM (samtools) |
 | CRAM | GRCh38, written against one of three references (below) | converted to BAM (samtools) |
 | FASTQ | short reads, up to 20 GB by default | aligned to GRCh38 (bwa-mem) |
@@ -74,12 +74,30 @@ PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your
 The report states:
 
 - **How much of PharmCAT's position list your file covered.** Positions without a reference block are no-calls.
+- **Whether the reference-confidence allele was renamed**, and that nothing else about the blocks changed.
 - **That genotypes are re-derived** from the recorded likelihoods, and may differ from your caller's. A reference call needs a reference confidence of 20 over at least 7 reads; a variant needs a genotype quality of 20 and a call quality of 30. Anything else is a no-call.
 - An indel PharmCAT cannot match stays a no-call, as with a plain VCF.
 
+### Reference blocks written `<*>` (DeepVariant)
+
+Accepted. `GenotypeGVCFs` reads GATK's `<NON_REF>` reference blocks and no others, so ZaroPGx renames that allele while it stages your file, and the genotyping then runs exactly as it does for a GATK gVCF.
+
+The rename is a rename. Only the allele's *name* in the ALT column changes; the blocks themselves, their genotypes, their qualities and their read depths are your caller's, as it wrote them. DeepVariant's own documentation gives `TC,<*>` as a variant record — the symbolic allele sits beside the real one — so renaming it is enough to make the file readable without touching anything that carries information. The report says the rename happened and how many records it touched.
+
+Measured on a synthetic GRCh38 gVCF over PharmCAT's 1,226 positions (GATK 4.7.0.0): the renamed file genotypes clean in 2.3 seconds, 1,361 of its rows are reference calls and one is the variant the file carried, and no symbolic allele survives into the output.
+
+`bcftools convert --gvcf2vcf` is not used, having been measured and rejected twice: on a GATK gVCF it keeps the `<NON_REF>` alleles, and on a `<*>` one it keeps `<*>` on every row it writes — 86,227 rows from 1,225 blocks, one per base, because expanding a block is its purpose. PharmCAT refuses both outputs.
+
 Refused, with the reason:
 
-- **Non-GATK reference blocks** (`<*>` instead of `<NON_REF>`, as written by DeepVariant, bcftools and some Illumina callers). Genotype the file with your caller's own tool and upload the VCF. Do not filter the reference blocks out by hand: that deletes your variants too.
+- **Reference blocks with no alternate allele at all** — ALT `.`, the block's extent in INFO `END`. This is what `bcftools call -g` writes, measured with bcftools 1.24:
+
+  ```
+  chr10  94762900  .  A  .  .  .  END=94762974;MIN_DP=30  GT:DP  0/0:30
+  ```
+
+  Renaming is not available here: there is no allele to rename, and these blocks record no genotype likelihood for a non-reference allele (`GT:DP`, no `PL`), so `GenotypeGVCFs` has nothing to genotype. Supporting the shape means expanding the blocks over PharmCAT's positions without GATK — a different conversion, not yet built. Genotype the file with your caller's own tool and upload the VCF. Do not filter the reference blocks out by hand: that deletes your variants too.
+- **A gVCF carrying no recognizable reference block** in the records that were read. Renaming cannot add an allele that is not there, and `GenotypeGVCFs` genotypes every record and stops on the first one without the allele *after* writing part of its output — so this is refused at upload rather than partway through a run.
 - **GRCh37/hg19 gVCFs.** Run `gatk GenotypeGVCFs` yourself and upload the GRCh37 VCF, which is lifted over.
 
 Every VCF caveat applies: no HLA typing, and degraded accuracy for *CYP2D6* and for structural and copy-number variants. One sample only.

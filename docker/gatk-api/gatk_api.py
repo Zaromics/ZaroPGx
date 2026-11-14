@@ -5192,6 +5192,240 @@ def drop_zaropgx_header_lines(job_label, vcf_gz, work_dir):
     return dropped
 
 
+# The symbolic ALT allele a gVCF's reference-confidence blocks are written with, and
+# the whole of what stands between a DeepVariant-class gVCF and this lane.
+#
+# GATK writes `<NON_REF>`; DeepVariant writes `<*>`. GenotypeGVCFs reads only the
+# first, and MEASURED on a `<*>` file it does not refuse the input -- it writes rows and
+# then dies partway through:
+#
+#   A USER ERROR has occurred: The list of input alleles must contain <NON_REF> as an
+#   allele but that is not the case at position 94781859
+#
+# with 115 rows already in the output file. So the allele is renamed before either pass
+# runs, which is a rename and nothing more: the blocks, their genotypes, their
+# qualities and their depths are the caller's own, and the two are the same statement
+# about the same genome in two spellings. DeepVariant's own gVCF documentation gives
+# `TC,<*>` as a variant record, i.e. the symbolic allele sits beside the real one, and
+# that is what makes the rename sufficient rather than merely necessary.
+#
+# `bcftools convert --gvcf2vcf` is NOT the alternative, measured twice: on a GATK file
+# it keeps the `<NON_REF>` alleles (the note above /gvcf-to-vcf), and on a `<*>` file it
+# keeps `<*>` on every row it writes -- 86,227 of them from 1,225 blocks, one per base,
+# because expanding a block is its whole purpose. PharmCAT refuses both outputs.
+GVCF_GATK_SYMBOLIC = b'<NON_REF>'
+GVCF_OTHER_SYMBOLIC = b'<*>'
+GVCF_NON_REF_DECLARATION = (
+    b'##ALT=<ID=NON_REF,Description="Represents any possible alternative allele">\n'
+)
+
+# How many data records the flavour probe reads before giving up. It stops at the first
+# record carrying either symbolic allele, so this bound is only reached by a file whose
+# opening records carry neither -- and such a file is not one this lane can convert.
+# Generous for the question: a gVCF's reference blocks are its bulk.
+GVCF_FLAVOUR_PROBE_RECORDS = 200
+
+# How many offending positions the refusal names. Three is enough to recognise the file
+# and short enough to read in an error; the count says how many there were in all.
+GVCF_SYMBOLIC_OFFENDERS_NAMED = 3
+
+
+def normalize_gvcf_symbolic_allele(lines, write):
+    """Rewrite a gVCF's `<*>` symbolic allele to GATK's `<NON_REF>`, and audit it.
+
+    Pure over bytes: `lines` is any iterable of raw lines and `write` takes one. The
+    caller owns the files, so this is testable on a list, and it works in bytes for the
+    reason `drop_zaropgx_header_lines` does -- a sample name that is not UTF-8 keeps
+    every byte it arrived with.
+
+    ONLY the ALT column is touched. A `<*>` in a sample name, an INFO field or a header
+    description is left exactly as it was: rewriting the line would edit data on the
+    strength of a substring.
+
+    The audit is the point of doing this as a full pass rather than a probe. Every data
+    record must carry a symbolic allele, because GenotypeGVCFs genotypes every record
+    and stops on the first one that does not -- after writing output. A pass that is
+    already reading every line can say so BEFORE GATK starts, so the caller can refuse
+    at this step instead of handing back a truncated VCF. The positions are collected,
+    not raised on, so the report names the first few and counts them all.
+
+    Returns a dict:
+        renamed: records whose ALT carried `<*>`
+        already_gatk: records whose ALT carried `<NON_REF>`
+        without_symbolic: how many records carried neither
+        offenders: up to GVCF_SYMBOLIC_OFFENDERS_NAMED "chrom:pos" strings for them
+        declared: whether the `##ALT=<ID=NON_REF>` declaration had to be added
+    """
+    report = {
+        'renamed': 0,
+        'already_gatk': 0,
+        'without_symbolic': 0,
+        'offenders': [],
+        'declared': False,
+    }
+    seen_declaration = False
+    for line in lines:
+        if line.startswith(b'##'):
+            if line.startswith(b'##ALT=<ID=NON_REF'):
+                seen_declaration = True
+            write(line)
+            continue
+        if line.startswith(b'#'):
+            # The #CHROM line: the last chance to declare the allele the records below
+            # are about to use. Added only when the file does not already declare it,
+            # so a GATK file passing through is byte-for-byte unchanged.
+            if not seen_declaration:
+                write(GVCF_NON_REF_DECLARATION)
+                report['declared'] = True
+                seen_declaration = True
+            write(line)
+            continue
+
+        fields = line.split(b'\t')
+        if len(fields) < 5:
+            # Not a record this can read. Passed through untouched and counted as
+            # carrying no symbolic allele, which is the fail-closed direction: a file
+            # with rows GenotypeGVCFs will read and this cannot is a file to refuse.
+            report['without_symbolic'] += 1
+            write(line)
+            continue
+        alt = fields[4]
+        if GVCF_OTHER_SYMBOLIC in alt:
+            fields[4] = alt.replace(GVCF_OTHER_SYMBOLIC, GVCF_GATK_SYMBOLIC)
+            report['renamed'] += 1
+            write(b'\t'.join(fields))
+            continue
+        if GVCF_GATK_SYMBOLIC in alt:
+            report['already_gatk'] += 1
+            write(line)
+            continue
+        report['without_symbolic'] += 1
+        if len(report['offenders']) < GVCF_SYMBOLIC_OFFENDERS_NAMED:
+            chrom = fields[0].decode('utf-8', 'replace')
+            pos = fields[1].decode('utf-8', 'replace')
+            report['offenders'].append(f"{chrom}:{pos}")
+        write(line)
+    return report
+
+
+def gvcf_symbolic_flavour(path, limit=GVCF_FLAVOUR_PROBE_RECORDS):
+    """Which symbolic allele this gVCF's records use: the bytes of one, or None.
+
+    Bounded, and keyed on the records rather than on the header for the reason
+    app/api/utils/file_processor.py's `_gvcf_symbolic_allele` is: GenotypeGVCFs carries
+    an `##ALT=<ID=NON_REF>` DECLARATION through into its plain-VCF output while
+    stripping the blocks, so the declaration is evidence of nothing. DeepVariant writes
+    no `##GVCFBlock` record at all, so the records are the only evidence there is.
+
+    None means "neither allele was found in the window", which the caller treats as
+    "nothing to normalize" -- the GATK file's path, and the honest one: a file whose
+    records carry no symbolic allele is not a gVCF this lane can genotype, and
+    GenotypeGVCFs will say so itself.
+    """
+    records = 0
+    with open(path, 'rb') as probe:
+        opener = gzip.open if probe.read(2) == b'\x1f\x8b' else open
+    with opener(path, 'rb') as handle:
+        for line in handle:
+            if line.startswith(b'#'):
+                continue
+            fields = line.split(b'\t', 5)
+            if len(fields) >= 5:
+                alt = fields[4]
+                if GVCF_GATK_SYMBOLIC in alt:
+                    return GVCF_GATK_SYMBOLIC
+                if GVCF_OTHER_SYMBOLIC in alt:
+                    return GVCF_OTHER_SYMBOLIC
+            records += 1
+            if records >= limit:
+                break
+    return None
+
+
+def normalize_staged_gvcf(job_label, staged, work_dir):
+    """Rename a staged gVCF's `<*>` blocks to `<NON_REF>` in place; what was done.
+
+    Nothing runs for a GATK-flavoured file: `gvcf_symbolic_flavour` stops at its first
+    record, and the staged file is left byte-for-byte as it was. That matters because
+    this is a full streaming decompress-and-recompress of the upload, and on a
+    whole-genome gVCF that is minutes -- a cost only a file that cannot be genotyped
+    without it should pay.
+
+    Raises HTTPException(422) when the file carries records with no symbolic allele at
+    all. That is the whole reason this runs as a pass rather than a probe: GenotypeGVCFs
+    stops on such a record AFTER writing rows, so refusing here is the difference
+    between an error at the step that caused it and a truncated VCF handed downstream.
+
+    Peak disk is 2x the staged upload for the duration of the pass -- the renamed copy
+    is written beside the original and `os.replace`s it -- and the renamed file is
+    bgzipped as it is written rather than staged as text, because an uncompressed
+    whole-genome gVCF is tens of gigabytes. The endpoint's `finally` removes the whole
+    work_dir on every path, the refusal included, so neither copy outlives the request.
+
+    Returns the report dict from `normalize_gvcf_symbolic_allele`, plus
+    `flavour` (the allele the upload used, as text), or None when nothing was done.
+    """
+    flavour = gvcf_symbolic_flavour(staged)
+    if flavour != GVCF_OTHER_SYMBOLIC:
+        return None
+
+    normalized = os.path.join(work_dir, 'staged.non_ref.vcf.gz')
+    with open(staged, 'rb') as probe:
+        opener = gzip.open if probe.read(2) == b'\x1f\x8b' else open
+    with open(normalized, 'wb') as sink:
+        compress = subprocess.Popen(
+            ['bgzip', '-c'], stdin=subprocess.PIPE, stdout=sink
+        )
+        try:
+            with opener(staged, 'rb') as handle:
+                report = normalize_gvcf_symbolic_allele(handle, compress.stdin.write)
+        finally:
+            compress.stdin.close()
+            code = compress.wait()
+    if code != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"bgzip exited {code} while rewriting the gVCF's reference-confidence "
+                "allele; refusing to genotype a file that was not written whole."
+            ),
+        )
+
+    if report['without_symbolic']:
+        named = ', '.join(report['offenders'])
+        count = report['without_symbolic']
+        # "1 of its records carry" reads as a typo in an error someone is trying to
+        # act on, and this count is 1 in the most likely case of all: one variant
+        # record written without the symbolic allele.
+        carry = 'record carries' if count == 1 else 'records carry'
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This gVCF writes its reference blocks with the "
+                f"{GVCF_OTHER_SYMBOLIC.decode()} allele, which ZaroPGx renames to "
+                f"GATK's {GVCF_GATK_SYMBOLIC.decode()} so GenotypeGVCFs can read them "
+                f"-- but {count:,} of its {carry} no "
+                f"symbolic allele at all (first: {named}). GenotypeGVCFs genotypes "
+                "every record and stops on one of those with 'The list of input "
+                "alleles must contain NON_REF as an allele', partway through, having "
+                "already written part of the output. Renaming cannot add an allele "
+                "that is not there -- the genotype likelihoods for it do not exist in "
+                "the file and inventing them would be inventing data. Genotype this "
+                "file with your caller's own tool and upload the plain VCF, or upload "
+                "the BAM, CRAM or SAM it was called from."
+            ),
+        )
+
+    os.replace(normalized, staged)
+    logger.info(
+        f"Job {job_label}: renamed {report['renamed']:,} "
+        f"{GVCF_OTHER_SYMBOLIC.decode()} reference-confidence allele(s) to "
+        f"{GVCF_GATK_SYMBOLIC.decode()} so GenotypeGVCFs can read the file"
+    )
+    report['flavour'] = GVCF_OTHER_SYMBOLIC.decode()
+    return report
+
+
 def vcf_header_has(path, line):
     """True when the (bgzipped) VCF's header holds this exact line."""
     with _open_vcf_text(path) as handle:
@@ -5516,6 +5750,11 @@ def convert_gvcf_to_vcf(
     # The upload's own ##ZaroPGx_ lines go before either pass reads it (see
     # ZAROPGX_HEADER_PREFIX): the coverage lines in the output are this run's alone.
     drop_zaropgx_header_lines(job_label, staged, work_dir)
+    # 1b. The reference-confidence allele, in the spelling GenotypeGVCFs reads. Nothing
+    # runs for a GATK file; a DeepVariant-class one is renamed here, and audited in the
+    # same pass, rather than dying partway through the PGx pass with rows already
+    # written. Before the index, because it rewrites the file. See normalize_staged_gvcf.
+    symbolic = normalize_staged_gvcf(job_label, staged, work_dir)
     _run_tool(
         job_label,
         ['bcftools', 'index', '-t', '-f', staged],
@@ -5768,6 +6007,11 @@ def convert_gvcf_to_vcf(
         'n_positions_absent': n_positions_absent,
         'n_positions_uncertain': n_positions_uncertain,
         'n_homref_rewritten_to_pharmcat_alleles': n_homref_rewritten,
+        # What was done to the upload before it was genotyped, so the report can say
+        # it: the file GATK read is not byte-for-byte the file that was uploaded. None
+        # for a GATK gVCF, which is passed through untouched.
+        'symbolic_allele_renamed_from': (symbolic or {}).get('flavour'),
+        'n_symbolic_alleles_renamed': (symbolic or {}).get('renamed'),
     }
 
 

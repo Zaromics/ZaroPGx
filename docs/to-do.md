@@ -13,12 +13,39 @@ curated: true
   chain). Unliftable variants are dropped and counted; an implausibly high reject rate
   fails the run instead of producing a near-empty result.
 - **Priority 2   (Testing)**: BAM, CRAM, SAM, BCF, gVCF (NGS-derived; GRCh38, except that a
-  GRCh37 BCF is converted and then lifted over like a VCF). A GRCh38 GATK gVCF
+  GRCh37 BCF is converted and then lifted over like a VCF). A GRCh38 gVCF
   is genotyped into a plain VCF by gatk-api's `/gvcf-to-vcf` (two `GenotypeGVCFs` passes,
   the first `--include-non-variant-sites` over `pharmcat_positions.vcf`) before analysis.
-- **Not accepted**: gVCFs whose reference blocks are `<*>` rather than GATK's `<NON_REF>`
-  (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
-  gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
+  A gVCF whose reference blocks are written `<*>` rather than GATK's `<NON_REF>`
+  (DeepVariant's spelling, per its own gVCF documentation) takes the same lane: the
+  allele is renamed while the file is staged, because `GenotypeGVCFs` reads GATK's
+  spelling only. MEASURED (GATK 4.7.0.0, synthetic GRCh38 gVCF over PharmCAT's 1,226
+  positions): renamed, it genotypes clean in 2.3 s — 1,362 rows, 1,361 reference calls
+  under the lane's own thresholds and the one variant the file carried, no symbolic
+  allele left in the output. Un-renamed it does not refuse the input but writes 115 rows
+  and then dies on "The list of input alleles must contain <NON_REF>", which is why the
+  rename pass also audits every record and refuses at the door instead.
+  `bcftools convert --gvcf2vcf` is NOT the alternative: measured on a GATK file it keeps
+  `<NON_REF>`, and on a `<*>` file it keeps `<*>` on all 86,227 rows it writes from
+  1,225 blocks (one per base). Open: no real DeepVariant gVCF has been through the lane
+  — the shape is from DeepVariant's own gVCF documentation, and the measurements are on
+  a synthetic file built to it.
+- **Not accepted**: a gVCF whose reference blocks carry NO alternate allele — ALT `.`
+  with the extent in INFO `END`. MEASURED (bcftools 1.24, `bcftools mpileup -a FORMAT/DP
+  | bcftools call -m -g 10`) as what **bcftools** writes, which corrects a claim this
+  repo carried in several places: `bcftools call -g` does **not** write `<*>`.
+  `chr10 94762900 . A . . . END=94762974;MIN_DP=30 GT:DP 0/0:30`. Renaming has no allele
+  to rename and the blocks carry no non-reference likelihood (`GT:DP`, no `PL`), so
+  GenotypeGVCFs has nothing to genotype. **These are now detected and refused at the
+  door** — before this they were typed a plain VCF, carried the whole way down, and
+  refused INSIDE PharmCAT (its own detector fires on ALT `.` spanning more than one
+  base) behind main.nf's `|| true`: no PharmCAT output and no error. Supporting them is
+  a real option and a separate lane — expand the blocks over `pharmcat_positions.vcf`
+  without GATK (`bcftools convert --gvcf2vcf` + `bcftools view -T positions -a` yields
+  exactly the 1,226 rows, measured) — but the genotypes would then be the caller's own
+  rather than re-derived, so the provenance paragraph needs its own wording.
+  Also not accepted: a gVCF carrying nothing identifiable in the records read, and
+  GRCh37/hg19 gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
   with the bwa-mem GATK already bundles, then analyzed as a BAM. Refused: over the cap
   (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
