@@ -88,6 +88,7 @@ from app.reports.generator import (
 from app.services.cleanup_service import cleanup_service
 from app.services.fhir_export_service import fhir_export_enabled
 from app.services.job_service import JobService
+from app.utils import build_identity
 from app.utils.env import env_flag
 from app.utils.redact import redact_secrets
 
@@ -313,6 +314,10 @@ def get_author_name() -> str:
 # The release this build is. chore(release) bumps it with the other stamps; the docs
 # staleness check below keys on it, so a release always reprints the documentation.
 APP_VERSION = "0.4.3"
+
+# Read once: /health is polled every 30 seconds by the container's healthcheck, and
+# none of this changes while the process lives.
+_BUILD_IDENTITY = build_identity.identity(version=APP_VERSION)
 
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
@@ -878,7 +883,14 @@ def internal_activity(request: Request, db: Session = Depends(get_db)):
 @app.get("/health")
 async def health_check():
     logger.info("Health check called")
-    return {"status": "healthy", "timestamp": str(datetime.now(timezone.utc))}
+    return {
+        "status": "healthy",
+        "timestamp": str(datetime.now(timezone.utc)),
+        # Which image this is and which code it is actually serving. They differ
+        # whenever the checkout has moved and the image has not, which compose makes
+        # the normal case: see app/utils/build_identity.py.
+        "build": _BUILD_IDENTITY,
+    }
 
 
 # Legacy call_gatk_variants function removed - replaced by GATK API service
@@ -1344,6 +1356,23 @@ async def startup_event():
     """Check if required services are ready before starting the app"""
     print("=================== STARTING ZaroPGx ===================")
     logger.info("Starting ZaroPGx application")
+
+    # Which image, which code. A difference is not an error -- it is what a machine
+    # someone is developing on looks like -- but it should never be silent, because
+    # the release verifies the image and the mount decides the behavior.
+    _image, _code = _BUILD_IDENTITY["image"], _BUILD_IDENTITY["code"]
+    logger.info(
+        "Version %s | image %s (%s) | code %s from the %s",
+        APP_VERSION,
+        _image["tag"],
+        str(_image["commit"])[:12],
+        str(_code["commit"])[:12],
+        _code["from"],
+    )
+    _mismatch = build_identity.disagreement(_BUILD_IDENTITY)
+    if _mismatch:
+        logger.warning(_mismatch)
+        print(f"⚠ {_mismatch}")
 
     # Remember the main loop so sync WorkflowService methods can schedule
     # WebSocket broadcasts via run_coroutine_threadsafe when off-loop.

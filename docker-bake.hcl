@@ -17,6 +17,14 @@ variable "PHARMCAT_VERSION" {
   default = "3.4.0"
 }
 
+# The commit the images are built from, stamped into the app image so a running
+# container can say whether the code it serves is the code it was built with
+# (app/utils/build_identity.py). Set it on the release build:
+#   ZAROPGX_COMMIT=$(git rev-parse HEAD) docker buildx bake -f docker-bake.hcl --push
+variable "ZAROPGX_COMMIT" {
+  default = "unknown"
+}
+
 group "default" {
   targets = [
     "app",
@@ -32,6 +40,10 @@ group "default" {
 target "app" {
   context    = "."
   dockerfile = "Dockerfile"
+  args = {
+    ZAROPGX_TAG    = ZAROPGX_TAG
+    ZAROPGX_COMMIT = ZAROPGX_COMMIT
+  }
   tags       = ["zaromicsresearch/zaropgx-app:${ZAROPGX_TAG}"]
   cache-from = ["type=gha,scope=zaropgx-app"]
   cache-to   = ["type=gha,mode=max,scope=zaropgx-app"]
