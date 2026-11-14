@@ -137,7 +137,9 @@ def _reap_stale() -> None:
         if listing.returncode != 0:
             return
         for name in stale_containers(listing.stdout, _pid_alive):
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
+            subprocess.run(
+                ["docker", "rm", "-f", name], capture_output=True, timeout=60
+            )
     except (OSError, subprocess.SubprocessError):
         return
 
