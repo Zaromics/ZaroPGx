@@ -49,6 +49,7 @@ developer/development-setup
 developer/testing
 developer/contributing
 developer/api-reference
+developer/decisions/0001-runtime-code-delivery
 samples/README
 ```
 
