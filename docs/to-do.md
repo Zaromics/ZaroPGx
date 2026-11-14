@@ -395,6 +395,63 @@ curated: true
 
 ## Reporting
 
+### Call adequacy (AMP/CAP Tier 1)
+
+**DONE 2026-11-12.** A gene's verdict is withheld when the run could not assess an allele
+from the AMP/CAP minimum ("Tier 1") set for that gene. `app/pharmcat/amp_tier1.py` holds
+the table (one citation per gene, each allele name taken from real PharmCAT output rather
+than from the papers, since AMP writes DPYD's Tier 1 as `c.1905+1G>A` and PharmCAT writes
+`c.1905+1G>A (*2A)`); `app/reports/tier1_gate.py` empties the row and routes it down the
+existing "Genes examined without a call" path.
+
+MEASURED, and the reason this exists: the full `pharmcat_pipeline` -- preprocessor
+included, NEITHER assume-reference flag, no PyPGx anywhere -- reported `CYP2C9 Normal
+Metabolizer, Activity Score 2.0` from 2 of 88 positions and `CYP2C19 *2/*2 Poor
+Metabolizer` from 2 of 35. So `docs/user/file-formats.md`'s old claim that "PharmCAT
+alone would degrade honestly" was **false**, and the consumer-array refusal's argument
+blamed PyPGx for something PharmCAT does on its own.
+
+Validated both directions: nothing is withheld on any of the repo's four PharmCAT
+fixtures (5-37 genes each, with real `uncalledHaplotypes` lists) or on PharmCAT's own
+complete example VCF, where every gene's unassessable alleles are Tier 2 or unassigned;
+the 9-position chip VCF loses exactly CYP2C9 and CYP2C19, the two it called from grossly
+partial data, and keeps ABCG2, IFNL3 and VKORC1.
+
+Open:
+
+- **One Tier 1 list still needs a primary read, and it is paywalled.** Eight of nine are
+  read in the paper or its PMC copy: CYP2C9, CYP2D6 (PMC8579245), CYP3A4, CYP3A5,
+  CYP4F2, DPYD, TPMT and NUDT15 (both PMC9808500). Only **CYP2C19** (`*2, *3, *17`) is
+  still `SECONDARY`, and not for want of trying: Europe PMC reports PMID 29474986 with
+  no PMCID, `isOpenAccess=N` and `inEPMC=N`, jmdjournal.org, ScienceDirect and the
+  institutional repository mirrors answer 403 or a bot challenge, and the authors' own
+  abstract states the two-tier framework without listing the alleles. No public text
+  carries them. Its list agrees across
+  three independent secondary sources. **Reading it needs institutional access** — the
+  one item here an owner can close and an agent cannot.
+  `tests/test_amp_tier1.py` pins which genes are in which set, so the distinction cannot
+  drift. Reading the primaries paid for itself twice: a secondary summary had omitted
+  CYP2D6 `*41`, and NUDT15's Tier 1 is `*3` alone where `*2` is the better-known name
+  and is Tier 2.
+- **CYP2D6 adequacy does not cover copy number.** AMP's CYP2D6 Tier 1 also requires
+  interrogating gene duplications/multiplications, which is not an allele in
+  `uncalledHaplotypes` and cannot be judged from it. "Adequate" for CYP2D6 therefore
+  means its SNV alleles only; `app/reports/copy_number.py` carries the rest, and the two
+  statements must stay separate.
+- **TPMT/NUDT15 may be stale.** A 2026 CPIC thiopurine guideline update exists and may
+  revise that allele set; the citation in the table says so.
+- **Genes with no AMP minimum set are not gated** (SLCO1B1, CFTR, G6PD, RYR1, NAT2,
+  CYP2B6, UGT1A1, F2, F5, ABCG2, IFNL3, CACNA1S). They are reported as before; AMP has
+  published no minimum for them. If AMP publishes more, add them here.
+- **`uncalledHaplotypes` is not read for anything else.** It also names the alleles a
+  CALLED gene could not assess, which the report currently covers only as general
+  copy-number/structural prose. Naming them per gene would be more precise, for every
+  input type.
+- **A re-read on every PharmCAT bump.** The Tier 1 names must still match what PharmCAT
+  emits; a renamed allele makes the gate fail open silently. Same hazard class as
+  `pharmcat_positions.vcf`.
+
+
 - [DONE Oct 2026] Unified report: PharmCAT's recommendations with PyPGx's calls for the
   genes PharmCAT does not call ("P" in the Call column), and PyPGx's per-gene evidence
   (fix/pypgx-full-record).

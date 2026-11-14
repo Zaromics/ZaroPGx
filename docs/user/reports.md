@@ -284,6 +284,43 @@ The label is always printed beside the color.
 | Uncertain Susceptibility | RYR1 and CACNA1S: no known malignant hyperthermia variant was found, which does not rule the condition out |
 | Not called | The data did not support a call; no phenotype or guidance follows |
 
+### When a gene is not called because the test could not see enough of it
+
+A reference result — `*1/*1`, "Normal Metabolizer" — means no variant was found at any
+position that defines the gene's alleles. That is only true if those positions were
+examined. Where they were not, "no variant found" and "we did not look" produce the same
+answer, and the second one reads as a normal result.
+
+The AMP/CAP pharmacogenomics working group publishes, per gene, the minimum set of
+alleles a clinical genotyping assay should include — its "Tier 1" alleles, chosen because
+each has a well-characterized effect on the gene's function, an appreciable frequency in
+some population, and publicly available reference materials. PharmCAT reports, per gene,
+which alleles it could not assess from your data. Where one of that minimum set is among
+them, ZaroPGx reports the gene as **not called** and names the alleles it could not
+assess, rather than printing a genotype and a phenotype that rest on positions your file
+does not cover.
+
+This is why it matters rather than being a technicality. AMP's own example: a patient
+carrying `rs7900194`, which defines *CYP2C9\*8* and is common in African-ancestry
+populations, tested on an assay without that variant "may be assigned a genotype of
+\*1/\*1 (normal function) rather than \*1/\*8, impacting the predicted phenotype and
+clinical treatment strategy and potentially creating a health care disparity."
+
+What this does **not** do:
+
+- It does not withhold a gene whose unassessed alleles are all outside that minimum set.
+  Every gene has rare alleles that need copy-number or structural evidence no VCF
+  carries, so some alleles are unassessable on any input, including a complete genome —
+  that alone is not a reason to withhold a result, and it is reported separately.
+- It does not apply to genes for which AMP has published no minimum set. Those are
+  reported as before, and the report states how many of their positions were examined.
+- It does not change a gene PharmCAT itself left uncalled; that keeps PharmCAT's own
+  reason.
+
+A whole-genome or whole-exome upload is normally unaffected. The genes most often
+withheld this way come from sparse inputs — a targeted panel that covers only a few of a
+gene's positions, or a consumer genotyping array.
+
 ## The interactive report
 
 A single HTML file with tabs: Alerts, Summary, Genes, mtDNA, Drugs, Recs, Visualizations
