@@ -105,3 +105,15 @@ def test_the_spread_reads_as_a_range(sweep):
     assert "min      1" in sweep._spread("x", [1, 5, 9])
     assert "median" in sweep._spread("x", [1, 5, 9])
     assert "nothing to measure" in sweep._spread("x", [])
+
+
+def test_a_sweep_that_read_nothing_says_so(sweep, tmp_path, capsys, monkeypatch):
+    """ "Every reader found something in every run" is true and meaningless over no
+    runs. A directory with no pharmcat.json anywhere must not read as an all-clear."""
+    (tmp_path / "HG00000").mkdir()
+    monkeypatch.setattr(sys, "argv", ["report_sanity.py", str(tmp_path)])
+
+    assert sweep.main() == 1
+    out = capsys.readouterr().out
+    assert "had a pharmcat.json to read" in out
+    assert "Every reader found something" not in out

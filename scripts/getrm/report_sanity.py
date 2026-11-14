@@ -103,6 +103,12 @@ def main() -> int:
         withheld_per_run.append(len(withheld))
         withheld_by_gene.update(withheld)
 
+    if not genes_listed:
+        # A sweep that read nothing must not print the all-clear below: "every reader
+        # found something in every run" is true and meaningless over no runs, which is
+        # the one failure a checker must not have.
+        print(f"No run under {args.results} had a pharmcat.json to read.")
+        return 1
     print(f"{len(genes_listed)} run(s) under {args.results}\n")
     print(_spread("genes with a variants table", genes_listed))
     print(_spread("positions PharmCAT read", positions_read))
