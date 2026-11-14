@@ -13,12 +13,39 @@ curated: true
   chain). Unliftable variants are dropped and counted; an implausibly high reject rate
   fails the run instead of producing a near-empty result.
 - **Priority 2   (Testing)**: BAM, CRAM, SAM, BCF, gVCF (NGS-derived; GRCh38, except that a
-  GRCh37 BCF is converted and then lifted over like a VCF). A GRCh38 GATK gVCF
+  GRCh37 BCF is converted and then lifted over like a VCF). A GRCh38 gVCF
   is genotyped into a plain VCF by gatk-api's `/gvcf-to-vcf` (two `GenotypeGVCFs` passes,
   the first `--include-non-variant-sites` over `pharmcat_positions.vcf`) before analysis.
-- **Not accepted**: gVCFs whose reference blocks are `<*>` rather than GATK's `<NON_REF>`
-  (DeepVariant, bcftools, some Illumina) — `GenotypeGVCFs` stops on them — and GRCh37/hg19
-  gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
+  A gVCF whose reference blocks are written `<*>` rather than GATK's `<NON_REF>`
+  (DeepVariant's spelling, per its own gVCF documentation) takes the same lane: the
+  allele is renamed while the file is staged, because `GenotypeGVCFs` reads GATK's
+  spelling only. MEASURED (GATK 4.7.0.0, synthetic GRCh38 gVCF over PharmCAT's 1,226
+  positions): renamed, it genotypes clean in 2.3 s — 1,362 rows, 1,361 reference calls
+  under the lane's own thresholds and the one variant the file carried, no symbolic
+  allele left in the output. Un-renamed it does not refuse the input but writes 115 rows
+  and then dies on "The list of input alleles must contain <NON_REF>", which is why the
+  rename pass also audits every record and refuses at the door instead.
+  `bcftools convert --gvcf2vcf` is NOT the alternative: measured on a GATK file it keeps
+  `<NON_REF>`, and on a `<*>` file it keeps `<*>` on all 86,227 rows it writes from
+  1,225 blocks (one per base). Open: no real DeepVariant gVCF has been through the lane
+  — the shape is from DeepVariant's own gVCF documentation, and the measurements are on
+  a synthetic file built to it.
+- **Not accepted**: a gVCF whose reference blocks carry NO alternate allele — ALT `.`
+  with the extent in INFO `END`. MEASURED (bcftools 1.24, `bcftools mpileup -a FORMAT/DP
+  | bcftools call -m -g 10`) as what **bcftools** writes, which corrects a claim this
+  repo carried in several places: `bcftools call -g` does **not** write `<*>`.
+  `chr10 94762900 . A . . . END=94762974;MIN_DP=30 GT:DP 0/0:30`. Renaming has no allele
+  to rename and the blocks carry no non-reference likelihood (`GT:DP`, no `PL`), so
+  GenotypeGVCFs has nothing to genotype. **These are now detected and refused at the
+  door** — before this they were typed a plain VCF, carried the whole way down, and
+  refused INSIDE PharmCAT (its own detector fires on ALT `.` spanning more than one
+  base) behind main.nf's `|| true`: no PharmCAT output and no error. Supporting them is
+  a real option and a separate lane — expand the blocks over `pharmcat_positions.vcf`
+  without GATK (`bcftools convert --gvcf2vcf` + `bcftools view -T positions -a` yields
+  exactly the 1,226 rows, measured) — but the genotypes would then be the caller's own
+  rather than re-derived, so the provenance paragraph needs its own wording.
+  Also not accepted: a gVCF carrying nothing identifiable in the records read, and
+  GRCh37/hg19 gVCFs, because `pharmcat_positions.vcf` exists in GRCh38 coordinates only.
 - **FASTQ** (in testing): short-read, single- or paired-end, up to 20 GB. Aligned to GRCh38
   with the bwa-mem GATK already bundles, then analyzed as a BAM. Refused: over the cap
   (`FASTQ_MAX_UPLOAD_BYTES`, 20 GB by default), more than the free disk can hold (about 9x
@@ -226,6 +253,54 @@ curated: true
     and every phasing change since is a Beagle bug fix, with no mention of read-backed
     phasing; PharmCAT reads `FORMAT/PS` from 3.0 but its phase-sensitive genes are the
     wide ones.
+  - The same question for the calls **PharmCAT** makes, which the read-phase lane
+    deliberately says nothing about (its docstring: "for a gene the report prints
+    PharmCAT's call for, PyPGx's arrangement is not the printed one").
+    **Built 2026-11-10** on `feat/pharmcat-phase-check`. PharmCAT reads an unphased file,
+    so where a gene has two or more heterozygous defining positions it reports the
+    diplotype its allele definitions explain most specifically: `effectivelyPhased` is
+    false on 169 of the 1,159 calls its matcher made over the 61 genomes. The allele
+    definition table this needed is in PharmCAT's own jar, so
+    `docker/pharmcat/definitions.py` publishes the part that answers the question —
+    positions, each allele's required bases and score, each diplotype's phenotype — as a
+    419 kB gzipped digest beside the run data, written at startup and **not committed**,
+    because the definitions are ClinPGx's (CC-BY-SA-4.0). `app/reports/pharmcat_phase.py`
+    reads it at report time, so an older run re-rendered gains the note, as with
+    `rarity.py`. Naming a chromosome took three rules the runs taught: a definition can
+    ask for an IUPAC code (CYP2C19 `*2` wants `R` at chr10:94775507); a position with no
+    call neither fits nor fails (NUDT15 `*5` in HG00277); and an allele's score is how
+    many of its specified positions were read and match — which is PharmCAT's own
+    `matchScore`, agreeing on 1,055 of the 1,078 calls this reproduces. Reproducing the
+    printed call as the best-scoring arrangement is the license to name the other one:
+    1,078 of 1,132 two-allele calls (95.2%), and the other 54 say nothing.
+    **PharmCAT raises its own `ambiguity` message for 68 of the 82 it could otherwise
+    name** ("The assigned genotype is `*1/*6`; however, `*4/*9` cannot be ruled out"),
+    so this speaks for the other 14 —
+    0.23 per report, NAT2 5, SLCO1B1 2, NUDT15 2, TPMT 2, UGT1A1 2, G6PD 1 — 7 of them a
+    different phenotype. **PharmCAT's own sentence moved up beside the call with it**
+    (`place_warnings`), out of the list of PharmCAT's notes under the gene table where it
+    used to print: a reader who learned to look beside the call read the 68 as
+    unqualified. One slot, two possible authors, never both — PharmCAT's text unabridged
+    and under its name (68 of 68 placed over the 61 genomes; each is 87–110 characters,
+    1.11 per run, and every one names the diplotype its row shows, which is the condition
+    for placing it). The Methodology paragraph says "in its own words beside the call"
+    only where every one of them reached a row. NA18526's NUDT15 `*1/*3` (Intermediate Metabolizer) reads just
+    as well as `*3/*6` (Poor Metabolizer), 7,937 bp apart, and nothing in the report said
+    so. **Still open:** 42 of the 82 pairs lie within one 2x150 fragment, so the reads
+    could settle them. **And 13 of the 14 have both their positions in PyPGx's own panel
+    already** (`lexicon/allele-table.csv`, GRCh38Core and GRCh38Tag), so for those the
+    existing `read_phase.json` already counts the fragments over the very pair the call
+    rests on: the app can read the verdict out of a file the run already writes, with no
+    image rebuild. 6 of the 13 lie within one fragment (NAT2 4, UGT1A1 2), so those are
+    the ones a verdict would reach. To cover the rest, `docker/pypgx/read_phase.py` can
+    be handed PharmCAT's own panel: the pypgx container mounts `/reference`, where
+    `pharmcat/pharmcat_positions.vcf` carries every position PharmCAT genotypes with its
+    gene in `PX=`, so the lane can ask the question without waiting for PharmCAT to run.
+    What a note would need beyond the counts: which arrangement the printed call asserts
+    for that pair (cis or trans), which `app/reports/pharmcat_phase.arrangements` knows
+    and currently discards — it keeps the names and the score, not the assignment.
+    **Yield is small and unmeasurable here**: the 61 GeT-RM runs were VCF inputs, so none
+    has a `read_phase.json` at all, and their BAMs were deleted.
   - [DONE Nov 2026, fix/bam-upload-index] The read-phase check never ran on a BAM
     upload: it builds no index, and nothing indexed a BAM uploaded alone where it is
     read (each step indexed its own link to it), so every BAM report said nothing about

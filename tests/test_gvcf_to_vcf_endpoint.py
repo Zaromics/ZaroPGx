@@ -31,6 +31,7 @@ recorded fake, because neither exists in the unit-test environment.
 import gzip
 import hashlib
 import importlib.util
+import io
 import logging
 import os
 import re
@@ -40,6 +41,7 @@ import types
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -175,6 +177,45 @@ def client(gatk_api):
     return TestClient(gatk_api.app)
 
 
+class _FakeBgzip:
+    """What FakeTools.Popen hands back: a writable stdin and an exit code.
+
+    Gzip rather than BGZF, which is the same distinction the rest of this fake makes
+    (`bcftools view -O z` writes plain gzip here too): the module only ever reads these
+    files back through `gzip.open`, and `_looks_gzipped` checks the magic bytes both
+    formats share.
+    """
+
+    class _Stdin(io.BytesIO):
+        """A stdin that survives being closed, because the caller closes it.
+
+        `normalize_staged_gvcf` closes bgzip's stdin and then waits on it, exactly as a
+        real pipe requires. A bare BytesIO drops its buffer on close and `getvalue()`
+        then raises, so the bytes are kept here before close takes effect -- the fake
+        has to tolerate the real calling convention rather than dictate one.
+        """
+
+        def __init__(self):
+            super().__init__()
+            self.written = b""
+
+        def close(self):
+            self.written = self.getvalue()
+            super().close()
+
+    def __init__(self, sink, returncode):
+        self._sink = sink
+        self._returncode = returncode
+        self.stdin = self._Stdin()
+
+    def wait(self):
+        if self._sink is not None and self._returncode == 0:
+            written = self.stdin.written if self.stdin.closed else self.stdin.getvalue()
+            self._sink.write(gzip.compress(written))
+            self._sink.flush()
+        return self._returncode
+
+
 class FakeTools:
     """Stands in for the module's `subprocess` binding, recording every argv.
 
@@ -277,6 +318,20 @@ class FakeTools:
         if tool == "bcftools" and sub == "index":
             return [argv[-1]]
         return []
+
+    def Popen(self, argv, **kwargs):
+        """`bgzip -c`, the one tool this module drives by pipe rather than by argv.
+
+        normalize_staged_gvcf writes the renamed gVCF into bgzip's stdin so the file
+        never exists uncompressed -- an uncompressed whole-genome gVCF is tens of
+        gigabytes of scratch. The stand-in gzips whatever is written and hands back
+        something with bgzip's own interface: `.stdin`, and a `.wait()` returning the
+        exit code. `failing[('bgzip', '-c')]` provokes a non-zero one.
+        """
+        self.calls.append(argv)
+        code = self.failing.get((argv[0], argv[1] if len(argv) > 1 else ""), 0)
+        sink = kwargs.get("stdout")
+        return _FakeBgzip(sink, code)
 
     def run(self, argv, **kwargs):
         self.calls.append(argv)
@@ -998,8 +1053,13 @@ def test_an_empty_output_file_is_refused(client, tools):
 def test_a_failed_genotyping_pass_is_refused_with_the_tools_own_complaint(
     client, tools
 ):
-    """The `<*>`-flavoured gVCF failure arrives here if one slips past the upload gate,
-    and the operator needs GATK's own sentence to recognise it."""
+    """GATK's own sentence has to get out, whatever provoked it.
+
+    This failure used to be the `<*>` flavour's: that file is now renamed before either
+    pass runs (normalize_staged_gvcf), and a record carrying no symbolic allele at all
+    is refused there rather than here. What is left is every other way a pass can fail
+    -- and the operator still needs GATK's words to tell which.
+    """
     tools.failing[("gatk", "GenotypeGVCFs")] = 3
     tools.stderr = (
         b"A USER ERROR has occurred: The list of input alleles must contain "
@@ -2031,3 +2091,298 @@ def test_the_header_contigs_are_read_with_or_without_chr(gatk_api, tmp_path):
         "GSTT1": "22_KI270879v1_alt"
     }
     assert gatk_api.genes_off_reference([], SPANS) == {}
+
+
+# --------------------------------------------------------------------------
+# The reference-confidence allele, in the spelling GenotypeGVCFs reads
+# (normalize_gvcf_symbolic_allele, gvcf_symbolic_flavour, normalize_staged_gvcf)
+#
+# MEASURED, GATK 4.7.0.0 on a synthetic hg38 gVCF over PharmCAT's own 1,226 positions:
+#
+# * a `<*>` file renamed to `<NON_REF>` genotypes clean -- exit 0 in 2.3 s, 1,362 rows,
+#   no symbolic allele left in any ALT, and under the lane's own thresholds 1,361 rows
+#   read `reference` and 1 `variant` (the CYP2C19*2 1/1 the file carried).
+# * the same file with the symbolic allele missing from its ONE variant record dies
+#   with "A USER ERROR has occurred: The list of input alleles must contain <NON_REF>
+#   as an allele but that is not the case at position 94781859" -- after writing 115
+#   rows. That is why the audit runs here and not as a probe: GATK's own failure leaves
+#   a truncated VCF behind, and this endpoint's contract is a real conversion or a loud
+#   refusal, never a quiet partial one.
+# * `bcftools convert --gvcf2vcf` keeps `<*>` on every row it writes (86,227 of them
+#   from 1,225 blocks, one per base), so it is not the alternative. See the note above
+#   /gvcf-to-vcf, which records the same result for a GATK file.
+# --------------------------------------------------------------------------
+
+_STAR_BLOCK = b"chr10\t94761900\t.\tC\t<*>\t0\t.\tEND=94762000\tGT:GQ:MIN_DP:PL\t0/0:50:30:0,150,1500\n"
+_STAR_VARIANT = b"chr10\t94781859\trs4244285\tG\tA,<*>\t50\tPASS\t.\tGT:GQ:DP:AD:PL\t1/1:45:32:0,32,0:450,120,0,990,990,990\n"
+_COLUMNS = b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSYNTH\n"
+_STAR_DECLARATION = (
+    b'##ALT=<ID=*,Description="Represents any possible alternative allele">\n'
+)
+_NON_REF_DECLARATION = (
+    b'##ALT=<ID=NON_REF,Description="Represents any possible alternative allele">\n'
+)
+
+
+def _normalize(gatk_api, lines):
+    """(the lines written, the report) for one run of the pure normalizer."""
+    written = []
+    report = gatk_api.normalize_gvcf_symbolic_allele(lines, written.append)
+    return written, report
+
+
+def test_the_star_allele_is_renamed_to_gatks_in_the_alt_column(gatk_api):
+    written, report = _normalize(
+        gatk_api, [b"##fileformat=VCFv4.2\n", _COLUMNS, _STAR_BLOCK, _STAR_VARIANT]
+    )
+
+    assert report["renamed"] == 2, "both the block and the variant record carry it"
+    assert report["without_symbolic"] == 0
+    body = b"".join(written)
+    assert b"<*>" not in body
+    assert body.count(b"<NON_REF>") == 2
+    # The variant's real allele keeps its place, and keeps it FIRST: `A,<NON_REF>` is
+    # what GATK reads, and `<NON_REF>,A` would renumber the genotype's alleles.
+    assert b"G\tA,<NON_REF>\t50\tPASS" in body
+
+
+def test_only_the_alt_column_is_touched(gatk_api):
+    """A `<*>` anywhere else is data, and rewriting the line would edit it.
+
+    The ID column here is the one a record would carry a symbolic allele in by
+    accident; the sample column is the one where editing it would corrupt a genotype.
+    Neither is the ALT column, so neither may change -- and because this record's ALT
+    carries no symbolic allele at all, it must also be counted as an offender.
+    """
+    record = b"chr10\t94781859\t<*>\tG\tA\t50\tPASS\tNOTE=<*>\tGT:FT\t0/1:<*>\n"
+    written, report = _normalize(gatk_api, [_COLUMNS, record])
+
+    assert written[-1] == record, "the record must come through byte-for-byte"
+    assert report["renamed"] == 0
+    assert report["without_symbolic"] == 1
+    assert report["offenders"] == ["chr10:94781859"]
+
+
+def test_a_gatk_file_comes_through_unchanged(gatk_api):
+    lines = [
+        b"##fileformat=VCFv4.2\n",
+        _NON_REF_DECLARATION,
+        _COLUMNS,
+        b"chr10\t94761900\t.\tC\t<NON_REF>\t0\t.\tEND=94762000\tGT:GQ\t0/0:50\n",
+    ]
+    written, report = _normalize(gatk_api, list(lines))
+
+    assert written == lines, "nothing may be rewritten and nothing added"
+    assert report["renamed"] == 0
+    assert report["already_gatk"] == 1
+    assert report["declared"] is False
+
+
+def test_the_non_ref_declaration_is_added_once_when_the_file_lacks_it(gatk_api):
+    """A renamed file must declare the allele its records now use.
+
+    Added at the #CHROM line, which is the last header line there is -- after it the
+    records start, and a declaration below them is not a declaration.
+    """
+    written, report = _normalize(
+        gatk_api, [b"##fileformat=VCFv4.2\n", _STAR_DECLARATION, _COLUMNS, _STAR_BLOCK]
+    )
+
+    assert report["declared"] is True
+    body = b"".join(written)
+    assert body.count(_NON_REF_DECLARATION) == 1
+    assert body.index(_NON_REF_DECLARATION) < body.index(_COLUMNS)
+    # The file's own `##ALT=<ID=*>` line is left alone: bcftools writes it for a
+    # spanning deletion too, so removing it would be editing a header on a guess.
+    assert _STAR_DECLARATION in body
+
+
+def test_an_existing_declaration_is_not_duplicated(gatk_api):
+    written, report = _normalize(
+        gatk_api, [_NON_REF_DECLARATION, _COLUMNS, _STAR_BLOCK]
+    )
+
+    assert report["declared"] is False
+    assert b"".join(written).count(_NON_REF_DECLARATION) == 1
+
+
+def test_the_rename_is_idempotent(gatk_api):
+    once, _ = _normalize(gatk_api, [b"##fileformat=VCFv4.2\n", _COLUMNS, _STAR_BLOCK])
+    twice, report = _normalize(gatk_api, list(once))
+
+    assert twice == once, "a second pass must change nothing"
+    assert report["renamed"] == 0
+    assert report["already_gatk"] == 1
+
+
+def test_records_with_no_symbolic_allele_are_counted_and_the_first_few_named(gatk_api):
+    """The audit GenotypeGVCFs cannot do for us without writing output first.
+
+    Only a bounded number are named -- enough to recognise the file, short enough to
+    read in an error -- so the count has to carry the rest.
+    """
+    plain = [
+        b"chr10\t%d\t.\tG\tA\t50\tPASS\t.\tGT\t0/1\n" % pos
+        for pos in (94781859, 94781860, 94781861, 94781862, 94781863)
+    ]
+    _, report = _normalize(gatk_api, [_COLUMNS, _STAR_BLOCK] + plain)
+
+    assert report["renamed"] == 1
+    assert report["without_symbolic"] == 5
+    assert report["offenders"] == ["chr10:94781859", "chr10:94781860", "chr10:94781861"]
+    assert len(report["offenders"]) == gatk_api.GVCF_SYMBOLIC_OFFENDERS_NAMED
+
+
+def test_a_truncated_record_is_counted_as_carrying_no_symbolic_allele(gatk_api):
+    """Fail closed: a row this cannot read is a row GenotypeGVCFs might still try to."""
+    short = b"chr10\t94781859\t.\tG\n"
+    written, report = _normalize(gatk_api, [_COLUMNS, short])
+
+    assert written[-1] == short
+    assert report["without_symbolic"] == 1
+
+
+def _write_gvcf(path, records, declaration=_STAR_DECLARATION, gzipped=True):
+    text = b"##fileformat=VCFv4.2\n" + declaration + _COLUMNS + b"".join(records)
+    path.write_bytes(gzip.compress(text) if gzipped else text)
+    return path
+
+
+def test_the_flavour_probe_reads_the_records_not_the_header(gatk_api, tmp_path):
+    """A GenotypeGVCFs output declares `##ALT=<ID=NON_REF>` with no such allele left in
+    any record, so the declaration is evidence of nothing -- the same trap
+    app/api/utils/file_processor.py's `_gvcf_symbolic_allele` documents.
+    """
+    genotyped = _write_gvcf(
+        tmp_path / "genotyped.vcf.gz",
+        [b"chr10\t94781859\t.\tG\tA\t500\tPASS\t.\tGT:AD:DP\t0/1:20,18:38\n"],
+        declaration=_NON_REF_DECLARATION,
+    )
+
+    assert gatk_api.gvcf_symbolic_flavour(str(genotyped)) is None
+
+
+@pytest.mark.parametrize(
+    "records,expected",
+    [
+        ([_STAR_BLOCK], b"<*>"),
+        (
+            [b"chr10\t94761900\t.\tC\t<NON_REF>\t0\t.\tEND=94762000\tGT\t0/0\n"],
+            b"<NON_REF>",
+        ),
+    ],
+    ids=["star", "non_ref"],
+)
+def test_the_flavour_probe_names_the_allele_the_records_use(
+    gatk_api, tmp_path, records, expected
+):
+    path = _write_gvcf(tmp_path / "probe.vcf.gz", records)
+
+    assert gatk_api.gvcf_symbolic_flavour(str(path)) == expected
+
+
+def test_the_flavour_probe_reads_a_plain_uncompressed_file_too(gatk_api, tmp_path):
+    """The staged copy is bgzipped, but this must not depend on that: the probe picks
+    its opener from the magic bytes, like `drop_zaropgx_header_lines` beside it."""
+    path = _write_gvcf(tmp_path / "probe.vcf", [_STAR_BLOCK], gzipped=False)
+
+    assert gatk_api.gvcf_symbolic_flavour(str(path)) == b"<*>"
+
+
+def test_the_flavour_probe_is_bounded(gatk_api, tmp_path):
+    """It must not read a whole-genome gVCF to answer a question about its shape."""
+    filler = [
+        b"chr10\t%d\t.\tG\tA\t50\tPASS\t.\tGT\t0/1\n" % (94761900 + offset)
+        for offset in range(gatk_api.GVCF_FLAVOUR_PROBE_RECORDS + 5)
+    ]
+    path = _write_gvcf(tmp_path / "late.vcf.gz", filler + [_STAR_BLOCK])
+
+    assert gatk_api.gvcf_symbolic_flavour(str(path)) is None, "beyond the budget"
+    assert (
+        gatk_api.gvcf_symbolic_flavour(str(path), limit=len(filler) + 1) == b"<*>"
+    ), "and found when the budget reaches it"
+
+
+def test_staging_leaves_a_gatk_gvcf_byte_for_byte_alone(
+    gatk_api, tmp_path, monkeypatch
+):
+    """The common case must not pay for this. A full decompress-and-recompress of a
+    whole-genome gVCF is minutes, and a GATK file needs none of it."""
+    staged = _write_gvcf(
+        tmp_path / "staged.vcf.gz",
+        [b"chr10\t94761900\t.\tC\t<NON_REF>\t0\t.\tEND=94762000\tGT\t0/0\n"],
+        declaration=_NON_REF_DECLARATION,
+    )
+    before = staged.read_bytes()
+    tools = FakeTools()
+    monkeypatch.setattr(gatk_api, "subprocess", tools)
+
+    assert gatk_api.normalize_staged_gvcf("job", str(staged), str(tmp_path)) is None
+    assert staged.read_bytes() == before
+    assert tools.argvs() == [], "no tool may run for a file that needs no rename"
+
+
+def test_staging_renames_a_star_gvcf_in_place_and_reports_it(
+    gatk_api, tmp_path, monkeypatch
+):
+    staged = _write_gvcf(tmp_path / "staged.vcf.gz", [_STAR_BLOCK, _STAR_VARIANT])
+    tools = FakeTools()
+    monkeypatch.setattr(gatk_api, "subprocess", tools)
+
+    report = gatk_api.normalize_staged_gvcf("job", str(staged), str(tmp_path))
+
+    assert report["renamed"] == 2
+    assert report["flavour"] == "<*>"
+    # In place: what the next step indexes and genotypes is the renamed file.
+    rewritten = gzip.decompress(staged.read_bytes())
+    assert b"<*>" not in rewritten
+    assert rewritten.count(b"<NON_REF>") == 2
+    assert _NON_REF_DECLARATION in rewritten
+    # Written through bgzip rather than to a plain file: an uncompressed whole-genome
+    # gVCF is tens of gigabytes of scratch.
+    assert tools.ran("bgzip", "-c"), tools.argvs()
+
+
+def test_a_star_gvcf_with_a_record_lacking_the_allele_is_refused_before_gatk_runs(
+    gatk_api, tmp_path, monkeypatch
+):
+    """MEASURED: GenotypeGVCFs writes 115 rows and THEN dies on such a record. The
+    refusal has to happen here, where no output exists yet to be truncated.
+    """
+    staged = _write_gvcf(
+        tmp_path / "staged.vcf.gz",
+        [_STAR_BLOCK, b"chr10\t94781859\trs4244285\tG\tA\t50\tPASS\t.\tGT\t1/1\n"],
+    )
+    before = staged.read_bytes()
+    tools = FakeTools()
+    monkeypatch.setattr(gatk_api, "subprocess", tools)
+
+    with pytest.raises(HTTPException) as caught:
+        gatk_api.normalize_staged_gvcf("job", str(staged), str(tmp_path))
+
+    assert caught.value.status_code == 422
+    detail = caught.value.detail
+    assert "chr10:94781859" in detail, "the operator needs the position"
+    assert "1 of its record carries" in detail, "the plural reads as a typo"
+    assert "must contain NON_REF" in detail, "and GATK's own sentence"
+    # Why renaming is not the answer here, so nobody tries to make it one.
+    assert "inventing data" in detail
+    assert staged.read_bytes() == before, "the staged file must be left as it was"
+    assert tools.genotype_calls() == [], "nothing may be genotyped"
+
+
+def test_a_failed_bgzip_is_refused_rather_than_half_written(
+    gatk_api, tmp_path, monkeypatch
+):
+    staged = _write_gvcf(tmp_path / "staged.vcf.gz", [_STAR_BLOCK])
+    before = staged.read_bytes()
+    tools = FakeTools()
+    tools.failing[("bgzip", "-c")] = 1
+    monkeypatch.setattr(gatk_api, "subprocess", tools)
+
+    with pytest.raises(HTTPException) as caught:
+        gatk_api.normalize_staged_gvcf("job", str(staged), str(tmp_path))
+
+    assert caught.value.status_code == 500
+    assert "bgzip exited 1" in caught.value.detail
+    assert staged.read_bytes() == before

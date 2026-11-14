@@ -48,6 +48,13 @@ The paragraph also carries the two caveats the reader is owed:
   a no-call, and the emitted genotypes are not guaranteed identical to the original
   caller's.
 
+* The rename, where there was one. ``GenotypeGVCFs`` reads GATK's ``<NON_REF>``
+  reference blocks only, so a gVCF written with ``<*>`` -- DeepVariant's spelling --
+  has that allele renamed while gatk-api stages it (``normalize_staged_gvcf``). The reader is owed this because the file that was
+  genotyped is not byte-for-byte the file they uploaded. The sentence also says what
+  the rename does NOT touch, which is everything else: "we rewrote your genome file"
+  is alarming in precisely the way a true statement here must not be.
+
 Not carried, and deliberately: the count of positions PharmCAT discarded for indel
 representation mismatch. It is in PharmCAT's ``*.match_warnings.txt``, which nothing
 in this repo reads; the fact is stated qualitatively below instead of with a number
@@ -59,6 +66,7 @@ place, hand the template a string, let the template render it only if it resolve
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any, Mapping, Optional
 
 
@@ -156,12 +164,39 @@ def gvcf_provenance_paragraph(
     else:
         assume_ref = "Reference genotypes are called data, not assumed. "
 
+    # What was done to the file before GATK read it, where anything was. GenotypeGVCFs
+    # reads GATK's `<NON_REF>` reference blocks only, so a gVCF written with `<*>`
+    # (DeepVariant's spelling) has that allele renamed while it is staged. The reader is told because the file that was genotyped is not byte-for-byte
+    # the file they uploaded -- and told what the rename does NOT touch, because "we
+    # rewrote your genome file" is alarming in exactly the way this sentence must not be.
+    renamed_from = output_data.get("symbolic_allele_renamed_from")
+    if renamed_from:
+        count = _as_count(output_data.get("n_symbolic_alleles_renamed"))
+        how_many = f"{count:,} records" if count else "its records"
+        # ESCAPED. The allele is `<*>`, and a raw one here is parsed as a tag and
+        # vanishes from the sentence -- the same trap the upload refusals document from
+        # the other side (they write NON_REF without its brackets because their text is
+        # assigned with innerHTML). This paragraph is HTML, so the escape is the fix,
+        # and it comes from the step's output_data rather than from this module, so it
+        # is escaped rather than trusted.
+        allele = escape(str(renamed_from))
+        normalized = (
+            f"This file wrote its reference blocks with the "
+            f"<code>{allele}</code> allele rather than GATK's "
+            f"<code>&lt;NON_REF&gt;</code>, which <code>GenotypeGVCFs</code> is the "
+            f"only one it reads, so that allele was renamed in {how_many} first. Only "
+            f"the name changed: the blocks, their genotypes, their qualities and their "
+            f"depths are your caller's, as it wrote them. "
+        )
+    else:
+        normalized = ""
+
     return (
         "<p><strong>gVCF genotyping:</strong> This gVCF was genotyped with GATK "
         "<code>GenotypeGVCFs</code> over PharmCAT's positions "
         "(<code>--include-non-variant-sites</code>) before analysis. "
-        f"{coverage}{assume_ref}Genotypes are re-derived from the recorded likelihoods "
-        "and may differ from the original caller's; low-confidence sites are "
-        "no-calls. An indel PharmCAT cannot match stays a no-call, as with a plain "
+        f"{normalized}{coverage}{assume_ref}Genotypes are re-derived from the recorded "
+        "likelihoods and may differ from the original caller's; low-confidence sites "
+        "are no-calls. An indel PharmCAT cannot match stays a no-call, as with a plain "
         "VCF.</p>"
     )

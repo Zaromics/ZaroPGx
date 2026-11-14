@@ -90,13 +90,50 @@ GVCF_BYTES = (
 
 # A DeepVariant-shaped gVCF: reference blocks written as `<*>`, and NO ##GVCFBlock
 # record at all, so nothing in the header says "gVCF" and the records are the only
-# evidence there is. GenotypeGVCFs hard-fails on this file, which is why it is refused
-# rather than converted.
+# evidence there is. ACCEPTED: GenotypeGVCFs reads GATK's `<NON_REF>` only, so gatk-api
+# renames the allele while staging the file and this takes the ordinary gVCF lane
+# (docker/gatk-api/gatk_api.py's normalize_staged_gvcf).
 STAR_GVCF_BYTES = (
     VCF_HEADER
     + b'##ALT=<ID=*,Description="Represents any possible alternative allele">\n'
     + VCF_COLUMNS
     + b"chr10\t94781859\t.\tG\t<*>\t0\t.\tEND=94781900\tGT:GQ\t0/0:50\n"
+)
+
+# A gVCF by its NAME alone, whose records carry NEITHER symbolic allele -- so nothing
+# says which spelling its blocks use. This is the shape that is still refused:
+# renaming cannot add an allele that is not there, and GenotypeGVCFs stops on such a
+# record AFTER writing output (measured: 115 rows, then "The list of input alleles must
+# contain <NON_REF> as an allele").
+#
+# Deliberately NO ``##GVCFBlock`` record. That record is GATK-only and
+# ``_gvcf_symbolic_allele`` treats it as decisive for the ``<NON_REF>`` flavour without
+# reading a record at all, so a file carrying one is a GATK file by construction and
+# cannot stand in for this case. The name is what routes it to the gVCF lane here.
+UNCONFIRMED_GVCF_BYTES = (
+    VCF_HEADER
+    + VCF_COLUMNS
+    + b"chr10\t94781859\t.\tG\tA\t500\tPASS\t.\tGT:AD:DP\t0/1:20,18:38\n"
+)
+
+# A bcftools gVCF, in the shape bcftools 1.24 actually writes it. MEASURED with
+# `bcftools mpileup -a FORMAT/DP -f <ref> | bcftools call -m -g 10` over a real BAM:
+# the reference blocks carry NO alternate allele -- ALT `.`, the extent in INFO END,
+# `GT:DP 0/0:30` and no PL. So `bcftools call -g` does NOT write `<*>`, which this repo
+# claimed in several places until it was measured.
+#
+# It must be TYPED a gVCF even though it is refused, and that is the point of the
+# fixture: PharmCAT's own detector fires on a row whose ALT is `.` spanning more than
+# one base, so a file like this typed as a plain VCF is carried the whole way down and
+# then refused INSIDE PharmCAT, behind main.nf's `|| true` -- no PharmCAT output and no
+# error at all.
+BCFTOOLS_GVCF_BYTES = (
+    VCF_HEADER
+    + b'##ALT=<ID=*,Description="Represents allele(s) other than observed.">\n'
+    + b'##INFO=<ID=END,Number=1,Type=Integer,Description="End position">\n'
+    + VCF_COLUMNS
+    + b"chr10\t94762900\t.\tA\t.\t.\t.\tEND=94762974;MIN_DP=30\tGT:DP\t0/0:30\n"
+    + b"chr10\t94762975\t.\tT\tC\t189.4\t.\tDP=30\tGT:PL:DP:AD\t1/1:219,90,0:30:0,30\n"
 )
 
 # An ordinary bcftools VCF that happens to declare `##ALT=<ID=*>` because a spanning
@@ -430,28 +467,84 @@ def test_the_gvcf_plan_never_recommends_the_command_that_deletes_variants():
     ],
     ids=["named-gvcf", "named-plain-vcf"],
 )
-def test_a_non_gatk_gvcf_is_refused_before_a_job_exists(upload, name, payload):
+def test_a_deepvariant_gvcf_reaches_the_pipeline_instead_of_a_refusal(
+    upload, name, payload
+):
+    """The `<*>` flavour is converted, not refused.
+
+    MEASURED, GATK 4.7.0.0 over PharmCAT's 1,226 positions: renaming the allele to
+    `<NON_REF>` genotypes clean -- exit 0, 1,362 rows, 1,361 of them reference calls
+    under the lane's own thresholds and the one variant the file carried. The rename
+    happens in gatk-api while the file is staged, so nothing about this lane differs
+    from a GATK gVCF's downstream of it.
+    """
     resp = upload(name, payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["file_type"] == "gvcf", "not quietly typed as a plain VCF"
+
+
+def test_a_deepvariant_gvcf_plans_the_same_genotyping_a_gatk_one_does():
+    star = _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele="*")
+    gatk = _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele="NON_REF")
+
+    assert star["unsupported"] is False
+    for flag in ("needs_conversion", "needs_gvcf_genotyping", "needs_gatk"):
+        assert star[flag] is True, flag
+        assert star[flag] == gatk[flag], flag
+
+
+def test_the_plan_tells_the_uploader_their_file_will_be_rewritten():
+    """Before the job starts, not only in the report afterwards.
+
+    And it has to say what the rename does NOT touch: "we rewrote your genome file" is
+    alarming in precisely the way a true statement here must not be.
+    """
+    plan = " ".join(
+        _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele="*")["recommendations"]
+    ).lower()
+
+    assert "renamed" in plan
+    assert "non_ref" in plan
+    # what is NOT changed, which is everything else
+    assert "genotypes" in plan and "depths" in plan
+
+    untouched = " ".join(
+        _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele="NON_REF")["recommendations"]
+    ).lower()
+    assert "renamed" not in untouched, "a GATK file is not rewritten, so say nothing"
+
+
+def test_a_gvcf_carrying_neither_symbolic_allele_is_refused_before_a_job_exists(upload):
+    """Renaming cannot add an allele that is not there.
+
+    MEASURED: GenotypeGVCFs genotypes every record and stops on one with no symbolic
+    allele -- having already written 115 rows. So this is refused at the door, where
+    there is no partial output to hand downstream.
+    """
+    resp = upload("sample.g.vcf", UNCONFIRMED_GVCF_BYTES)
 
     assert resp.status_code == 400, resp.text
     assert upload.created_patients == [], "refusal must precede any patient/job row"
 
     detail = resp.json()["detail"].lower()
-    # the reason: GenotypeGVCFs is the conversion, and it stops on this file
+    # the reason: GenotypeGVCFs is the conversion, and it cannot read this file
     assert "genotypegvcfs" in detail
     assert "non_ref" in detail
+    # that the OTHER flavour is fine, so nobody reads this as "DeepVariant is refused"
+    assert "renamed" in detail
     # the way out: use the caller's own tool, or hand over the alignment
     for accepted in ("bam", "cram", "sam"):
         assert accepted in detail
 
 
-def test_a_non_gatk_gvcf_plans_no_steps_it_cannot_run():
+def test_a_gvcf_carrying_neither_allele_plans_no_steps_it_cannot_run():
     """No needs_* flag may promise a conversion that is refused at the door.
 
     needs_conversion in particular: it mints a real step, and a flag that names a step
     must only be set by an input that step can finish.
     """
-    workflow = _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele="*")
+    workflow = _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele=None)
 
     assert workflow["unsupported"] is True
     assert workflow["is_provisional"] is False
@@ -476,6 +569,91 @@ def test_a_gvcf_whose_flavour_cannot_be_confirmed_is_refused():
 
     assert workflow["unsupported"] is True
     assert workflow["needs_conversion"] is False
+
+
+def test_a_bcftools_gvcf_is_typed_a_gvcf_rather_than_a_plain_vcf(tmp_path):
+    """The silent failure this detection exists to stop.
+
+    PharmCAT's own rule for "this is a gVCF" includes a row whose ALT is `.` spanning
+    more than one base, so a bcftools gVCF typed as a plain VCF reaches PharmCAT and is
+    refused THERE -- behind main.nf's `|| true`, which swallows it. The run then
+    "completes" with no PharmCAT output and no error. Typed here, it is refused at the
+    door with a reason instead.
+    """
+    from app.api.models import FileType
+    from app.api.utils.file_processor import FileProcessor
+
+    path = tmp_path / "sample.vcf"
+    path.write_bytes(BCFTOOLS_GVCF_BYTES)
+
+    assert (
+        FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.GVCF
+    ), "a bare-block gVCF named as a plain VCF must still be typed gvcf"
+
+
+def test_a_bcftools_gvcf_is_refused_and_named_as_the_format_it_is(upload):
+    """It is a recognised format, not a puzzle, so the copy says whose it is and why
+    renaming -- the thing that rescues a DeepVariant file -- cannot rescue this one."""
+    resp = upload("sample.vcf", BCFTOOLS_GVCF_BYTES)
+
+    assert resp.status_code == 400, resp.text
+    assert upload.created_patients == []
+
+    detail = resp.json()["detail"].lower()
+    assert "bcftools" in detail, "name the tool that wrote it"
+    assert "no alternate allele" in detail
+    assert "end" in detail
+    # why the DeepVariant rescue does not apply here
+    assert "no allele to rename" in detail
+    assert "no pl" in detail or "gt:dp" in detail
+    for accepted in ("bam", "cram", "sam"):
+        assert accepted in detail
+
+
+def test_a_bcftools_gvcf_plans_no_steps_it_cannot_run():
+    workflow = _gvcf_workflow(vcf_info=None, gvcf_symbolic_allele=".")
+
+    assert workflow["unsupported"] is True
+    assert workflow["is_provisional"] is False
+    for flag in ("needs_conversion", "needs_gvcf_genotyping", "needs_gatk"):
+        assert workflow[flag] is False, flag
+
+
+def test_an_alt_less_row_without_an_extent_is_not_a_reference_block(tmp_path):
+    """Both halves of PharmCAT's rule are needed.
+
+    A plain VCF may hold an ALT-less row -- a position called and found reference -- and
+    that is not a block. What makes one is covering ground the row does not spell out,
+    which is the INFO END. Reading ALT `.` alone as a block would type ordinary VCFs as
+    gVCFs and refuse them.
+    """
+    from app.api.models import FileType
+    from app.api.utils.file_processor import FileProcessor
+
+    path = tmp_path / "sample.vcf"
+    path.write_bytes(
+        VCF_HEADER
+        + VCF_COLUMNS
+        + b"chr10\t94762900\t.\tA\t.\t50\tPASS\t.\tGT:DP\t0/0:30\n"
+    )
+
+    assert FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.VCF
+
+
+def test_an_end_on_a_symbolic_alt_is_a_structural_variant_not_a_block(tmp_path):
+    """`<DEL>` and `<DUP>` records carry END legitimately, and an ordinary VCF full of
+    them must not be read as a gVCF."""
+    from app.api.models import FileType
+    from app.api.utils.file_processor import FileProcessor
+
+    path = tmp_path / "sample.vcf"
+    path.write_bytes(
+        VCF_HEADER
+        + VCF_COLUMNS
+        + b"chr10\t94762900\t.\tA\t<DEL>\t50\tPASS\tEND=94763000\tGT\t0/1\n"
+    )
+
+    assert FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.VCF
 
 
 def test_a_grch37_gvcf_is_refused_and_says_what_is_actually_missing():
@@ -579,7 +757,7 @@ def test_the_gvcf_refusals_carry_no_markup_of_their_own():
             sample_count=1,
         )
     )
-    for workflow in (_gvcf_workflow(vcf_info=None, gvcf_symbolic_allele="*"), grch37):
+    for workflow in (_gvcf_workflow(vcf_info=None, gvcf_symbolic_allele=None), grch37):
         detail = workflow["unsupported_reason"]
         assert "<" not in detail and ">" not in detail, detail
         assert "&lt;" not in detail and "&amp;" not in detail, detail
@@ -603,7 +781,23 @@ def test_the_preview_plans_the_genotyping_for_a_gvcf(client):
     assert workflow["needs_gvcf_genotyping"] is True
 
 
-def test_the_preview_marks_a_non_gatk_gvcf_as_refused(client):
+def test_the_preview_marks_an_unconfirmed_gvcf_as_refused(client):
+    resp = client.post(
+        "/upload/inspect-header",
+        files={
+            "file": ("sample.g.vcf", UNCONFIRMED_GVCF_BYTES, "application/octet-stream")
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    workflow = resp.json()["compat"]["workflow"]
+    assert workflow["refused"] is True
+    assert "genotypegvcfs" in (workflow["refusal_reason"] or "").lower()
+
+
+def test_the_preview_plans_the_genotyping_for_a_deepvariant_gvcf(client):
+    """The preview and the upload gate must reach the same verdict here too: the
+    `<*>` flavour is converted, so the panel must not mark it refused."""
     resp = client.post(
         "/upload/inspect-header",
         files={"file": ("sample.g.vcf", STAR_GVCF_BYTES, "application/octet-stream")},
@@ -611,8 +805,8 @@ def test_the_preview_marks_a_non_gatk_gvcf_as_refused(client):
 
     assert resp.status_code == 200, resp.text
     workflow = resp.json()["compat"]["workflow"]
-    assert workflow["refused"] is True
-    assert "genotypegvcfs" in (workflow["refusal_reason"] or "").lower()
+    assert workflow["refused"] is False
+    assert workflow["needs_gvcf_genotyping"] is True
 
 
 @pytest.mark.parametrize(

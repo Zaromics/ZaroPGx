@@ -41,6 +41,12 @@ _GENE_SHAPE_KEYS = frozenset(
         "sourceDiplotypes",
         "recommendationDiplotypes",
         "alleleDefinitionVersion",
+        # A gene block carries the positions its matcher read; a guideline source
+        # carries gene symbols and nothing else. Without this a payload holding only
+        # variants and a callSource was read as a source bucket, and every gene under
+        # it disappeared -- which is what app/reports/pharmcat_variants.py hit when it
+        # moved onto this walker.
+        "variants",
     }
 )
 

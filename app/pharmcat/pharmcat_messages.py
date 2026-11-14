@@ -8,7 +8,9 @@ none of them. Its kinds (``exception_type``), from the rules in the 3.4.0 jar's
 reporter/messages.json and the ones PharmCAT adds as it runs:
 
 - ambiguity (38 rules): "The assigned genotype is *1/*15; however, *5/*37 cannot
-  be ruled out without phased data.";
+  be ruled out without phased data." -- the one kind that qualifies the printed call
+  rather than the gene, so the report shows it beside the call and not in the list
+  below it (AMBIGUITY, is_ambiguity; app/reports/pharmcat_phase.place_warnings);
 - note (14): G6PD hemizygous samples, UGT1A1*80 without *28 or *37, the phenytoin
   HLA-B warning, the warfarin flowchart and VKORC1 notes, SLCO1B1 drug text, ...;
 - footnote (6): the reverse-strand footnotes (CYP3A5, DPYD, IFNL3, TPMT, VKORC1)
@@ -31,6 +33,11 @@ text only when SLCO1B1 has no call (WHEN_NOT_CALLED). Everything else is shown i
 PharmCAT's text: its markup removed (a link as "words (url)"), the words
 unchanged. Rows with no call keep theirs: PharmCAT gives an uncalled RYR1 its
 malignant hyperthermia warning.
+
+Nothing here is abridged or reworded, wherever it is shown: PharmCAT's sentence is
+printed as PharmCAT wrote it, named as PharmCAT's. The credits carry the rest of the
+attribution -- PharmCAT under MPL-2.0, the ClinPGx content it carries under
+CC-BY-SA-4.0, and its methods paper in the references (app/reports/credits.py).
 """
 
 from __future__ import annotations
@@ -39,6 +46,30 @@ import html
 import re
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
+
+#: PharmCAT's own statement that a call's pairing could be read another way: "The
+#: assigned genotype is *1/*6; however, *4/*9 cannot be ruled out without phased data."
+#: It is the one message that qualifies the printed call rather than the gene or the
+#: drug, so the report shows it beside the call instead of in the notes below
+#: (app/reports/pharmcat_phase.py places it; _pypgx_evidence.html's call_notes renders
+#: it). The type is what identifies it -- every one of the 68 in the 61 GeT-RM genomes
+#: carries it -- and the phrase is checked as well, so a message that says this without
+#: being typed for it is still read as saying it.
+AMBIGUITY = "cannot be ruled out"
+
+
+def is_ambiguity(message: Mapping[str, Any]) -> bool:
+    """Whether this is PharmCAT's ambiguity message, in either shape: a raw message
+    from report.json (``exception_type``/``message``) or an entry ``_entry`` built
+    from one (``kind``/``paragraphs``)."""
+    kind = message.get("exception_type") or message.get("kind") or ""
+    if str(kind).strip().lower() == "ambiguity":
+        return True
+    text = message.get("message")
+    if text is None:
+        text = " ".join(message.get("paragraphs") or [])
+    return AMBIGUITY in str(text or "")
+
 
 # Rules whose content the report states itself, and where. The two positions
 # rules only when the report's positions alert (Alerts and Warnings: "Positions not

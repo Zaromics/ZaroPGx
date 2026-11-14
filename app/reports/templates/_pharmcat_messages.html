@@ -18,20 +18,29 @@
 {#- Every row with messages, called or not: PharmCAT gives an uncalled RYR1 (data,
     but no call) its malignant hyperthermia warning. One line a gene, its notes in
     PharmCAT's order. PharmCAT's strand footnote, the same words for each gene on
-    the negative strand, is said once after them (``strand``). -#}
+    the negative strand, is said once after them (``strand``).
+
+    A message already shown beside the call is marked ``placed``
+    (app/reports/pharmcat_phase.place_warnings: PharmCAT's ambiguity message, which
+    qualifies the printed call rather than the gene) and is not repeated here. It
+    stays on the row, so the API and the interactive gene data carry it either way. -#}
 {% macro gene_notes(rows, general=[], strand=[]) -%}
-{%- set with_messages = rows|selectattr('pharmcat_messages')|list %}
-{%- if with_messages or general or strand %}
+{%- set listed = [] %}
+{%- for d in rows %}
+{%- set notes = (d.pharmcat_messages or [])|rejectattr('placed')|list %}
+{%- if notes %}{% set _ = listed.append((d, notes)) %}{% endif %}
+{%- endfor %}
+{%- if listed or general or strand %}
 <div class="pharmcat-messages">
     <h4>PharmCAT's notes on these calls</h4>
-    {%- if with_messages or general %}
+    {%- if listed or general %}
     <p class="header-note">In PharmCAT's words, from its report.</p>
     <ul class="pharmcat-message-list">
     {%- for m in general %}
         <li>{{ source(m) }} {{ message_body(m) }}</li>
     {%- endfor %}
-    {%- for d in with_messages %}
-        <li><strong>{{ d.gene }}</strong>{% if d.diplotype is not a_call %} (not called){% endif %}: {% for m in d.pharmcat_messages %}{{ message_body(m) }}{% if not loop.last %} {% endif %}{% endfor %}</li>
+    {%- for d, notes in listed %}
+        <li><strong>{{ d.gene }}</strong>{% if d.diplotype is not a_call %} (not called){% endif %}: {% for m in notes %}{{ message_body(m) }}{% if not loop.last %} {% endif %}{% endfor %}</li>
     {%- endfor %}
     </ul>
     {%- endif %}

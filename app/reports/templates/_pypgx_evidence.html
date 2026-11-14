@@ -21,6 +21,19 @@
 {%- elif d.read_phase_open and d.diplotype is a_call %}
 <div class="call-note read-phase-note">{{ d.read_phase_open.call_note }}</div>
 {%- endif %}
+{#- The same point for a call PharmCAT made itself: it read an unphased file, so
+    where a gene has two or more heterozygous defining positions the pairing is the
+    most specific one its definitions allow, and another reading is available
+    (app/reports/pharmcat_phase.py). No mark: nothing is contradicted, the call is
+    qualified. One slot, two possible authors, never both: PharmCAT raises its own
+    ambiguity message for most such calls and this report reads the rest out of the
+    same definitions. PharmCAT's is its own sentence, unabridged, and carries its name
+    because everything else beside a call is this report speaking. #}
+{%- if d.pharmcat_ambiguity and d.diplotype is a_call %}
+<div class="call-note read-phase-note"><span class="pharmcat-message-source">{{ d.pharmcat_ambiguity.source }}:</span> {{ d.pharmcat_ambiguity.call_note }}</div>
+{%- elif d.pharmcat_phase and d.diplotype is a_call %}
+<div class="call-note read-phase-note">{{ d.pharmcat_phase.call_note }}</div>
+{%- endif %}
 {#- A call on a gene with SV-defined alleles made without copy number
     (app/reports/copy_number.py): what it cannot show, marked. A call whose copy
     number PyPGx measured is not: its note (CYP2B6 *30) is plain. #}
