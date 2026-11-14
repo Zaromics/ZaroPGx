@@ -1,4 +1,28 @@
-"""23andMe and AncestryDNA exports are recognised by name and refused for now.
+"""23andMe and AncestryDNA exports: recognized by shape, and now analyzed.
+
+ACCEPTED as of 2026-11-12. This file was ``test_consumer_array_refusal.py`` and pinned
+the refusal; the detection half below is unchanged, because what detects these files was
+never the problem. What changed is the two things that made a chip dangerous:
+
+* **The conversion keys on the rs identifier**, reading the chip onto PharmCAT's own
+  GRCh38 positions (``app/api/utils/consumer_array.py``). The route this module's old
+  docstring proposed -- ``bcftools convert --tsv2vcf`` and then the liftover -- silently
+  drops rs6025, Factor V Leiden: a homozygous-reference chip row is ``REF=T ALT=.`` and
+  Picard cannot swap a reference allele with an ALT that is not there. Seven of
+  PharmCAT's 1,226 positions are exposed to that.
+* **A gene is no longer given a verdict the data cannot support.** The old docstring
+  below said "PharmCAT alone degrades honestly: a position it cannot see is a no-call".
+  MEASURED, that is false: the full pipeline, with neither assume-reference flag and no
+  PyPGx anywhere, reported CYP2C9 Normal Metabolizer, Activity Score 2.0 from 2 of 88
+  positions. The AMP/CAP Tier 1 gate (``app/pharmcat/amp_tier1.py``) withholds such a
+  verdict and names the alleles it could not assess.
+
+PyPGx does not run on this lane, which is the original argument answered rather than
+worked around: its absent-is-reference reading was the reason these files were refused.
+
+Original docstring follows, for the history of why they were refused at all.
+
+23andMe and AncestryDNA exports are recognized by name and refused for now.
 
 Two separate defects are closed here.
 
@@ -153,21 +177,28 @@ def _workflow_for(file_type: FileType) -> dict:
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)
-def test_an_array_upload_is_refused_by_the_gate(file_type):
+def test_an_array_upload_passes_the_gate(file_type):
+    """The gate exists to keep an input off the queue when the pipeline cannot finish
+    it. It can finish this one now, so the flag is cleared and the reason is gone --
+    ``is_provisional`` carries what is left to say."""
     workflow = _workflow_for(file_type)
 
-    assert workflow["unsupported"] is True
-    assert workflow["is_provisional"] is False
-    assert _unanalysable_upload_reason(workflow)
+    assert workflow["unsupported"] is False
+    assert workflow["is_provisional"] is True
+    assert _unanalysable_upload_reason(workflow) is None
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)
-def test_the_refusal_names_the_vendor_rather_than_calling_it_unrecognised(file_type):
-    reason = _workflow_for(file_type)["unsupported_reason"]
+def test_the_plan_names_the_vendor_rather_than_calling_it_unrecognized(file_type):
+    """The defect this file was written for: an AncestryDNA export used to be reported
+    as "Unrecognized file format: unknown" -- a file we can name exactly, and measure.
+    """
+    workflow = _workflow_for(file_type)
+    text = " ".join(workflow["warnings"] + workflow["recommendations"])
     vendor = "23andMe" if file_type is FileType.TWENTYTHREE_AND_ME else "AncestryDNA"
 
-    assert vendor in reason
-    assert "Unrecognized" not in reason
+    assert vendor in text
+    assert "Unrecognized" not in text
 
 
 @pytest.mark.parametrize(
@@ -177,36 +208,49 @@ def test_the_refusal_names_the_vendor_rather_than_calling_it_unrecognised(file_t
         (FileType.ANCESTRY_DNA, "380", "14"),
     ],
 )
-def test_the_refusal_carries_the_measured_numbers(file_type, positions, cyp2d6):
-    """Not "limited variant coverage" -- the counts, and the denominator."""
-    reason = _workflow_for(file_type)["unsupported_reason"]
+def test_the_plan_carries_the_measured_numbers(file_type, positions, cyp2d6):
+    """Not "limited variant coverage" -- the counts, and the denominator. They were the
+    argument for refusing and they are now the expectation set before the job runs."""
+    text = " ".join(_workflow_for(file_type)["warnings"])
 
-    assert positions in reason
-    assert "1,226" in reason
-    assert cyp2d6 in reason
-    assert "157" in reason
-
-
-@pytest.mark.parametrize("file_type", ARRAY_TYPES)
-def test_the_refusal_states_the_failure_mode_not_just_the_coverage(file_type):
-    """Low coverage alone would argue for an incomplete report, which is a thing
-    a user might reasonably still want. The argument for refusing is that the
-    report would be confidently wrong instead."""
-    reason = _workflow_for(file_type)["unsupported_reason"].lower()
-
-    assert "pypgx" in reason
-    assert "homozygous reference" in reason
-    assert "no-call" in reason
-    assert "cyp2d6" in reason
+    assert positions in text
+    assert "1,226" in text
+    assert cyp2d6 in text
+    assert "157" in text
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)
-def test_the_refusal_says_support_is_in_development(file_type):
-    """Iliya, 2026-09-27: they will be supported; refused until then, for the reason
-    the rest of this module pins."""
-    reason = _workflow_for(file_type)["unsupported_reason"].lower()
-    assert "in development" in reason
-    assert "decision" not in reason
+def test_the_plan_states_how_the_confident_wrong_answer_is_prevented(file_type):
+    """Low coverage alone argues for an incomplete report, which a user may reasonably
+    still want. What argued for refusing was that the report would be confidently WRONG
+    instead -- so the plan now has to say what stops that, not merely that it is a risk.
+    """
+    workflow = _workflow_for(file_type)
+    text = " ".join(workflow["warnings"] + workflow["recommendations"]).lower()
+
+    # PyPGx is the reason these were refused, and not running it is the answer.
+    assert "pypgx" in text
+    assert "not run on this input" in text
+    # And the gate that stops PharmCAT's own partial-data verdict.
+    assert "amp/cap minimum set" in text
+    assert "not called" in text
+    assert "cyp2d6" in text
+
+
+@pytest.mark.parametrize("file_type", ARRAY_TYPES)
+def test_the_plan_no_longer_promises_future_support(file_type):
+    """Iliya, 2026-09-27: they will be supported. They are, so the plan must stop saying
+    "in development" -- copy that describes an absence after it has been filled is the
+    aspirational wording this repo forbids, pointing the wrong way."""
+    workflow = _workflow_for(file_type)
+    text = " ".join(
+        workflow["warnings"]
+        + workflow["recommendations"]
+        + [workflow.get("unsupported_reason") or ""]
+    ).lower()
+
+    assert "in development" not in text
+    assert "not implemented" not in text
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)
@@ -227,11 +271,13 @@ def test_the_copy_quotes_pharmcats_own_position(file_type):
 
 
 @pytest.mark.parametrize("file_type", ARRAY_TYPES)
-def test_the_copy_names_the_inputs_to_upload_instead(file_type):
-    reason = _workflow_for(file_type)["unsupported_reason"].lower()
+def test_the_copy_still_names_the_better_inputs(file_type):
+    """Accepted is not the same as equivalent: a chip cannot give what sequencing can,
+    and the plan has to say where a complete result comes from."""
+    text = " ".join(_workflow_for(file_type)["recommendations"]).lower()
 
-    for accepted in ("vcf", "bam", "cram", "sam"):
-        assert accepted in reason
+    for better in ("vcf", "bam", "cram", "sam"):
+        assert better in text
 
 
 def test_only_23andme_names_variants_we_actually_audited():
@@ -311,18 +357,27 @@ def upload(client, monkeypatch, tmp_path):
     return _post
 
 
-def test_an_ancestrydna_upload_is_refused_before_a_job_exists(upload):
+def test_an_ancestrydna_upload_starts_a_job(upload):
+    """End to end through the upload endpoint: typed, accepted, and queued with the
+    conversion its lane needs. The defect this file was written for was an AncestryDNA
+    export reported as "Unrecognized file format"; it must not come back by any route.
+    """
     resp = upload("AncestryDNA.txt", ANCESTRY_DNA)
 
-    assert resp.status_code == 400, resp.text
-    detail = resp.json()["detail"]
-    assert "AncestryDNA" in detail
-    assert "Unrecognized file format" not in detail
-    assert upload.created_patients == []
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["file_type"] == "ancestry"
+    assert "Unrecognized file format" not in resp.text
+    options = body["workflow"]["options"]
+    assert options["needs_array_conversion"] is True
+    assert options["needs_pypgx"] is False
+    assert options["is_provisional"] is True
+    assert options["unsupported"] is False
 
 
 def test_an_ancestrydna_preview_reaches_the_same_verdict(client):
-    """The header preview must not draw a plan the upload would then refuse."""
+    """The header preview must not draw a plan the upload then contradicts -- which is
+    the property this test always defended; only the verdict changed."""
     resp = client.post(
         "/upload/inspect-header",
         files={"file": ("AncestryDNA.txt", ANCESTRY_DNA.encode("utf-8"), "text/plain")},
@@ -330,6 +385,6 @@ def test_an_ancestrydna_preview_reaches_the_same_verdict(client):
 
     assert resp.status_code == 200, resp.text
     workflow = resp.json()["compat"]["workflow"]
-    assert workflow["refused"] is True
-    assert "AncestryDNA" in (workflow["refusal_reason"] or "")
-    assert workflow["needs_conversion"] is False
+    assert workflow["refused"] is False
+    assert not (workflow["refusal_reason"] or "")
+    assert workflow["needs_conversion"] is True

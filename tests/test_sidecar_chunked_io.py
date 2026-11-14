@@ -261,7 +261,7 @@ def test_gatk_api_upload_sites_no_longer_buffer_whole_file(gatk_api_source):
     # /align-fastq and /realign-reads stream for a second reason on top of the memory
     # one -- they have byte caps, enforced per chunk so an oversized upload costs the
     # bytes already written rather than all of them.
-    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 8
+    assert gatk_api_source.count("await file.read(UPLOAD_CHUNK_BYTES)") == 9
 
 
 def test_pypgx_upload_sites_no_longer_buffer_whole_file(pypgx_source):
@@ -674,7 +674,8 @@ def test_to_thread_semaphore_caps_concurrency(gatk_api):
 def test_to_thread_semaphore_wraps_the_heavy_call_sites():
     """Every heavy to_thread() call - cram_to_bam and sam_to_bam's
     convert_to_indexed_bam, liftover_vcf's run_liftover_pipeline,
-    bcf_to_vcf's convert_bcf_to_vcf and gvcf_to_vcf's convert_gvcf_to_vcf - must
+    bcf_to_vcf's convert_bcf_to_vcf, gvcf_to_vcf's convert_gvcf_to_vcf and
+    array_to_vcf's convert_array_to_vcf - must
     sit inside `async with _to_thread_semaphore:` -- a semaphore that exists but
     does not wrap the call site it was added for caps nothing.
     """
@@ -701,8 +702,8 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
             ):
                 guarded_to_thread_calls.append(call)
 
-    assert len(guarded_to_thread_calls) == 12, (
-        f"expected 12 semaphore-guarded asyncio.to_thread() calls "
+    assert len(guarded_to_thread_calls) == 13, (
+        f"expected 13 semaphore-guarded asyncio.to_thread() calls "
         f"(cram_to_bam, sam_to_bam, liftover_vcf, bcf_to_vcf, gvcf_to_vcf, "
         f"align_fastq's index warm-up plus its three GATK steps, and "
         f"realign_reads' warm-up plus its two), "
@@ -716,6 +717,10 @@ def test_to_thread_semaphore_wraps_the_heavy_call_sites():
         "run_liftover_pipeline",
         "convert_bcf_to_vcf",
         "convert_gvcf_to_vcf",
+        # array_to_vcf's worker. Reads a chip export onto PharmCAT's positions: one
+        # pass over a text file plus a bgzip, so seconds rather than minutes -- but it
+        # is still blocking, and an unguarded blocking call takes /health down with it.
+        "convert_array_to_vcf",
         # /align-fastq drives all three of its GATK steps (FastqToSam, BwaSpark,
         # MarkDuplicatesSpark) through one runner. Each is a multi-minute Java
         # process, and BwaSpark holds a 5.4 GB index image -- exactly what this

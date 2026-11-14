@@ -158,14 +158,30 @@ def test_provisional_inputs_are_still_analysed(upload):
     assert resp.status_code == 200, resp.text
 
 
-@pytest.mark.parametrize("provisional", [False, True])
-def test_23andme_is_refused(upload, provisional):
-    """No converter and no main.nf branch: the job could only ever fail.
+@pytest.mark.parametrize(
+    "provisional,expected",
+    [
+        # Flagged and NOT provisional: refused, like any flagged runnable input.
+        (False, 400),
+        # Flagged AND provisional: let through, which is what is_provisional means and
+        # what the GRCh37 VCF case above asserts. 23andMe reaching this state is the
+        # point of the lane -- the analysis IS provisional, on under a fifth of
+        # PharmCAT's positions.
+        (True, 200),
+    ],
+)
+def test_the_gate_treats_a_flagged_array_like_any_other_runnable_input(
+    upload, provisional, expected
+):
+    """The gate's ordinary rule, on an input type that became runnable.
 
-    Parametrised over ``is_provisional`` on purpose. FileProcessor used to set it here
-    — that is what let 23andMe past the gate — and it is set by hand next to a reason
-    string, so it records intent as readily as behaviour. Refusing only in the
-    ``False`` case would be a test that passes with the fix reverted.
+    "No converter and no main.nf branch" was why this was refused in BOTH
+    ``is_provisional`` states, and as of 2026-11-12 that is false: 23andMe exports are
+    read onto PharmCAT's positions by ArrayToVCF. So the ordinary rule applies again --
+    ``unsupported`` refuses a runnable type and ``is_provisional`` exempts it, exactly as
+    for the GRCh37 VCF above. Both states are still asserted, because collapsing them to
+    one is what let the original 23andMe bug through: ``is_provisional`` is set by hand
+    beside a reason string, so it records intent as readily as behavior.
     """
     reason = "ZaroPGx cannot analyse 23andMe genotyping files."
     resp = upload(
@@ -175,8 +191,9 @@ def test_23andme_is_refused(upload, provisional):
         is_provisional=provisional,
     )
 
-    assert resp.status_code == 400, resp.text
-    assert reason in resp.json()["detail"]
+    assert resp.status_code == expected, resp.text
+    if expected == 400:
+        assert reason in resp.json()["detail"]
 
 
 def test_fastq_is_refused(upload):

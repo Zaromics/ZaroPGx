@@ -1276,6 +1276,9 @@
                     {% endif %}
                     {# Adjacent to the assume-ref paragraph on purpose -- see the same
                        block in report_template.html. #}
+                    {% if array_provenance %}
+                        {{ array_provenance|safe }}
+                    {% endif %}
                     {% if gvcf_provenance %}
                         {{ gvcf_provenance|safe }}
                     {% endif %}

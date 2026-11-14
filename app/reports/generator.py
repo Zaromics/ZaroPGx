@@ -2594,6 +2594,7 @@ def create_interactive_html_report(
     pharmcat_assume_ref_methodology: str | None = None,
     liftover_provenance: str | None = None,
     gvcf_provenance: str | None = None,
+    array_provenance: str | None = None,
     read_phase_coverage: str | None = None,
     pharmcat_phase_coverage: str | None = None,
     missing_positions_not_assumed: bool = False,
@@ -2759,6 +2760,8 @@ def create_interactive_html_report(
             "workflow_warnings": _warnings,
             "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
             "gvcf_provenance": gvcf_provenance,
+            "array_provenance": array_provenance,
+            "array_provenance": array_provenance,
             "read_phase_coverage": read_phase_coverage,
             "pharmcat_phase_coverage": pharmcat_phase_coverage,
             "liftover_provenance": liftover_provenance,
@@ -3675,6 +3678,7 @@ def generate_report(
     # diagram says so); None when the job's settings could not be read.
     run_absent_to_ref = None
     gvcf_provenance = None
+    array_provenance = None
     # Why a variant-only file left genes uncalled, when the job's flags say so.
     missing_positions_not_assumed = False
     if job_id and db_session:
@@ -3695,6 +3699,9 @@ def generate_report(
             try:
                 from app.api.db import Job, JobStep
                 from app.reports.assume_ref import assume_ref_alert
+                from app.utils.array_provenance import (
+                    array_provenance_paragraph,
+                )
                 from app.utils.gvcf_provenance import gvcf_provenance_paragraph
                 from app.utils.liftover_provenance import (
                     liftover_provenance_sentence,
@@ -3857,6 +3864,21 @@ def generate_report(
                 # The flags are handed over, not assumed -- the EFFECTIVE pair from
                 # above, which is off for a gVCF: main.nf never lets them turn the
                 # positions this paragraph counts as uncovered into reference calls.
+                # Same contract again, for a consumer array: only the step row
+                # carries how much of PharmCAT's rs-identified list the chip held, and
+                # what could not be carried (gatk-api's /array-to-vcf writes it as
+                # output_data). Absent row = no array conversion ran.
+                array_step = (
+                    db_session.query(JobStep)
+                    .filter(
+                        JobStep.job_id == job_uuid,
+                        JobStep.step_name == "array_to_vcf",
+                    )
+                    .first()
+                )
+                array_provenance = array_provenance_paragraph(
+                    array_step.output_data if array_step is not None else None
+                )
                 gvcf_provenance = gvcf_provenance_paragraph(
                     gvcf_step.output_data if gvcf_step is not None else None,
                     absent_to_ref=absent_to_ref,
@@ -3893,6 +3915,7 @@ def generate_report(
                 pharmcat_assume_ref_methodology = None
                 liftover_provenance = None
                 gvcf_provenance = None
+                array_provenance = None
 
             if not data:
                 logger.warning(
@@ -4917,6 +4940,7 @@ def generate_report(
                 "workflow_warnings": workflow_warnings,
                 "pharmcat_assume_ref_methodology": pharmcat_assume_ref_methodology,
                 "gvcf_provenance": gvcf_provenance,
+                "array_provenance": array_provenance,
                 "read_phase_coverage": _read_phase_coverage,
                 "pharmcat_phase_coverage": _pharmcat_phase_coverage,
                 # How common the variants behind the calls are (app/reports/rarity.py).

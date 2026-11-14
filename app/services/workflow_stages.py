@@ -58,6 +58,10 @@ STEP_TO_STAGE: Mapping[str, WorkflowStage] = {
     # grouping and same reason as "bcf_to_vcf" above and "liftover" below.
     # Keep in sync with index.html's GlyphManager.stepMapping.
     "gvcf_to_vcf": WorkflowStage.GATK,
+    # Reading a consumer array onto PharmCAT's positions runs in gatk-api, like the
+    # other two conversions, even though it uses no GATK tool: the stage names where
+    # the work happens, which is what the glyph row and the progress bar report.
+    "array_to_vcf": WorkflowStage.GATK,
     # GRCh37->GRCh38 liftover runs inside the gatk-api container (Picard
     # LiftoverVcf), so it surfaces under the GATK stage rather than falling
     # through stage_from_step()'s ANALYSIS default.

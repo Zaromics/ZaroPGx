@@ -1644,74 +1644,114 @@ class FileProcessor:
                 "<p>Creating index for VCF file for faster processing</p>"
             )
 
-    def _refuse_consumer_array(
+    def _plan_consumer_array(
         self, workflow: Dict, coverage: ConsumerArrayCoverage
     ) -> None:
-        """Refuse a 23andMe or AncestryDNA upload, in place, with the numbers.
+        """Plan a 23andMe or AncestryDNA upload, in place, and say what it cannot give.
 
-        One helper rather than a branch each, for the reason
-        _plan_variant_call_workflow gives: the two refusals make the same
-        argument from the same measurements, and two copies of clinical copy
-        edited months apart WILL drift into disagreeing about why we say no.
-        Everything that genuinely differs between the vendors is in `coverage`.
+        ACCEPTED as of 2026-11-12, and what changed is not the chip -- it is that the
+        two things which made a chip dangerous are now fixed:
 
-        No needs_* flag is set, and needs_conversion in particular is NOT set:
-        that flag now mints a real bcf_to_vcf step (workflow_registry), so
-        setting it here would plan a BCF conversion for a file that is not a BCF
-        and is not being analyzed at all. It was set by the old 23andMe branch to
-        mean "a conversion ought to exist one day", which is exactly the
-        aspirational flag this repo forbids.
+        * The conversion keys on the rs identifier and reads the chip onto PharmCAT's
+          own GRCh38 positions (app/api/utils/consumer_array.py, gatk-api's
+          /array-to-vcf). The obvious alternative -- convert to a b37 VCF and lift it --
+          silently drops rs6025, Factor V Leiden, because a homozygous-reference row has
+          no ALT for Picard to swap the reference allele with.
+        * A gene is no longer given a verdict the data cannot support. PharmCAT does NOT
+          degrade honestly on its own: MEASURED on a 9-position chip VCF, with neither
+          assume-reference flag and no PyPGx anywhere, it reported CYP2C9 Normal
+          Metabolizer, Activity Score 2.0 from 2 of 88 positions. The AMP/CAP Tier 1
+          gate (app/pharmcat/amp_tier1.py) withholds that, naming the alleles it could
+          not assess. THAT GATE IS A PREREQUISITE OF THIS LANE, not a companion to it.
+
+        PyPGx does not run. Its maintainer's own statement on array input (pypgx#142) is
+        that missing loci "will be falsely treated as homozygous reference even though
+        there might be variants", and an outside call overrides PharmCAT's no-call, so
+        running it would reintroduce exactly the confident wrong answer this input was
+        refused for. Nothing a chip could have given is lost: PyPGx's value here would
+        be copy number from read depth, and a chip has no reads.
+
+        ``is_provisional`` is set. The input IS analyzed, and that flag is what this
+        codebase means by "analyzed anyway, provisionally" -- the honest description of a
+        result built from under a fifth of PharmCAT's positions.
+
+        The coverage numbers stay, now as what to expect rather than as a refusal: they
+        come from the vendor's published manifest and are an upper bound on any one
+        file, so the reader is told the ceiling before the job runs.
         """
-        workflow["unsupported"] = True
-        # Deliberately NOT provisional: nothing is analyzed. is_provisional means
-        # "analyzed anyway, provisionally" and exempts a runnable input type from
-        # the upload gate -- setting it here is the original 23andMe bug.
-        workflow["is_provisional"] = False
-        workflow["unsupported_reason"] = (
-            f"ZaroPGx cannot analyze {coverage.vendor} genotyping files yet; support "
-            f"is in development. {coverage.article} "
-            f"{coverage.vendor} {coverage.best_chip} file carries "
-            f"{coverage.positions} of the "
+        workflow["needs_conversion"] = True
+        workflow["needs_array_conversion"] = True
+        workflow["needs_gatk"] = True
+        # PyPGx reads an absent position as homozygous reference and its outside calls
+        # override PharmCAT's no-calls. This one flag is the original refusal's whole
+        # argument, answered.
+        workflow["needs_pypgx"] = False
+        # No reads, so nothing for the HLA typer or the mitochondrial sidecar to read.
+        workflow["needs_hla"] = False
+        workflow["needs_mtdna"] = False
+        workflow["needs_report"] = True
+        workflow["unsupported"] = False
+        workflow["is_provisional"] = True
+        workflow["recommendations"].append(
+            f"<p>{coverage.vendor} genotyping files are read onto PharmCAT's own "
+            "positions by rs identifier before analysis:</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>Step 0: each rs identifier in your file is matched to PharmCAT's "
+            "GRCh38 record for that position, and your genotype is read against that "
+            "record's own alleles. Your file's coordinates are not used, so nothing "
+            "here depends on a liftover.</p>"
+        )
+        workflow["recommendations"].append(
+            "<p>A gene is reported only where this file can determine it. Where the "
+            "file cannot assess an allele that the AMP/CAP minimum set for that gene "
+            "requires, the gene is reported as not called, naming the alleles that "
+            "were missed — rather than as a normal result built out of positions the "
+            "chip does not carry.</p>"
+        )
+        workflow["warnings"].append(
+            f"<p>{CAUTION_SVG} {coverage.article} {coverage.vendor} "
+            f"{coverage.best_chip} file carries {coverage.positions} of the "
             f"{PHARMCAT_POSITIONS:,} positions PharmCAT calls on "
             f"({coverage.positions_pct}), and {coverage.cyp2d6_positions} of the "
-            f"{PHARMCAT_CYP2D6_POSITIONS} that define CYP2D6. ZaroPGx runs PyPGx "
-            f"alongside PharmCAT, and PyPGx reads a position the file does not "
-            f"carry as homozygous reference rather than as a no-call; that call "
-            f"then overrides PharmCAT's. A CYP2D6 poor metabolizer would be "
-            f"reported as a normal metabolizer, for codeine and tamoxifen, "
-            f"rather than as an incomplete result. Upload a sequencing-derived "
-            f"GRCh38/hg38 VCF, or a BAM, CRAM or SAM file, instead."
+            f"{PHARMCAT_CYP2D6_POSITIONS} that define CYP2D6. Expect a short report: "
+            "most genes will not be callable from a chip.</p>"
         )
         if coverage.missing_core:
             workflow["warnings"].append(
-                f"<p>{CAUTION_SVG} The variants that define the common CYP2D6 star alleles are "
-                f"absent from {coverage.vendor} {coverage.best_chip} by name: "
-                f"{coverage.missing_core}.</p>"
+                f"<p>{CAUTION_SVG} The variants that define the common CYP2D6 star "
+                f"alleles are absent from {coverage.vendor} {coverage.best_chip} by "
+                f"name: {coverage.missing_core}. CYP2D6 will not be called.</p>"
             )
         workflow["warnings"].append(
-            f"<p>{CAUTION_SVG} rs35742686 (CYP2D6*3) and rs3064744 (the UGT1A1*28 TA repeat) "
-            "are absent from every version of every consumer array.</p>"
+            f"<p>{CAUTION_SVG} rs35742686 (CYP2D6*3) and rs3064744 (the UGT1A1*28 TA "
+            "repeat) are absent from every version of every consumer array. The TA "
+            "repeat is also not a sequence a chip can report, so it could not be "
+            "converted even if it were there.</p>"
         )
         workflow["warnings"].append(
-            f"<p>{CAUTION_SVG} Genotyping chips cannot detect gene duplications or deletions "
-            "at all, by any method — and those decide the phenotype for CYP2D6 "
-            "and for several other pharmacogenes.</p>"
+            f"<p>{CAUTION_SVG} Genotyping chips cannot detect gene duplications or "
+            "deletions at all, by any method — and those decide the phenotype for "
+            "CYP2D6 and for several other pharmacogenes. PyPGx, which calls copy "
+            "number from read depth, is not run on this input: a chip has no reads."
+            "</p>"
         )
         workflow["warnings"].append(
-            f"<p>{CAUTION_SVG} The coverage above is counted from the vendor's published "
-            "manifest, which is the union of every revision of the chip, so it is "
-            "an upper bound on any individual file rather than a typical one.</p>"
+            f"<p>{CAUTION_SVG} The coverage above is counted from the vendor's "
+            "published manifest, which is the union of every revision of the chip, so "
+            "it is an upper bound on your own file rather than a typical one.</p>"
         )
         workflow["recommendations"].append(
-            "<p>PharmCAT's own maintainers say the same of consumer-array data: it "
-            "has “limited overlap with most of the gene definitions used by "
-            "PharmCAT, which will result in very few callable alleles and "
-            "therefore not very useful reports”.</p>"
+            "<p>PharmCAT's own maintainers say of consumer-array data that it has "
+            "“limited overlap with most of the gene definitions used by PharmCAT, "
+            "which will result in very few callable alleles and therefore not very "
+            "useful reports”. That is why this report is short, and why what it does "
+            "say is worth more than a long one built on assumptions.</p>"
         )
         workflow["recommendations"].append(
-            "<p>Upload sequencing data instead. A GRCh38/hg38 VCF is the fastest "
-            "input; a BAM, CRAM or SAM additionally carries the read depth PyPGx "
-            "needs to call the CYP2D6 copy-number changes no chip can see.</p>"
+            "<p>Upload sequencing data for a complete result. A GRCh38/hg38 VCF is the "
+            "fastest input; a BAM, CRAM or SAM additionally carries the read depth "
+            "PyPGx needs to call the CYP2D6 copy-number changes no chip can see.</p>"
         )
 
     def _refuse_unconfirmed_gvcf(
@@ -1929,6 +1969,12 @@ class FileProcessor:
             # the GVCFToVCF process in pipelines/pgx/main.nf. Always set together with
             # needs_conversion above.
             "needs_gvcf_genotyping": False,
+            # Consumer array -> GRCh38 VCF on PharmCAT's positions (gatk-api's
+            # /array-to-vcf). Drives the "array_to_vcf" step template and main.nf's
+            # ArrayToVCF process. Set together with needs_conversion, like the two
+            # above; NOT needs_liftover, because the output is GRCh38 by construction --
+            # the positions come from PharmCAT's own GRCh38 list, not from the chip.
+            "needs_array_conversion": False,
             "needs_hla": False,
             # mtDNA calling via the mtdna sidecar (mutserve + haplogrep3 +
             # haplocheck). Set True on every input type the sidecar can be
@@ -2111,7 +2157,7 @@ class FileProcessor:
         # refused as "Unrecognized file format: unknown" -- a file we can name
         # exactly, and measure, reported as unrecognisable.
         elif analysis.file_type in CONSUMER_ARRAY_COVERAGE:
-            self._refuse_consumer_array(
+            self._plan_consumer_array(
                 workflow, CONSUMER_ARRAY_COVERAGE[analysis.file_type]
             )
 

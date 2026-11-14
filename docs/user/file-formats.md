@@ -12,7 +12,8 @@ title: Input formats
 | BAM, SAM | GRCh38 | SAM converted to BAM (samtools) |
 | CRAM | GRCh38, written against one of three references (below) | converted to BAM (samtools) |
 | FASTQ | short reads, up to 20 GB by default | aligned to GRCh38 (bwa-mem) |
-| 23andMe, AncestryDNA, BED, FASTA, T2T-CHM13 | refused, with the reason | |
+| 23andMe, AncestryDNA | accepted, read onto PharmCAT's positions by rs identifier; most genes will not be callable | matched by rs identifier (no liftover) |
+| BED, FASTA, T2T-CHM13 | refused, with the reason | |
 
 One data file per analysis; a FASTQ's two mates count as one. A VCF, BCF or gVCF must hold
 one sample. Index files (`.bai`, `.crai`, `.csi`, `.tbi`, `.idx`) may be added. A `.bai` or
@@ -161,9 +162,27 @@ Refused, with the reason:
 
 The limit is about disk and time: alignment is slow, and a whole genome would take hours. Whether duplicate marking fits the GATK service's memory at whole-genome scale has not been tested. An aligned BAM or CRAM is much faster, and a GRCh38 VCF is fastest.
 
-## Consumer genotyping arrays (23andMe, AncestryDNA): refused for now
+## Consumer genotyping arrays (23andMe, AncestryDNA): accepted, and short
 
-ZaroPGx recognizes a 23andMe or AncestryDNA raw-data export and refuses it for now; support is in development. The coordinates in those files are perfectly good — build 37, plus strand, real positions — and turning one into a VCF is a one-line `bcftools convert --tsv2vcf`. What is wrong is what happens next.
+ZaroPGx reads a 23andMe or AncestryDNA raw-data export and analyzes it. Expect a short report: a chip carries under a third of the positions PharmCAT calls on, and most genes will be reported as not called rather than guessed at.
+
+### How your file is read
+
+**By rs identifier, not by coordinate.** Each `rs` number in your file is matched to PharmCAT's own GRCh38 record for that position, and your genotype is read against that record's alleles. Your file's own coordinates are never used, so nothing depends on a liftover.
+
+That is not the obvious design, and the obvious one is wrong. A chip's coordinates are build 37, so the natural route is `bcftools convert --tsv2vcf` followed by the same liftover a GRCh37 VCF gets. Measured, that **silently drops `rs6025` — Factor V Leiden**: a homozygous-reference chip row becomes `REF=T ALT=.`, the reference allele at that position differs between GRCh37 and GRCh38, and Picard cannot swap a reference allele with an alternate that is not there. Seven of PharmCAT's 1,226 positions are exposed to the same failure. A chip reports *observed bases*, which belong to your DNA rather than to a reference build, so the rs number is the stable key.
+
+Rows that cannot be carried are counted, not guessed at: a no-call (`--`), the `I`/`D` insertion-deletion coding (which names no sequence — the `UGT1A1*28` TA repeat is one of these), an internal probe id with no `rs` number, and a base that matches neither allele in PharmCAT's record, which is a strand problem rather than a genotype.
+
+### What you will and will not get
+
+**PyPGx does not run.** It calls copy number from read depth and a chip has no reads, so there is nothing for it to do — and running it would actively harm the result, which is the reason these files were refused for a long time. See below.
+
+**A gene is reported only where your file can determine it.** Where the file cannot assess an allele that the AMP/CAP minimum set for that gene requires, the gene is reported as not called, naming the alleles that were missed. See [Reports](reports.md#when-a-gene-is-not-called-because-the-test-could-not-see-enough-of-it).
+
+In practice a chip determines the genes defined by a single position — `ABCG2`, `IFNL3` and `VKORC1` among those PharmCAT reports — and declines the rest. Those three carry CPIC guidance (rosuvastatin and allopurinol; peginterferon; warfarin sensitivity), so the report is short rather than empty. `F2` and `F5` are called from a chip too, but PharmCAT's reporter carries no guideline annotation for them and so leaves them out of its gene section.
+
+### Why this was refused for so long
 
 Measured against the 1,226 positions in PharmCAT's own `pharmcat_positions.vcf` (22 genes, 157 of the positions *CYP2D6*), counting each vendor's published manifest — which is the union of every revision of that chip, and therefore an upper bound on any individual file:
 
@@ -185,7 +204,7 @@ PyPGx makes it worse rather than causing it. ZaroPGx runs PyPGx too and hands it
 
 PharmCAT's own FAQ reaches the same conclusion: consumer-array data has "limited overlap with most of the gene definitions used by PharmCAT, which will result in very few callable alleles and therefore not very useful reports."
 
-Upload sequencing data instead, in a format from the table at the top: a VCF (GRCh38, or GRCh37 to be lifted over), BCF or gVCF, a BAM, CRAM or SAM, or FASTQ.
+Upload sequencing data for a complete result, in a format from the table at the top: a VCF (GRCh38, or GRCh37 to be lifted over), BCF or gVCF, a BAM, CRAM or SAM, or FASTQ. A chip's report is worth having, but it is not a substitute for one.
 
 ## Reference Genome Support
 - **GRCh38/hg38** — analyzed directly; the build every result is reported on.

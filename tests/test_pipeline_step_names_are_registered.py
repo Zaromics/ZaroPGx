@@ -185,7 +185,16 @@ def test_every_gate_names_a_real_option_field(step_name):
     """
     tmpl = _templates()[step_name]
     options = WorkflowOptions()
-    for gate in (tmpl.when, tmpl.unless):
+    # `unless` may name one field or several: needs_conversion is shared by three
+    # conversions now (BCF, gVCF, consumer array), so bcf_to_vcf vetoes on two. Each
+    # name still has to be a real field -- a typo in any one of them is a veto that
+    # never fires, which mints a step nobody posts.
+    gates = [tmpl.when]
+    if isinstance(tmpl.unless, str):
+        gates.append(tmpl.unless)
+    elif tmpl.unless is not None:
+        gates.extend(tmpl.unless)
+    for gate in gates:
         if gate is not None:
             assert hasattr(options, gate), (
                 f"StepTemplate {step_name!r} gates on {gate!r}, which is not a "

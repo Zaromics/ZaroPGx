@@ -406,6 +406,63 @@ PY
 // run with no PharmCAT output and no error. BCF and VCF hold the same records, so
 // nothing is lost here - the endpoint refuses (HTTP 4xx/5xx -> --fail-with-body ->
 // run failure) rather than returning a file it cannot vouch for as non-empty BGZF.
+// Consumer genotyping array (23andMe, AncestryDNA) -> GRCh38 VCF on PharmCAT's own
+// positions, via gatk-api's /array-to-vcf. Keyed on the rs identifier, NOT on the
+// chip's coordinates: converting to a b37 VCF and lifting it silently drops rs6025
+// (Factor V Leiden), because a homozygous-reference chip row carries no ALT for Picard
+// to swap the reference allele with. So this arm never reaches LiftoverVCF -- its
+// output is GRCh38 by construction.
+//
+// PyPGx does not run on this lane (params.skip_pypgx, set from needs_pypgx=False):
+// PyPGx reads an absent position as homozygous reference and its outside calls override
+// PharmCAT's no-calls, which is the whole reason arrays were refused before.
+process ArrayToVCF {
+    tag "array2vcf_${patient_id}"
+    publishDir { outdir }, mode: 'copy'
+
+    input:
+    path chip
+    val patient_id
+    val report_id
+    val reference
+    val outdir
+
+    output:
+    // A fixed name, for the same reason BcfToVCF and LiftoverVCF use one: a bare
+    // `*.vcf.gz` glob would also match the staged input.
+    path "converted.vcf.gz", emit: vcf
+    path "converted.vcf.gz.tbi", optional: true, emit: tbi
+
+    shell:
+    '''
+    set -euo pipefail
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{chip} )
+    if [ -n "${JOB_ID:-}" ]; then
+      CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=array_to_vcf )
+    fi
+    if ! HTTP_CODE=$(curl -sS --fail-with-body -o array_response.json -w '%{http_code}' "${CURL_ARGS[@]}" http://gatk-api:5000/array-to-vcf); then
+      echo "gatk-api /array-to-vcf returned an error (HTTP $HTTP_CODE):" >&2
+      cat array_response.json >&2 || true
+      case "$HTTP_CODE" in 4??) exit 65 ;; esac  # refused: not retried (see header)
+      exit 1
+    fi
+    VCF_PATH=$(python3 - <<'PY'
+import json
+data = json.load(open('array_response.json'))
+print(data.get('vcf_path') or data.get('vcf') or '')
+PY
+)
+    if [ -z "$VCF_PATH" ]; then
+      echo "array-to-vcf response carried no vcf_path" >&2
+      cat array_response.json >&2 || true
+      exit 1
+    fi
+    cp "$VCF_PATH" converted.vcf.gz
+    [ -f "${VCF_PATH}.tbi" ] && cp "${VCF_PATH}.tbi" converted.vcf.gz.tbi || true
+    '''
+}
+
+
 process BcfToVCF {
     tag "bcf2vcf_${patient_id}"
     publishDir { outdir }, mode: 'copy'
@@ -969,7 +1026,25 @@ workflow {
     // vcf/bam are let through, which is not the same as skip_gatk doing nothing on them:
     // a GRCh37 vcf still goes through LiftoverVCF below, which is a gatk-api process.
     // See params.skip_gatk's comment at the top of this file.
-    if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf', 'gvcf'].contains(params.input_type)) {
+    // PyPGx must not run on a consumer array, and the combination is refused rather
+    // than left to fail downstream. PyPGx reads a position the chip does not carry as
+    // homozygous reference and its outside calls override PharmCAT's no-calls, which is
+    // the confident wrong answer these inputs were refused for in the first place -- so
+    // this is a correctness guard, not a convenience one. The app always sets the flag
+    // (FileProcessor._plan_consumer_array sets needs_pypgx=False, which upload_router
+    // turns into --skip_pypgx), so this fires only for a pipeline run made by hand.
+    // Without it that run dies at `pypgx_result.outside.ifEmpty(...)` with "Missing
+    // process or function", which says nothing about what is actually wrong.
+    if (!params.skip_pypgx && ['23andme', 'ancestry'].contains(params.input_type)) {
+        error(
+            "--input_type ${params.input_type} requires --skip_pypgx: PyPGx reads a " +
+            "position a genotyping array does not carry as homozygous reference, and " +
+            "its outside calls override PharmCAT's no-calls. Running it on an array " +
+            "produces a confidently wrong report rather than an incomplete one."
+        )
+    }
+
+    if (params.skip_gatk && ['fastq', 'cram', 'sam', 'bcf', 'gvcf', '23andme', 'ancestry'].contains(params.input_type)) {
         error(
             "--skip_gatk is not compatible with --input_type ${params.input_type}: " +
             "converting ${params.input_type} into something the rest of the pipeline " +
@@ -1102,12 +1177,24 @@ workflow {
     // /gvcf-to-vcf, because this step takes the merged VCF only. And the mtDNA sidecar
     // below keeps reading converted_vcf_ch, the UNLIFTED file, which is what keeps
     // chrM out of the hg19-sourced chain.
-    else if (params.input_type in ['vcf', 'bcf', 'gvcf']) {
+    //
+    // The two array types join this branch for the conversion alone. ArrayToVCF writes
+    // their records on PharmCAT's own GRCh38 positions, read by rs identifier rather
+    // than by the chip's coordinates, so there is nothing to lift afterwards and
+    // already_grch38 below keeps them out of the liftover arm.
+    else if (params.input_type in ['vcf', 'bcf', 'gvcf', '23andme', 'ancestry']) {
         // Assigned without `def` on purpose: the mtDNA wiring below reads it, and a
         // `def` here would scope it to this branch. Same pattern as vcf_ch/bam_ch.
         // .first() makes it reusable by that second consumer -- see input_ch's
         // comment above for why a plain queue channel cannot feed two.
-        if (params.input_type == 'bcf') {
+        if (params.input_type in ['23andme', 'ancestry']) {
+            // Read onto PharmCAT's own GRCh38 positions by rs identifier. Joins this
+            // branch because what comes out IS a VCF, and a second copy of the
+            // downstream wiring would be a second copy to drift -- the same reasoning
+            // the BCF and gVCF arms are here for. It never takes the liftover below:
+            // source_build is GRCh38 for this lane whatever the chip's coordinates say.
+            converted_vcf_ch = ArrayToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
+        } else if (params.input_type == 'bcf') {
             converted_vcf_ch = BcfToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
         } else if (params.input_type == 'gvcf') {
             converted_vcf_ch = GVCFToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, Channel.value(params.source_build ?: ''), outdir_ch).vcf.first()
@@ -1115,7 +1202,15 @@ workflow {
             converted_vcf_ch = input_ch
         }
         def source_build_norm = (params.source_build ?: '').toString().toLowerCase()
-        if (['grch37', 'hg19', 'b37'].contains(source_build_norm)) {
+        // The array arm is excluded explicitly rather than trusted to report a GRCh38
+        // source_build. A chip's own coordinates ARE GRCh37, so a build detector that
+        // learns to read these files would quite reasonably say grch37 -- and lifting
+        // ArrayToVCF's output would be lifting coordinates that are already GRCh38,
+        // moving every position by the difference between the builds. The conversion
+        // took its coordinates from PharmCAT's GRCh38 list, not from the chip, so there
+        // is nothing here to lift.
+        def already_grch38 = params.input_type in ['23andme', 'ancestry']
+        if (!already_grch38 && ['grch37', 'hg19', 'b37'].contains(source_build_norm)) {
             vcf_ch = LiftoverVCF(
                 converted_vcf_ch,
                 Channel.value(params.source_build),
@@ -1130,7 +1225,7 @@ workflow {
         hla_ch = empty_file_ch
     }
     else {
-        error "Unsupported input type: ${params.input_type}. Supported: vcf, bcf, gvcf, bam, cram, sam, fastq"
+        error "Unsupported input type: ${params.input_type}. Supported: vcf, bcf, gvcf, bam, cram, sam, fastq, 23andme, ancestry"
     }
 
     // mtDNA calling. Which channel feeds it depends on input type:
