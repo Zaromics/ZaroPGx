@@ -10,6 +10,7 @@ The app applies these at startup, in order, and records each in `schema_migratio
 | `04_rename_workflows_to_jobs.sql` | Rename `workflows*` to `jobs*` |
 | `05_job_workflow_type_snapshot.sql` | Add `jobs.workflow_type` and `jobs.workflow_snapshot` |
 | `06_allow_gvcf_file_format.sql` | Allow `GVCF` in `genomic_file_headers.file_format` |
+| `07_allow_consumer_array_file_formats.sql` | Allow `23ANDME` and `ANCESTRY` in `genomic_file_headers.file_format` |
 
 02-05 are historical and not idempotent; a database that already has the `jobs` table records
 them without running them. A new migration takes the next number and must be idempotent.
