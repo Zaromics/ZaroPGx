@@ -113,7 +113,6 @@ from app.reports.provenance import (
 from app.reports.tier1_gate import (
     mark_recommendations_without_a_call,
     withheld_alert,
-    withhold_from_summary,
     withhold_inadequate_calls,
 )
 from app.services.pharmcat_data_service import PharmCATDataService
@@ -1782,7 +1781,16 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
     )
     rows = []
     for gene in panel:
-        if gene in tsv:
+        # A gene the AMP/CAP Tier 1 gate withheld (tier1_gate.withhold_inadequate_calls
+        # marks the gene row) must not come back from the TSV. The summary is built from
+        # PharmCAT's calls-only table, which still carries the call the gate declined to
+        # report, and this function prefers the TSV for any gene it carries -- so the
+        # page a reader sees first printed a verdict the gene table, the Alerts box and
+        # the FHIR bundle all said was not reported. Reading the marker here, rather
+        # than pruning the TSV rows where the gate runs, is one mechanism instead of two:
+        # a later withholding reason cannot forget to prune.
+        withheld = bool((genes.get(gene) or {}).get("tier1_withheld"))
+        if gene in tsv and not withheld:
             row = tsv[gene]
             diplotype = (
                 row.get("diplotype_display") or row.get("rec_lookup_diplotype") or ""
@@ -4534,23 +4542,15 @@ def generate_report(
             marked = mark_recommendations_without_a_call(
                 template_recommendations, tier1_withheld
             )
-            # The Executive Summary is built from PharmCAT's TSV, not from these rows,
-            # and summary_rows prefers the TSV for any gene it carries -- so without
-            # this the summary page printed the very call the gene table had just
-            # withheld. In place: the context dict above already holds this list.
-            dropped_from_summary = withhold_from_summary(
-                execsum_rows_from_tsv, tier1_withheld
-            )
             tier1_alert = withheld_alert(data.get("genes", []))
             if tier1_alert:
                 workflow_warnings.append(tier1_alert)
             logger.info(
                 "AMP/CAP Tier 1 incomplete, verdict withheld for %d gene(s): %s; "
-                "%d recommendation(s) left without a call; %d summary row(s) dropped",
+                "%d recommendation(s) left without a call",
                 len(tier1_withheld),
                 ", ".join(tier1_withheld),
                 marked,
-                dropped_from_summary,
             )
     except Exception as e:
         # A gate that cannot run must not cost the report its gene rows. It fails OPEN
