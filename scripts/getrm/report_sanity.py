@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO))
 
 from app.pharmcat.report_json import extract_display_call  # noqa: E402
 from app.reports import pharmcat_variants, tier1_gate  # noqa: E402
+from app.reports.generator import _PHARMCAT_REFERENCE_LABEL  # noqa: E402
 
 
 def _spread(name: str, values: List[float], note: str = "") -> str:
@@ -58,6 +59,7 @@ def main() -> int:
     rows_seen: List[float] = []
     withheld_per_run: List[float] = []
     withheld_by_gene: Counter = Counter()
+    reference_labels: Counter = Counter()
     silent: Dict[str, List[str]] = {"variants": [], "calls": []}
 
     for sample in samples:
@@ -75,14 +77,24 @@ def main() -> int:
         if not genes:
             silent["variants"].append(sample.name)
 
-        rows = [
-            {
-                "gene": gene,
-                "diplotype": extract_display_call(block) or "",
-                "phenotype": None,
-            }
-            for gene, block in (report.get("genes") or {}).items()
-        ]
+        rows = []
+        for gene, block in (report.get("genes") or {}).items():
+            call = extract_display_call(block) or {}
+            label = call.get("diplotype") if isinstance(call, dict) else call
+            label = str(label or "").strip()
+            rows.append({"gene": gene, "diplotype": label, "phenotype": None})
+            # The summary shows PharmCAT's own "Reference/Reference" label where the
+            # TSV spells the reference allele out, and tells them apart with a pattern
+            # (generator._PHARMCAT_REFERENCE_LABEL). A PharmCAT that renamed that label
+            # would fail nothing -- the summary would quietly start printing the
+            # spelled-out name instead -- so the forms are counted.
+            if "eference" in label:
+                key = (
+                    "matched"
+                    if _PHARMCAT_REFERENCE_LABEL.fullmatch(label)
+                    else "spelled out"
+                )
+                reference_labels[key] += 1
         rows_seen.append(len(rows))
         if not any(row["diplotype"] for row in rows):
             silent["calls"].append(sample.name)
@@ -98,6 +110,12 @@ def main() -> int:
     print(_spread("positions it could not read", positions_unread))
     print(_spread("gene rows in the report", rows_seen))
     print(_spread("calls withheld (AMP/CAP Tier 1)", withheld_per_run))
+    if reference_labels:
+        print(
+            f"\nPharmCAT reference labels: {reference_labels['matched']} in the form "
+            f"the summary matches, {reference_labels['spelled out']} spelling the "
+            "allele out"
+        )
     if withheld_by_gene:
         print(
             "\nwithheld by gene: "
