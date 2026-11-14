@@ -64,20 +64,43 @@ git tag -a v<version> -m "ZaroPGx <version>"
 git push origin v<version>
 ```
 
-**3. Build and push the bake targets together.** `docker-bake.hcl`'s default group covers
-app, pharmcat, nextflow, pypgx, gatk-api, genome-downloader and zarohla:
+**3. Build and push the bake targets together, from a tree that is on the tag.** Every
+target's build context is the repository root, so a release is only as correct as the tree
+it is built in; a second working tree is the straightforward way to be sure of that. Pass
+`-f docker-bake.hcl` there — bake reads `compose.yml` as well by default, which wants
+`.env` values a fresh tree does not have. The default group covers app, pharmcat, nextflow,
+pypgx, gatk-api, genome-downloader and zarohla:
 
 ```bash
-ZAROPGX_TAG=<version> docker buildx bake --push
+git worktree add --detach ../zaropgx-v<version> v<version>
+cd ../zaropgx-v<version>
+ZAROPGX_TAG=<version> docker buildx bake -f docker-bake.hcl --push
 ```
 
-**4. Publish `mtdna` by hand.** It is deliberately not a bake target — its base image is
-around 4.5 GB and would exhaust a GitHub Actions runner's disk, and the reason is written
-at the top of `docker-bake.hcl` — but it is still part of the release:
+**4. Publish `mtdna` by hand, from that same tree.** It is deliberately not a bake target
+— its base image is around 4.5 GB and would exhaust a GitHub Actions runner's disk, and the
+reason is written at the top of `docker-bake.hcl` — but it is still part of the release.
+Its context is the whole repository and it copies four files out of `app/`
+(`utils/liftover_chain.py`, `utils/job_client.py`, `utils/shared_input.py` and `mtdna/`),
+so a build run in a tree still on the previous release ships those files at their previous
+contents inside a correctly tagged image. The tag, the push and step 5's registry check are
+all satisfied either way, and being the one target outside the bake it is outside the
+bake's context handling too, so nothing else here catches it.
 
 ```bash
-docker compose build mtdna
+docker build -f docker/mtdna-server-2/Dockerfile \
+  -t zaromicsresearch/zaropgx-mtdna:<version> .
 docker push zaromicsresearch/zaropgx-mtdna:<version>
+```
+
+`docker build` rather than `docker compose build`: compose takes its project name and its
+`.env` from the directory it runs in, which is not what a second working tree holds.
+
+Then read back something the release changed, from inside the image that was pushed:
+
+```bash
+docker run --rm --entrypoint grep zaromicsresearch/zaropgx-mtdna:<version> \
+  -c <a symbol this release touched> /job-client/liftover_chain.py
 ```
 
 **5. Check all eight images are on the registry** — the seven baked ones plus `mtdna` —
