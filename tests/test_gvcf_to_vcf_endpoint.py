@@ -2521,3 +2521,87 @@ def test_counting_records_reads_plain_and_gzipped(gatk_api, tmp_path):
     assert gatk_api.count_vcf_records(str(plain)) == 1
     assert gatk_api.count_vcf_records(str(squashed)) == 1
     assert gatk_api.count_vcf_records(str(tmp_path / "absent.vcf")) == 0
+
+
+def test_the_step_row_says_the_rename_happened(client, tools, gatk_api, monkeypatch):
+    """The report's only source for the rename sentence is the step row.
+
+    `app/utils/gvcf_provenance.py` renders "that allele was renamed in N records" from
+    `symbolic_allele_renamed_from` and `n_symbolic_alleles_renamed`, and reads both off
+    the JobStep -- never off this endpoint's response, which nothing stores. They were
+    in the response and not in `output_data`, so the sentence could not render for any
+    DeepVariant-flavoured gVCF. Measured on a real one: the service logged "renamed
+    1,140,050 <*> reference-confidence allele(s) to <NON_REF>" and the delivered report
+    said nothing about a rename, while docs/user/file-formats.md promises it does. The
+    reader is owed it -- the file that was genotyped is not byte-for-byte the one they
+    uploaded.
+
+    The normalizer is stubbed rather than fed a `<*>` file, because the tool fixture
+    stages through a fake `bcftools view` that keeps only header lines: the rename
+    itself has its own tests above, and what is under test here is the wiring from its
+    report to the step row.
+    """
+    completed = {}
+
+    class RecordingJobClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start_step(self, *args, **kwargs):
+            return None
+
+        async def log_progress(self, *args, **kwargs):
+            return None
+
+        async def complete_step(self, message, output_data=None):
+            completed["output_data"] = output_data
+
+    monkeypatch.setattr(gatk_api, "JobClient", RecordingJobClient)
+    monkeypatch.setattr(
+        gatk_api,
+        "normalize_staged_gvcf",
+        lambda *a, **k: {"flavour": "<*>", "renamed": 1140050, "without_symbolic": 0},
+    )
+    tools.pgx_rows = PHARMCAT_POSITION_ROWS[:3]
+
+    body = _post(client, job_id="job-rename").json()
+
+    assert completed, "complete_step was never called"
+    output_data = completed["output_data"]
+    assert output_data["symbolic_allele_renamed_from"] == "<*>"
+    assert output_data["n_symbolic_alleles_renamed"] == 1140050
+    assert (
+        output_data["symbolic_allele_renamed_from"]
+        == body["symbolic_allele_renamed_from"]
+    )
+    assert (
+        output_data["n_symbolic_alleles_renamed"] == body["n_symbolic_alleles_renamed"]
+    )
+
+
+def test_a_gatk_file_claims_no_rename_on_the_step_row(
+    client, tools, gatk_api, monkeypatch
+):
+    """Nothing is renamed for GATK's own spelling, and the row must say so with
+    nothing rather than with a zero that reads as "we rewrote it, 0 times"."""
+    completed = {}
+
+    class RecordingJobClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start_step(self, *args, **kwargs):
+            return None
+
+        async def log_progress(self, *args, **kwargs):
+            return None
+
+        async def complete_step(self, message, output_data=None):
+            completed["output_data"] = output_data
+
+    monkeypatch.setattr(gatk_api, "JobClient", RecordingJobClient)
+    tools.pgx_rows = PHARMCAT_POSITION_ROWS[:3]
+
+    _post(client, job_id="job-gatk")
+
+    assert completed["output_data"]["symbolic_allele_renamed_from"] in (None, "")

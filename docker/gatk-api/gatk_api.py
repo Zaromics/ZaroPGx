@@ -6812,6 +6812,15 @@ async def gvcf_to_vcf(
             "n_positions_absent": stats['n_positions_absent'],
             "n_positions_uncertain": stats['n_positions_uncertain'],
             "target_build": "GRCh38",
+            # The rename, for the same reason as the counts: only output_data reaches
+            # the JobStep row, and gvcf_provenance.py reads these two names off it to
+            # tell the reader the file that was genotyped is not byte-for-byte the one
+            # they uploaded. They were in this endpoint's response body and nowhere
+            # else, so the sentence could never render: measured on a real DeepVariant
+            # -flavoured gVCF, where the service logged "renamed 1,140,050 <*>
+            # reference-confidence allele(s)" and the report said nothing at all.
+            "symbolic_allele_renamed_from": stats.get('symbolic_allele_renamed_from'),
+            "n_symbolic_alleles_renamed": stats.get('n_symbolic_alleles_renamed'),
         }
         if job_client:
             await job_client.log_progress("gVCF genotyping completed", {
