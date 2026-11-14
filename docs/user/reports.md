@@ -73,6 +73,20 @@ copy deleted", "tandem \*68+\*4"; its code is in the interactive report's eviden
 and which alleles a different phasing would give ("\*6 if these variants lie on one
 chromosome").
 
+Where the pairing of a call's variants decides what it is called, and nothing measured it,
+the line beside the diplotype says so and names the other reading: "Pairing not measured;
+the other reading is \*3/\*6, Poor Metabolizer." A file with no phase does not say which
+chromosome each of two heterozygous variants sits on, and for the genes PharmCAT calls it
+reports the diplotype its allele definitions explain most specifically. PharmCAT raises
+its own note for most such calls, and that note is beside the call too, in PharmCAT's own
+words and under its name: "PharmCAT: The assigned genotype is \*1/\*6; however, \*4/\*9
+cannot be ruled out without phased data." So a call whose pairing is open carries one line
+either way -- PharmCAT's where PharmCAT wrote one, this report's, read from the same allele
+definitions, where it did not -- and never both. PharmCAT's sentence is not repeated in its
+list of notes below the table. For the calls PyPGx makes, the reads themselves are counted
+instead (below). The Methodology section says how many of the run's calls rested on such a
+pairing, how many PharmCAT named itself, and how many this report named.
+
 Genes examined without a call are listed after the table, each with its Call letter (as
 they are in the interactive report's Genes tab, which lists every gene), and with the reason
 when one is known: for a PyPGx gene, no reads over it, or at any of its positions, in the
@@ -172,12 +186,12 @@ own depth (about 30x) and downsampled to 20x and to 15x.
 **PharmCAT's notes.** PharmCAT attaches its own messages to calls and drugs, and the report
 shows them where PharmCAT's own report does, in PharmCAT's words (a link as its words and
 its address): a gene's under Genetic Results ("PharmCAT's notes on these calls"), one line
-a gene, called or not, and in the interactive report's gene panel; a drug's at the head of
-the drug under Drug Recommendations, each marked with the gene it is about. A drug with no
+a gene, called or not, except for the ambiguity note above, which is shown beside the call
+it qualifies rather than in that list, and in the interactive report's gene panel; a
+drug's at the head of the drug under Drug Recommendations, each marked with the gene it is
+about. A drug with no
 recommendation for this sample still gets its notes, in a list after the recommendations:
-PharmCAT's own report gives such a drug its section too. Among them: an unphased call's
-"The assigned genotype is \*1/\*15; however, \*5/\*37 cannot be ruled out without phased
-data.", UGT1A1's repeat caveat, NAT2's choice among several calls, DPYD's activity-score
+PharmCAT's own report gives such a drug its section too. Among them: UGT1A1's repeat caveat, NAT2's choice among several calls, DPYD's activity-score
 rule, the warfarin notes with the rs12777823 genotype PharmCAT highlights for warfarin, and,
 where RYR1 has data but no call, its malignant hyperthermia warning on RYR1 and the
 anaesthetics. PharmCAT's footnote that a gene on the negative strand is given on the

@@ -174,6 +174,7 @@ RUN uv pip install --system \
 
 # Copy the wrapper script, start script, and workflow client
 COPY docker/pharmcat/pharmcat.py /app/
+COPY docker/pharmcat/definitions.py /app/
 COPY docker/pharmcat/start.sh /start.sh
 COPY app/utils/job_client.py /job-client/
 COPY app/utils/allele_translate.py /lexicon-lib/allele_translate.py
