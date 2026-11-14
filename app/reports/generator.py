@@ -970,6 +970,42 @@ _X_CHROMOSOME_CALLS = {"Female": "two X chromosomes", "Male": "one X chromosome"
 _TANDEM_ALLELE = re.compile(r"\*[^/\s+]+(?:\s*\+\s*\*[^/\s+]+)+")
 
 
+def shown_phenotype(row: Mapping[str, Any], file_type: Any) -> Any:
+    """The phenotype a row shows: the calling tool's, a wild-type label, or "N/A".
+
+    Two rules, in this order. A reference diplotype on an input that can support the
+    claim gets the wild-type label (``wild_type_phenotype`` decides both halves). A call
+    the calling tool assigns no phenotype to -- PharmCAT for VKORC1, IFNL3 and CYP4F2,
+    PyPGx for most genes outside PharmCAT's, OptiType for HLA-C -- gets the "N/A"
+    PharmCAT's own report prints, rather than the blank the PDF used to show and the
+    "Unknown" the interactive report showed.
+
+    It is given the whole row, not a gene and a diplotype, because
+    ``defines_no_phenotype`` reads more than those: ``pyPgxOnly`` with no
+    ``pypgx_phenotype_method``, and ``optitypeOnly``. A caller that passes only the two
+    turns every PyPGx-only gene's "N/A" back into a blank -- which is what the first cut
+    of this function did, and what tests/test_pypgx_full_record.py caught.
+
+    One copy, because the report has two paths to the same cell: the gene rows, and
+    PharmCAT's calls-only TSV behind the Executive Summary. They carried the same two
+    rules written out twice, and a report whose surfaces each re-derive a fact is how
+    the surfaces come to disagree -- twice over in one release: the Alerts box against
+    the summary (tier1_gate, a withheld verdict printed anyway) and the warnings box
+    against itself (input_warnings_alert, six warnings on one line). The TSV rows carry
+    neither PyPGx nor OptiType flags, so that path can only ever reach the PharmCAT
+    branch, which is correct: the TSV is PharmCAT's own output.
+    """
+    phenotype = row.get("phenotype")
+    label = wild_type_phenotype(row.get("diplotype"), phenotype, file_type)
+    if label:
+        return label
+    if defines_no_phenotype(row) and (
+        str(phenotype or "").strip().lower() in _ABSENT_PHENOTYPES | {""}
+    ):
+        return NO_PHENOTYPE_STANDARD
+    return phenotype
+
+
 def copy_number_summary(
     code: Optional[str], diplotype: Optional[str] = None
 ) -> Optional[str]:
@@ -3163,26 +3199,14 @@ def _build_canonical_diplotypes(
                 row["called_by_label"] = provenance.label
                 row.pop("report_data_from", None)
 
-                # Assign wild type phenotype labels based on file type
-                wild_type_label = wild_type_phenotype(
-                    row.get("diplotype"), row.get("phenotype"), file_type
-                )
-                if wild_type_label:
-                    row["phenotype"] = wild_type_label
-                    logger.debug(
-                        f"Assigned '{wild_type_label}' to {row.get('gene')} "
-                        f"(diplotype: {row.get('diplotype')}, file_type: {file_type})"
-                    )
-                elif defines_no_phenotype(row) and (
-                    str(row.get("phenotype") or "").strip().lower()
-                    in _ABSENT_PHENOTYPES | {""}
-                ):
-                    # A call the calling tool assigns no phenotype to: PharmCAT
-                    # for VKORC1, IFNL3 and CYP4F2, PyPGx for most genes outside
-                    # PharmCAT's. PharmCAT's own report prints "N/A" there. This
-                    # one printed a blank in the PDF, "Unknown" in the interactive
-                    # report, and "Unknown" again for every PyPGx-only gene.
-                    row["phenotype"] = NO_PHENOTYPE_STANDARD
+                # The wild-type label and the "N/A" for a call with no phenotype,
+                # by the same rule the Executive Summary's TSV path uses. Assigned only
+                # when it changes something: a row that never carried the key must not
+                # gain it as None, because pdf_generators reads it with a default
+                # ("Unknown") that an explicit None would defeat.
+                shown = shown_phenotype(row, file_type)
+                if shown != row.get("phenotype"):
+                    row["phenotype"] = shown
             except Exception as e:
                 logger.debug("Swallowed exception: %s", e, exc_info=True)
             canonical_rows.append(row)
@@ -4103,23 +4127,17 @@ def generate_report(
                         # Not a call: named with the genes examined without one.
                         continue
                     # Assign wild type phenotype if conditions are met
-                    # (file_type already determined above)
-                    wild_type_label = wild_type_phenotype(
-                        diplotype_str, phenotype_str, file_type
+                    # (file_type already determined above) The same rule the gene
+                    # rows use, from the same function: this cell and that one are the
+                    # same fact.
+                    phenotype_str = shown_phenotype(
+                        {
+                            "gene": row.get("gene"),
+                            "diplotype": diplotype_str,
+                            "phenotype": phenotype_str,
+                        },
+                        file_type,
                     )
-                    if wild_type_label:
-                        phenotype_str = wild_type_label
-                        logger.debug(
-                            f"TSV HTML: Assigned '{wild_type_label}' to {row.get('gene')}"
-                        )
-                    elif defines_no_phenotype(
-                        {"gene": row.get("gene"), "diplotype": diplotype_str}
-                    ) and (
-                        str(phenotype_str or "").strip().lower()
-                        in _ABSENT_PHENOTYPES | {""}
-                    ):
-                        # PharmCAT's TSV: the same "N/A" as the gene table.
-                        phenotype_str = NO_PHENOTYPE_STANDARD
 
                     execsum_rows_from_tsv.append(
                         {
