@@ -385,6 +385,49 @@ class CancelRequest(BaseModel):
 running_processes: Dict[str, Dict[str, Any]] = {}
 
 
+def read_optitype_result(path) -> tuple:
+    """OptiType's result table: the six calls, and what they rest on.
+
+    One row per solution, best first, with the six alleles and two numbers:
+    ``Reads``, how many reads the solution explains, and ``Objective``, the value the
+    ILP maximised. Those two are the evidence behind an HLA call and were read and
+    thrown away -- so a report could say a gene was typed, and never how well.
+
+    One row is all OptiType writes unless asked: ``--enumerate N`` makes it write the
+    N best solutions. Whether to ask is an open question rather than an obvious yes.
+    Enumerating 5 on HG01190, whose HLA-B this stack types ``B*18:01/B*35:28`` against
+    GeT-RM's ``B*18:01/B*15:20``, returns ``B*35:28/B*35:28`` and ``B*18:01/B*18:01``
+    as the next solutions and never ``*15:20`` at all: the alternatives are not the
+    answer, so enumerating would cost ILP time and name a worse call beside a wrong
+    one. The numbers below are the part worth keeping either way.
+    """
+    import csv as _csv
+
+    with open(path, "r") as handle:
+        rows = list(_csv.DictReader(handle, delimiter="\t"))
+    if not rows:
+        return {}, {}
+    best = rows[0]
+    results = {
+        "HLA-A": f"{best.get('A1', '')},{best.get('A2', '')}".strip(","),
+        "HLA-B": f"{best.get('B1', '')},{best.get('B2', '')}".strip(","),
+        "HLA-C": f"{best.get('C1', '')},{best.get('C2', '')}".strip(","),
+    }
+    results = {gene: call for gene, call in results.items() if call.strip(",")}
+    evidence = {}
+    for key, name, cast in (("Reads", "reads", int), ("Objective", "objective", float)):
+        raw = (best.get(key) or "").strip()
+        if raw:
+            try:
+                evidence[name] = cast(float(raw)) if cast is int else cast(raw)
+            except ValueError:
+                pass
+    if len(rows) > 1:
+        # Only when something asked for them; the caller here does not.
+        evidence["solutions"] = len(rows)
+    return results, evidence
+
+
 NO_HLA_READS_MESSAGE = (
     "No HLA reads in the input, so nothing to type. Normal for a targeted "
     "panel without the HLA region."
@@ -928,29 +971,19 @@ async def call_hla(
         if job_client:
             await job_client.log_progress("Parsing OptiType results")
 
-        results = {}
         # OptiType v1.5 writes into a timestamped subdir (outdir/<ts>/<ts>_result.tsv)
         result_files = list(outdir.rglob("*_result.tsv"))
         if not result_files:
             raise Exception("OptiType did not produce a _result.tsv file")
 
-        tsv_file = result_files[0]
-        with open(tsv_file, "r") as f:
-            reader = csv.DictReader(f, delimiter="\t")
-            for row in reader:
-                results["HLA-A"] = f"{row.get('A1', '')},{row.get('A2', '')}".strip(",")
-                results["HLA-B"] = f"{row.get('B1', '')},{row.get('B2', '')}".strip(",")
-                results["HLA-C"] = f"{row.get('C1', '')},{row.get('C2', '')}".strip(",")
-                break
-
-        results = {k: v for k, v in results.items() if v}
+        results, evidence = read_optitype_result(result_files[0])
 
         if job_client:
             await job_client.complete_step(
                 "HLA typing completed successfully", {"results": results}
             )
 
-        return {"status": "success", "results": results}
+        return {"status": "success", "results": results, "evidence": evidence}
 
     except Exception as e:
         logger.error(f"Error in HLA typing: {str(e)}")
