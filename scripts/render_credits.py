@@ -164,7 +164,11 @@ def readme_block() -> str:
                 lines.append(f"  - {_markdown(paper)}")
         lines.append("")
     lines += [
-        "Licenses and terms of use: [Credits](docs/user/credits.md).",
+        # The owner's own capitalization, from their 7c3e953 edit of the README.
+        # This block is generated, so a change made in the README alone is undone
+        # by the next render and fails tests/test_credits_docs.py until it is made
+        # here as well.
+        "Licenses and Terms of Use: [Credits](docs/user/credits.md).",
         "",
         README_END,
     ]
