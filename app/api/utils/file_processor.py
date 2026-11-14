@@ -253,15 +253,40 @@ def _bcf_header_declares_gvcf_blocks(file_path: Path) -> bool:
 # The symbolic ALT allele a gVCF uses for "any other allele", and the only thing that
 # decides whether ZaroPGx can genotype it.
 #
-# GATK writes `<NON_REF>` and declares it as `##ALT=<ID=NON_REF,...>`. DeepVariant,
-# bcftools and some Illumina callers write `<*>` instead. That is not cosmetic:
-# GenotypeGVCFs -- the entire conversion -- hard-fails on a `<*>` file with
+# GATK writes `<NON_REF>` and declares it as `##ALT=<ID=NON_REF,...>`. DeepVariant
+# writes `<*>` instead -- its own gVCF documentation gives `TC,<*>` as a variant record,
+# so the symbolic allele sits beside the real one -- and GenotypeGVCFs -- the
+# entire conversion -- reads only the first. MEASURED on a `<*>` file, it does not
+# refuse the input: it writes rows and then dies partway through with
 #   "A USER ERROR has occurred: The list of input alleles must contain <NON_REF> as an
 #    allele but that is not the case at position ..."
-# so accepting one would buy the uploader a job that dies minutes in. It is refused at
-# the door instead, which is the same rule the FASTQ and 23andMe branches follow.
+# leaving a truncated VCF behind. So BOTH flavours are accepted and gatk-api renames
+# `<*>` to `<NON_REF>` while staging the file, which is a rename and nothing more --
+# the blocks, their genotypes, their qualities and their depths are the caller's own,
+# and the report says the rename happened (docker/gatk-api/gatk_api.py's
+# normalize_staged_gvcf, app/utils/gvcf_provenance.py). What is still refused is a file
+# carrying NEITHER allele in the window that was read: renaming cannot add an allele
+# that is not there, so that is a file we cannot promise to convert.
 GVCF_GATK_ALLELE = "NON_REF"
 GVCF_STAR_ALLELE = "*"
+
+#: A reference block written with NO symbolic allele: ALT `.`, the extent in INFO `END`.
+#: MEASURED, bcftools 1.24 (`bcftools mpileup -a FORMAT/DP | bcftools call -m -g 10`):
+#:
+#:   chr10 94762900 . A . . . END=94762974;MIN_DP=30  GT:DP  0/0:30
+#:
+#: so `bcftools call -g` does NOT write `<*>`, which this module claimed until it was
+#: measured. It is read as a gVCF anyway, and must be: PharmCAT's own detector fires on
+#: a row whose ALT is `.` spanning more than one base, so a file like this typed as a
+#: plain VCF is carried all the way down and then refused INSIDE PharmCAT, behind
+#: main.nf's `|| true` -- no PharmCAT output and no error, the exact failure the gVCF
+#: lane exists to prevent. Typed here, it is refused at the door with a reason instead.
+#:
+#: It cannot be converted the way `<*>` is. Renaming needs an allele to rename, and
+#: these blocks carry no likelihoods for a non-reference allele at all (GT:DP, no PL),
+#: so GenotypeGVCFs has nothing to genotype. Supporting them means expanding the blocks
+#: over PharmCAT's positions without GATK -- a second conversion lane, not a rename.
+GVCF_BARE_ALLELE = "."
 
 # How many DATA rows the flavour read below looks at. Its own budget, NOT shared with
 # the header budget: they used to share one counter, and on a GRCh38 file the ~3,400
@@ -273,13 +298,48 @@ GVCF_STAR_ALLELE = "*"
 GVCF_ALLELE_SCAN_RECORDS = 200
 
 
+def _spans_more_than_one_base(fields: list) -> bool:
+    """Whether this record's INFO ``END`` puts its last base past its first.
+
+    PharmCAT's own rule for "this is a reference block" (``pcat/utilities.py``:
+    ``is_gvcf_file``) applied to the one allele shape that carries no symbolic name:
+    ALT ``.`` AND an extent of more than one base. Both halves are needed. A plain VCF
+    may hold an ALT-less row -- a position called and found reference -- and that is not
+    a block; what makes it one is covering ground the row does not spell out.
+
+    ``END`` on a row with a SYMBOLIC ALT is an ordinary structural-variant record
+    (``<DEL>``, ``<DUP>``) and never reaches here, because the ALT check above runs
+    first and this arm requires ALT to be exactly ``.``.
+
+    Never raises: a malformed END is "not a block", which types the file as a plain VCF
+    -- where it was already going before this arm existed.
+    """
+    if len(fields) < 8:
+        return False
+    try:
+        start = int(fields[1])
+    except (TypeError, ValueError):
+        return False
+    for entry in fields[7].split(";"):
+        key, _, value = entry.partition("=")
+        if key.strip().upper() != "END":
+            continue
+        try:
+            return int(value) > start
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def _gvcf_symbolic_allele(file_path: Path) -> Optional[str]:
     """Which reference-confidence allele this gVCF uses: NON_REF, *, or None.
 
-    None means "the evidence does not say", which every caller treats as "not a
-    convertible gVCF" -- the fail-closed direction, and the only honest one: the
-    conversion needs `<NON_REF>` specifically, so a file we cannot confirm carries it is
-    a file we cannot promise to convert.
+    Both named alleles are convertible: gatk-api renames `<*>` to `<NON_REF>` while
+    staging, so either reaches GenotypeGVCFs in the spelling it reads. None means "the
+    evidence does not say", which every caller treats as "not a convertible gVCF" --
+    the fail-closed direction, and the only honest one: renaming cannot add a symbolic
+    allele to a record that has none, and GenotypeGVCFs stops on such a record after
+    writing rows, so a file we cannot confirm is a file we cannot promise to convert.
 
     TWO signals, and `##ALT=<ID=NON_REF>` is deliberately NOT one of them:
 
@@ -301,7 +361,9 @@ def _gvcf_symbolic_allele(file_path: Path) -> Optional[str]:
     _refuse_grch37_gvcf, whose way out is "run GenotypeGVCFs yourself and upload the
     VCF" -- i.e. the file just refused. ``##ALT=<ID=*,...>`` is not evidence either,
     for the milder version of the same reason: bcftools writes it into ordinary VCFs
-    whenever a spanning deletion is present.
+    whenever a spanning deletion is present. Reading the declaration would also break
+    the `<*>` arm in the other direction, by typing an ordinary bcftools VCF with a
+    spanning deletion as a DeepVariant gVCF.
 
     A BCF gets the header arm only. Its records are binary and reading them needs pysam,
     which is optional in this process (see the import at the top of this module) and
@@ -343,13 +405,20 @@ def _gvcf_symbolic_allele(file_path: Path) -> Optional[str]:
                 # variant rows spell it `A,<NON_REF>` -- so this is a containment test,
                 # not an equality one. The angle brackets are required: a bare `*` is
                 # VCF 4.2's spanning-deletion allele and says nothing about gVCFs.
-                fields = line.split("\t", 5)
+                # Split to 9 rather than 5: INFO is field 7, and the bare-block
+                # arm below needs it. A row's own extent is the only thing that tells a
+                # reference block from an ordinary ALT-less VCF record.
+                fields = line.split("\t", 8)
                 if len(fields) >= 5:
                     alt = fields[4]
                     if f"<{GVCF_GATK_ALLELE}>" in alt:
                         return GVCF_GATK_ALLELE
                     if f"<{GVCF_STAR_ALLELE}>" in alt:
                         return GVCF_STAR_ALLELE
+                    if alt.strip() == GVCF_BARE_ALLELE and _spans_more_than_one_base(
+                        fields
+                    ):
+                        return GVCF_BARE_ALLELE
                 records_seen += 1
                 if records_seen >= GVCF_ALLELE_SCAN_RECORDS:
                     break
@@ -1685,22 +1754,28 @@ class FileProcessor:
             "PyPGx needs to call the CYP2D6 copy-number changes no chip can see.</p>"
         )
 
-    def _refuse_non_gatk_gvcf(
-        self, workflow: Dict, symbolic_allele: Optional[str]
+    def _refuse_unconfirmed_gvcf(
+        self, workflow: Dict, symbolic_allele: Optional[str] = None
     ) -> None:
-        """Refuse a gVCF whose reference blocks GenotypeGVCFs cannot read, in place.
+        """Refuse a gVCF this lane cannot genotype, in place, naming which shape it is.
 
-        Not a policy choice and not a gap: `gatk GenotypeGVCFs` -- the whole conversion
-        -- exits with "A USER ERROR has occurred: The list of input alleles must contain
-        <NON_REF> as an allele" on a file whose blocks use `<*>` instead, which
-        DeepVariant, bcftools and some Illumina callers write. Accepting one would buy
-        the uploader a job that dies minutes in, which is the thing this codebase
-        refuses to do.
+        The two flavours ZaroPGx can genotype are GATK's `<NON_REF>` and the `<*>`
+        DeepVariant writes; gatk-api renames the second to the first while staging the
+        file, so both reach GenotypeGVCFs in the only spelling it reads
+        (normalize_staged_gvcf).
 
-        `symbolic_allele` is None when the file is a gVCF by name or by ##GVCFBlock
-        record but nothing in the scanned window confirmed which allele it uses. That is
-        refused on the same sentence: the conversion needs <NON_REF> specifically, so a
-        file we cannot confirm carries it is a file we cannot promise to convert.
+        Two shapes are left, and the copy has to tell them apart because one of them is
+        a recognized format rather than a puzzle:
+
+        * ``GVCF_BARE_ALLELE`` -- blocks with no alternate allele at all (ALT `.`, the
+          extent in INFO END). MEASURED as what `bcftools call -g` writes, and what
+          Illumina's older gVCFs carry. There is no allele to rename and no non-reference
+          likelihood to genotype (GT:DP, no PL), so this needs a different conversion,
+          not a rename. Said plainly, under its own name.
+        * ``None`` -- a gVCF by name or by a `##GVCFBlock` record whose scanned window
+          carried nothing identifiable. Fail-closed, and the only honest direction:
+          GenotypeGVCFs stops on a record with no symbolic allele AFTER writing rows, so
+          a file we cannot confirm is a file we cannot promise to convert.
 
         No needs_* flag is set. In particular needs_conversion is NOT set: it mints a
         real conversion step (workflow_registry), and a flag that names a step must only
@@ -1714,21 +1789,36 @@ class FileProcessor:
         # innerHTML - a literal "<NON_REF>" would be parsed as a tag and vanish from the
         # sentence. Escaping instead would fix the panel and leave "&lt;NON_REF&gt;" in
         # the API error. The bare name reads correctly in both.
-        observed = (
-            "an unrecognised reference-confidence allele"
-            if symbolic_allele is None
-            else f"the {symbolic_allele} reference-confidence allele"
-        )
+        if symbolic_allele == GVCF_BARE_ALLELE:
+            observed = (
+                "This file's reference blocks carry no alternate allele at all - ALT "
+                "'.' with the block's extent in INFO END, which is what bcftools "
+                "writes (bcftools call -g) and what Illumina's older gVCFs carry. "
+                "ZaroPGx genotypes a gVCF with GATK GenotypeGVCFs, which reads GATK's "
+                "NON_REF blocks; a file written with the * allele instead, as "
+                "DeepVariant writes, is renamed to NON_REF first and genotyped the "
+                "same way. Neither applies here: there is no allele to rename, and "
+                "these blocks record no genotype likelihood for a non-reference "
+                "allele (GT:DP, no PL), so GenotypeGVCFs has nothing to genotype. "
+                "Supporting this shape needs a different conversion, and it is not "
+                "built yet."
+            )
+        else:
+            observed = (
+                "This file reads as a gVCF, but nothing in it confirms which "
+                "reference-confidence allele its blocks use. ZaroPGx genotypes a gVCF "
+                "with GATK GenotypeGVCFs, which reads GATK's NON_REF blocks; a file "
+                "written with the * allele instead, as DeepVariant writes, is renamed "
+                "to NON_REF first and genotyped the same way. This file carried "
+                "neither in the records that were read. GenotypeGVCFs genotypes every "
+                "record and stops on one with no symbolic allele, partway through, "
+                "having already written part of the output - so accepting it would "
+                "start a job that fails rather than producing a report."
+            )
         workflow["unsupported_reason"] = (
-            f"ZaroPGx converts a gVCF by running GATK GenotypeGVCFs on it, and "
-            f"GenotypeGVCFs reads only GATK's NON_REF reference blocks. This file uses "
-            f"{observed}, which DeepVariant, bcftools and some Illumina callers write, "
-            f"and GenotypeGVCFs stops on it with 'The list of input alleles must "
-            f"contain NON_REF as an allele'. Accepting it would start a job that fails "
-            f"partway through instead of producing a report. Genotype it yourself with "
-            f"your caller's own tool and upload the resulting plain single-sample "
-            f"GRCh38/hg38 VCF, or upload the BAM, CRAM or SAM it was called from and "
-            f"let ZaroPGx call the variants."
+            f"{observed} Genotype it yourself with your caller's own tool and upload "
+            "the resulting plain single-sample GRCh38/hg38 VCF, or upload the BAM, "
+            "CRAM or SAM it was called from and let ZaroPGx call the variants."
         )
         workflow["recommendations"].append(
             "<p>Turn the gVCF into a plain VCF with the tool that wrote it, then "
@@ -1736,7 +1826,8 @@ class FileProcessor:
         )
         workflow["recommendations"].append(
             "<p>• DeepVariant: the same run writes a plain VCF alongside the gVCF "
-            "(<code>--output_vcf</code>) — upload that one.</p>"
+            "(<code>--output_vcf</code>) — upload that one. A DeepVariant gVCF is "
+            "accepted directly; this file did not read as one.</p>"
         )
         workflow["recommendations"].append(
             "<p>• bcftools: <code>bcftools convert --gvcf2vcf -f &lt;reference.fa&gt; "
@@ -1827,7 +1918,7 @@ class FileProcessor:
         - GVCF files: genotyped into a plain VCF (gatk-api's /gvcf-to-vcf, two GATK
           GenotypeGVCFs passes), then the same quick pipeline a VCF gets. A gVCF whose
           reference blocks are not GATK's <NON_REF>, and a GRCh37/hg19 gVCF, are
-          refused -- see _refuse_non_gatk_gvcf and _refuse_grch37_gvcf for why each is
+          refused -- see _refuse_unconfirmed_gvcf and _refuse_grch37_gvcf for why each is
           a fact rather than a policy
         - BCF files: converted to a bgzipped VCF (gatk-api's /bcf-to-vcf, bcftools),
           then the same quick pipeline a VCF gets, liftover included
@@ -2117,16 +2208,25 @@ class FileProcessor:
         # GenotypeGVCFs passes joined with `bcftools concat -a`), and main.nf's
         # GVCFToVCF process runs it before anything downstream sees the file.
         #
+        # A gVCF written with the `<*>` reference-confidence allele instead of GATK's
+        # `<NON_REF>` -- DeepVariant's spelling -- is
+        # accepted and renamed to `<NON_REF>` while gatk-api stages it, so it reaches
+        # GenotypeGVCFs in the only spelling that tool reads and takes the lane above
+        # unchanged (normalize_staged_gvcf). The rename is a rename: the blocks, their
+        # genotypes, their qualities and their depths are the caller's own, and the
+        # report says it happened (app/utils/gvcf_provenance.py).
+        #
         # Two shapes are still refused, and both are refusals of fact rather than of
         # policy -- see the helpers below.
         elif analysis.file_type == FileType.GVCF:
             detected_build = (
                 (analysis.vcf_info.reference_genome or "") if analysis.vcf_info else ""
             ).lower()
-            if analysis.gvcf_symbolic_allele != GVCF_GATK_ALLELE:
-                self._refuse_non_gatk_gvcf(workflow, analysis.gvcf_symbolic_allele)
-            elif any(token in detected_build for token in GRCH37_BUILD_TOKENS):
-                self._refuse_grch37_gvcf(workflow, analysis.vcf_info.reference_genome)
+            if analysis.gvcf_symbolic_allele not in (
+                GVCF_GATK_ALLELE,
+                GVCF_STAR_ALLELE,
+            ):
+                self._refuse_unconfirmed_gvcf(workflow, analysis.gvcf_symbolic_allele)
             else:
                 # needs_gatk, not just the two conversion flags: GenotypeGVCFs runs in
                 # the gatk-api container, and needs_gatk is what upload_router turns
@@ -2142,6 +2242,28 @@ class FileProcessor:
                 workflow["needs_conversion"] = True
                 workflow["needs_gvcf_genotyping"] = True
                 workflow["needs_gatk"] = True
+                if any(token in detected_build for token in GRCH37_BUILD_TOKENS):
+                    # ACCEPTED as of 2026-11-12, and the obstacle named in the old
+                    # refusal is gone rather than worked around: PharmCAT's position list
+                    # is expressed in GRCh37 once and cached, so the reference-confidence
+                    # pass runs over positions this file actually contains
+                    # (derive_grch37_positions). MEASURED: all 1,226 positions lift
+                    # GRCh38 -> GRCh37 and all 1,226 lift back to the same coordinate.
+                    #
+                    # needs_liftover, because the merged VCF arrives in GRCh37 and
+                    # main.nf lifts it exactly as it lifts a GRCh37 VCF upload. The
+                    # PharmCAT sidecar is lifted inside gatk-api instead, since nothing
+                    # downstream touches that file; the mtDNA sidecar deliberately reads
+                    # the UNLIFTED output, because b37's MT is already rCRS and pushing
+                    # it through the hg19 chain shifts MT-RNR1 by 2.
+                    workflow["needs_liftover"] = True
+                    workflow["recommendations"].append(
+                        "<p>This gVCF is on GRCh37/hg19. PharmCAT's own position list is "
+                        "expressed in GRCh37 to genotype it, and the result is lifted to "
+                        "GRCh38 afterwards — the same liftover a GRCh37 VCF upload "
+                        "takes. Positions that cannot be lifted are dropped and "
+                        "counted.</p>"
+                    )
                 workflow["recommendations"].append(
                     "<p>gVCF files are genotyped into a plain VCF before analysis:</p>"
                 )
@@ -2149,6 +2271,18 @@ class FileProcessor:
                     "<p>Step 0: GATK GenotypeGVCFs. Reference genotypes at PharmCAT's "
                     "positions come from the file's reference blocks, not assumed.</p>"
                 )
+                if analysis.gvcf_symbolic_allele == GVCF_STAR_ALLELE:
+                    # Said in the plan, not only in the report: the uploader is told
+                    # before the job starts that their file will be rewritten, and what
+                    # the rewrite is. GenotypeGVCFs reads GATK's spelling only.
+                    workflow["recommendations"].append(
+                        "<p>This file writes its reference blocks with the "
+                        "<code>&lt;*&gt;</code> allele, as DeepVariant writes. "
+                        "GenotypeGVCFs reads GATK's "
+                        "<code>&lt;NON_REF&gt;</code> only, so the allele is renamed "
+                        "first. Only that name changes: the blocks, their genotypes, "
+                        "their qualities and their depths are your caller's own.</p>"
+                    )
                 # main.nf switches both assume-reference flags off for a gVCF, whatever
                 # the checkboxes say (EXPLICIT_CALL_INPUT_TYPES in
                 # app/utils/pharmcat_assume_ref.py): the reference pass emits a row at

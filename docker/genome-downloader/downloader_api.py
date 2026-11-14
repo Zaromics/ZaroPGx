@@ -63,6 +63,10 @@ REFERENCE_SHA256 = {
     "pharmcat_grch38": "7aeb9c9b7ddb262aab32fe97a48317a4a54d97680dea27b81af4561cf502f839",
     # UCSC hg19ToHg38.over.chain.gz: see its GENOMES entry.
     "hg19_to_hg38_chain": "5c0598e500ceb5a78c73086929e8ef993aec309bcafb595139b53d440b125a1d",
+    # UCSC hg38ToHg19.over.chain.gz, 1,246,411 bytes: see its GENOMES entry. Needed to
+    # express PharmCAT's GRCh38-only position list in GRCh37 coordinates, which is what
+    # lets a GRCh37 gVCF be genotyped at all.
+    "hg38_to_hg19_chain": "14a712e8e147d9fc8e9d87d51977b46f6f8ddb93efbe5d0843d86b6205f587b1",
     # 1000 Genomes GRCh38_full_analysis_set_plus_decoy_hla.fa (the CRAM cache's
     # source), 3,263,683,042 bytes, 2015-03-09. MD5 64b32de2fc934679c16e83a2bc072064:
     # vol1/ftp/current.tree; hashed from NCBI's mirror, as for GRCh37.
@@ -92,6 +96,14 @@ download_status = {
         "pharmcat_positions": {"progress": 0, "size_mb": 5, "status": "pending"},
         "pharmcat_regions": {"progress": 0, "size_mb": 1, "status": "pending"},
         "hg19_to_hg38_chain": {"progress": 0, "size_mb": 1, "status": "pending"},
+        # Every name in GENOMES needs an entry here. verify_staged_pins() and
+        # _download_genomes() index straight into this dict, and the startup call to
+        # verify_staged_pins() is guarded for OSError only -- so a GENOMES entry added
+        # without one here raises KeyError before uvicorn.run() and the service exits.
+        # Under restart: unless-stopped that is a crash loop, and gatk-api and pypgx
+        # wait on this service's health, so the whole stack stays down.
+        # tests/test_downloader_reference_integrity.py holds the two together.
+        "hg38_to_hg19_chain": {"progress": 0, "size_mb": 1, "status": "pending"},
         "ref_cache_ucsc_hg38": {"progress": 0, "size_mb": 0, "status": "pending"},
         "ref_cache_1kg_analysis_set": {"progress": 0, "size_mb": 3113, "status": "pending"}
     },
@@ -832,6 +844,37 @@ GENOMES = [
         "sha256": REFERENCE_SHA256["hg19_to_hg38_chain"],
         "gz_path": "/reference/chain/hg19ToHg38.over.chain.gz",
         "fasta_path": "/reference/chain/hg19ToHg38.over.chain.gz",
+        "is_chain": True
+    },
+    {
+        # The REVERSE chain, GRCh38 -> GRCh37. Needed because PharmCAT's position list
+        # exists in GRCh38 coordinates only, and a GRCh37 gVCF has to be genotyped
+        # against positions it actually contains: the list is lifted DOWN to GRCh37
+        # once, the reference-confidence pass runs there, and the result is lifted back
+        # up by the liftover step a GRCh37 VCF already takes. MEASURED 2026-11-12: all
+        # 1,226 positions lift GRCh38 -> GRCh37 and all 1,226 return to the exact same
+        # GRCh38 coordinate, 0 rejected and 0 moved in either direction, with 7 lifted
+        # by REF/ALT swap (harmless: only the coordinates are used, as an interval
+        # list). Picard LiftoverVcf needs -Xmx4g for it; 3g OOMs.
+        #
+        # Fetched over HTTPS, unlike the chain above. That entry explains at length why
+        # it uses plain http -- eMudhra's emSign G3 roots were distrusted in October
+        # 2026, breaking verification for UCSC's certificate. UCSC has since migrated to
+        # Let's Encrypt: as of 2026-11-12 hgdownload.soe.ucsc.edu chains through ISRG
+        # Root X1/X2 and verifies with return code 0. So https is available again, and
+        # the entry above could be revisited on its own branch rather than quietly here.
+        #
+        # The SHA-256 is this file fetched twice over https on 2026-11-12, and UCSC's own
+        # md5sum.txt for the hg38/liftOver directory agrees on the MD5
+        # (ff3031d93792f4cbb86af44055efd903). That check comes from the same host, so it
+        # confirms the file's identity rather than being an independent attestation --
+        # the pinned SHA-256 is still what integrity rests on.
+        "name": "hg38_to_hg19_chain",
+        "what": "the reverse liftover chain",
+        "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz",
+        "sha256": REFERENCE_SHA256["hg38_to_hg19_chain"],
+        "gz_path": "/reference/chain/hg38ToHg19.over.chain.gz",
+        "fasta_path": "/reference/chain/hg38ToHg19.over.chain.gz",
         "is_chain": True
     }
 ]

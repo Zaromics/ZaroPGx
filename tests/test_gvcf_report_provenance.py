@@ -34,6 +34,7 @@ the same pair of booleans, that they cannot CONTRADICT each other is pinned dire
 from __future__ import annotations
 
 import re
+from html import unescape
 
 import pytest
 
@@ -103,6 +104,53 @@ def test_zero_coverage_is_reported_not_swallowed():
 
     assert "0 of PharmCAT's 1,226 positions" in paragraph
     assert "1,226 were not covered" in paragraph
+
+
+def test_the_paragraph_says_when_the_file_was_rewritten_before_genotyping():
+    """GenotypeGVCFs reads GATK's `<NON_REF>` blocks only, so a DeepVariant-class gVCF
+    has that allele renamed while gatk-api stages it. The file that was genotyped is
+    therefore not byte-for-byte the file that was uploaded, and the reader is owed that.
+    """
+    paragraph = _paragraph(
+        dict(
+            FULL_STATS,
+            symbolic_allele_renamed_from="<*>",
+            n_symbolic_alleles_renamed=1225,
+        )
+    )
+
+    assert "&lt;*&gt;" in paragraph, "the allele is named, and escaped for HTML"
+    assert "&lt;NON_REF&gt;" in paragraph
+    assert "1,225 records" in paragraph
+    # What the rename does NOT touch. "We rewrote your genome file" is alarming in
+    # exactly the way this true sentence must not be.
+    assert "Only the name changed" in paragraph
+    for untouched in ("genotypes", "qualities", "depths"):
+        assert untouched in paragraph, untouched
+    # And the lane's own claims survive beside it.
+    assert CALLED_DATA_CLAIM in paragraph
+    assert "1,180 of PharmCAT's 1,226 positions" in paragraph
+
+
+def test_a_gatk_gvcf_says_nothing_about_a_rename():
+    """Nothing was renamed, so there is nothing to report. A paragraph that said so
+    anyway would be describing work that did not happen."""
+    paragraph = _paragraph()
+
+    assert "renamed" not in paragraph
+    assert "Only the name changed" not in paragraph
+
+
+def test_a_rename_with_no_count_still_says_it_happened():
+    """The fact does not depend on the number, and a falsy count must not delete it."""
+    paragraph = _paragraph(
+        dict(
+            FULL_STATS, symbolic_allele_renamed_from="<*>", n_symbolic_alleles_renamed=0
+        )
+    )
+
+    assert "its records" in paragraph, "no number, but the rename is still stated"
+    assert "&lt;*&gt;" in paragraph
 
 
 def test_the_paragraph_states_the_re_genotyping_caveat():
@@ -297,6 +345,31 @@ def test_the_paragraph_reaches_both_report_lanes(template_name):
 
 
 @pytest.mark.parametrize("template_name", TEMPLATES)
+def test_the_reader_sees_the_renamed_allele_and_not_an_escape(template_name):
+    """`<*>` has to arrive on the page as `<*>`.
+
+    Two ways this breaks and the builder's own test cannot see either. Unescaped, the
+    browser reads `<*>` as a tag and the allele vanishes from the sentence; escaped and
+    then auto-escaped again by Jinja, the reader is shown a literal `&lt;*&gt;`. Both
+    leave a sentence that names the wrong thing, so this is asserted on the rendered
+    page rather than on the string the builder returned.
+    """
+    paragraph = _paragraph(
+        dict(
+            FULL_STATS,
+            symbolic_allele_renamed_from="<*>",
+            n_symbolic_alleles_renamed=1225,
+        )
+    )
+    html = _render(template_name, gvcf_provenance=paragraph)
+
+    assert "&amp;lt;" not in html, "double-escaped: the reader is shown the escape"
+    text = unescape(_text(html))
+    assert "with the <*> allele rather than GATK's <NON_REF>" in text
+    assert "Only the name changed" in text
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
 def test_an_ordinary_vcf_run_says_nothing_about_gvcf_genotyping(template_name):
     """Negative control: no invented paragraph when no genotyping ran."""
     text = _text(_render(template_name, gvcf_provenance=None))
@@ -426,3 +499,48 @@ def test_covered_but_uncertain_positions_are_not_called_uncovered():
     )
     assert "423 were not covered by the file" in paragraph
     assert "13 more were covered but not called with confidence" in paragraph
+
+
+# --------------------------------------------------------------------------
+# A GRCh37 gVCF: the positions were not the ones PharmCAT ships
+# --------------------------------------------------------------------------
+
+
+def test_the_paragraph_says_when_the_positions_were_expressed_in_another_build():
+    """The reader is owed this for two reasons: the positions this run emitted reference
+    calls over are not the ones PharmCAT ships, and it is the step that used to make a
+    GRCh37 gVCF refusable at all."""
+    paragraph = _paragraph(dict(FULL_STATS, positions_expressed_in="GRCh37"))
+
+    assert "This file is on GRCh37" in paragraph
+    assert "position list was expressed in GRCh37" in paragraph
+    assert "lifted back to GRCh38" in paragraph
+    # That a shortfall is refused rather than quietly genotyped over.
+    assert "refuses rather than genotyping over a partial list" in paragraph
+    # And the one thing this lane gives up, said plainly.
+    assert "PyPGx's own coverage is not vouched for" in paragraph
+    # The lane's own claims survive beside it.
+    assert CALLED_DATA_CLAIM in paragraph
+    assert "1,180 of PharmCAT's 1,226 positions" in paragraph
+
+
+def test_a_grch38_gvcf_says_nothing_about_expressing_positions():
+    """It used the list as PharmCAT ships it, so there is nothing to report."""
+    paragraph = _paragraph()
+
+    assert "expressed in" not in paragraph
+    assert "GRCh37" not in paragraph
+
+
+@pytest.mark.parametrize("template_name", TEMPLATES)
+def test_the_lifted_positions_sentence_reaches_both_lanes(template_name):
+    text = _text(
+        _render(
+            template_name,
+            gvcf_provenance=_paragraph(
+                dict(FULL_STATS, positions_expressed_in="GRCh37")
+            ),
+        )
+    )
+
+    assert "position list was expressed in GRCh37" in text

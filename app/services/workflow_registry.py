@@ -93,7 +93,7 @@ GENOMIC_ANALYSIS = WorkflowRecipe(
         # while nothing read the flag, and a mint-a-step-nobody-posts bug the moment
         # this template landed. That branch no longer sets it. Keep it that way: a flag
         # that names a step must only be set by an input that step can actually finish.
-        # The two gVCF refusals (_refuse_non_gatk_gvcf, _refuse_grch37_gvcf) follow the
+        # The two gVCF refusals (_refuse_unconfirmed_gvcf, _refuse_grch37_gvcf) follow the
         # same rule and set neither flag.
         StepTemplate(
             "bcf_to_vcf",

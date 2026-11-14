@@ -71,6 +71,7 @@ from app.pharmcat.report_json import (
 from app.reports import (
     caller_agreement,
     marks,
+    pharmcat_phase,
     pharmcat_variants,
     rarity,
     read_phase,
@@ -2595,6 +2596,7 @@ def create_interactive_html_report(
     gvcf_provenance: str | None = None,
     array_provenance: str | None = None,
     read_phase_coverage: str | None = None,
+    pharmcat_phase_coverage: str | None = None,
     missing_positions_not_assumed: bool = False,
     downloads: Optional[List[Dict[str, str]]] = None,
     workflow_diagram: Optional[Dict[str, Any]] = None,
@@ -2761,6 +2763,7 @@ def create_interactive_html_report(
             "array_provenance": array_provenance,
             "array_provenance": array_provenance,
             "read_phase_coverage": read_phase_coverage,
+            "pharmcat_phase_coverage": pharmcat_phase_coverage,
             "liftover_provenance": liftover_provenance,
             "missing_positions_not_assumed": missing_positions_not_assumed,
             # 159: run-derived provenance (each rendered only if resolved)
@@ -4717,6 +4720,34 @@ def generate_report(
         logger.warning("Read phase coverage not described: %s", e, exc_info=True)
         _read_phase_coverage = None
     template_data["read_phase_coverage"] = _read_phase_coverage
+    # The same question for the calls PharmCAT made itself, which the lane above
+    # deliberately says nothing about (app/reports/read_phase.py's docstring: "for a
+    # gene the report prints PharmCAT's call for, PyPGx's arrangement is not the
+    # printed one"). PharmCAT reads an unphased file and reports the diplotype its
+    # allele definitions explain most specifically, so where a gene has two or more
+    # heterozygous defining positions the pairing is a choice; from its own
+    # definitions this names the other reading, beside the call
+    # (app/reports/pharmcat_phase.py). Only where PharmCAT has not said it itself --
+    # it raises an "ambiguity" message for 68 of the 82 such calls over the 61 GeT-RM
+    # genomes, so this speaks for the other 14. The same call also moves PharmCAT's own
+    # sentence up beside the call it is about (place_warnings), out of the list under
+    # the gene table: one qualification, one place, whichever of the two wrote it.
+    # Read at report time from the report JSON, so it costs the run nothing and an
+    # older run re-rendered gains it -- as rarity.py does. It runs after
+    # attach_pharmcat_messages above, which is what puts those messages on the rows.
+    try:
+        _pharmcat_phase = pharmcat_phase.annotate_genes(
+            data.get("genes", []), pharmcat_report
+        )
+    except Exception as e:  # naming an alternative must not cost the report
+        logger.warning("PharmCAT arrangements not read: %s", e, exc_info=True)
+        _pharmcat_phase = {}
+    try:
+        _pharmcat_phase_coverage = pharmcat_phase.coverage_note(_pharmcat_phase)
+    except Exception as e:  # describing the check must not cost the report
+        logger.warning("PharmCAT arrangements not described: %s", e, exc_info=True)
+        _pharmcat_phase_coverage = None
+    template_data["pharmcat_phase_coverage"] = _pharmcat_phase_coverage
     template_data["unlisted"] = unlisted_ctx
     _unlisted_alert = unlisted.alert(unlisted_ctx)
     if _unlisted_alert:
@@ -4911,6 +4942,7 @@ def generate_report(
                 "gvcf_provenance": gvcf_provenance,
                 "array_provenance": array_provenance,
                 "read_phase_coverage": _read_phase_coverage,
+                "pharmcat_phase_coverage": _pharmcat_phase_coverage,
                 # How common the variants behind the calls are (app/reports/rarity.py).
                 # Listed here and not only on the earlier template_data: this dict
                 # rebinds the name and is the one rendered into the HTML and the PDF.
@@ -5303,6 +5335,7 @@ def generate_report(
                 liftover_provenance=liftover_provenance,
                 gvcf_provenance=gvcf_provenance,
                 read_phase_coverage=_read_phase_coverage,
+                pharmcat_phase_coverage=_pharmcat_phase_coverage,
                 missing_positions_not_assumed=missing_positions_not_assumed,
                 downloads=export_downloads(report_dir, report_id),
                 workflow_diagram=workflow_diagram,

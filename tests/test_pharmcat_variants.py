@@ -265,6 +265,70 @@ def test_pharmcats_own_example_is_reference_at_every_position():
     assert found["genes"] == []
 
 
+# --- the two shapes PharmCAT has emitted -----------------------------------
+#
+# 3.x writes genes -> symbol; 2.x wrote genes -> {CPIC|DPWG|FDA} -> symbol, and
+# app/pharmcat/report_json.py exists because both are live. Reading the symbols
+# straight off `genes` found the guideline sources instead and no variants under them,
+# so the table vanished without a word -- on a report the repository itself carries.
+
+
+def _nested(report):
+    """The same report in 2.x's shape: every gene under each guideline source, with
+    its reference base in the field that release wrote it to."""
+    genes = {}
+    for source in ("CPIC", "DPWG"):
+        copied = {}
+        for symbol, gene in report["genes"].items():
+            payload = json.loads(json.dumps(gene))
+            payload["geneSymbol"] = symbol
+            for variant in payload.get("variants") or []:
+                variant["wildtypeAllele"] = variant.pop("referenceAllele")
+            copied[symbol] = payload
+        genes[source] = copied
+    return {"genes": genes}
+
+
+def test_the_older_nested_shape_is_read_too(bundle):
+    """Not just read: counted once. A gene in that shape appears under every source
+    that annotates it, so walking it naively would double every panel."""
+    flat = pharmcat_variants.collect(_report(), bundle)
+    nested = pharmcat_variants.collect(_nested(_report()), bundle)
+    assert nested["status"] == flat["status"] == "done"
+    assert nested["genotyped"] == flat["genotyped"]
+    assert nested["differing"] == flat["differing"]
+    assert [gene["gene"] for gene in nested["genes"]] == [
+        gene["gene"] for gene in flat["genes"]
+    ]
+
+
+def test_the_reference_base_is_read_from_either_field(bundle):
+    """3.x's referenceAllele, 2.x's wildtypeAllele. Without the second, nothing in an
+    older report differs from a reference it cannot see, and the table comes back empty
+    rather than absent -- the quieter half of the same bug."""
+    nested = pharmcat_variants.collect(_nested(_report()), bundle)
+    rows = {row["call"]: row for gene in nested["genes"] for row in gene["rows"]}
+    assert rows, "no position differed from a reference the table could not see"
+    heterozygous = rows["G/A"]
+    assert heterozygous["reference"] == "G"
+    assert heterozygous["zygosity"] == "heterozygous"
+    # And the key the frequency lookup is made with still names the reference base.
+    assert heterozygous["keys"] == ["chr10-94781859-G-A"]
+
+
+def test_the_repositorys_own_2x_report_still_yields_its_panel():
+    """test_data/pharmcat.example.report.json is a 2.15 report, and the only in-repo
+    sample of that shape: it came back `status: none` before."""
+    data = json.loads(
+        (EXAMPLE / "pharmcat.example.report.json").read_text(encoding="utf-8")
+    )
+    found = pharmcat_variants.collect(data)
+    assert found["status"] == "done"
+    assert found["genotyped"] > 500
+    # It is reference at every position, like the 3.4.0 example beside it.
+    assert found["differing"] == 0
+
+
 # --- the delivered page ----------------------------------------------------
 #
 # The context is passed to the interactive lane as its own argument rather than

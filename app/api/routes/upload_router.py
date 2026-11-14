@@ -181,9 +181,13 @@ def _nextflow_max_wait_seconds() -> float:
 # supported"), behind the same swallowing `|| true`. main.nf's `gvcf` branch runs
 # GVCFToVCF first, which POSTs to gatk-api's /gvcf-to-vcf: two GATK GenotypeGVCFs passes
 # joined with `bcftools concat -a`, published under a name that is deliberately not
-# `*.g.vcf*` because PharmCAT condemns that filename before reading a byte. Not every
-# gVCF is accepted -- a non-GATK (`<*>`) flavour and a GRCh37 one are refused at
-# FileProcessor, each for a reason the conversion cannot get past.
+# `*.g.vcf*` because PharmCAT condemns that filename before reading a byte. A gVCF
+# written with DeepVariant's `<*>` reference-confidence allele instead of GATK's
+# `<NON_REF>` takes the same lane: gatk-api renames the allele while staging, because
+# GenotypeGVCFs reads GATK's spelling only. A GRCh37 gVCF takes it too, genotyped
+# against PharmCAT's positions expressed in its own build. Not every gVCF is accepted
+# -- one carrying NEITHER allele is refused at FileProcessor, for a reason the
+# conversion cannot get past.
 # "23andme" and "ancestry" joined this on 2026-11-12: main.nf's ArrayToVCF reads the
 # chip onto PharmCAT's own positions by rs identifier before anything downstream sees
 # it, and the AMP/CAP Tier 1 gate is what stops a gene the chip cannot determine from
@@ -240,12 +244,21 @@ def _unanalysable_upload_reason(workflow: Dict[str, Any]) -> Optional[str]:
     genotypes at pharmacogene positions are called data instead of PharmCAT's
     ``--absent-to-ref`` fabrication.
 
+    A gVCF whose reference blocks are ``<*>`` rather than GATK's ``<NON_REF>`` --
+    DeepVariant's spelling -- no longer reaches this
+    gate. ``GenotypeGVCFs`` reads only GATK's spelling, and measured on such a file it
+    does not refuse the input but writes rows and then stops partway through, so the
+    allele is renamed while gatk-api stages the file and the lane above runs unchanged
+    (``normalize_staged_gvcf``). The rename is a rename: the blocks, their genotypes,
+    their qualities and their depths are the caller's own.
+
     Two gVCF shapes still reach this gate, and both are refused on facts the conversion
-    cannot get past: one whose reference blocks are ``<*>`` rather than GATK's
-    ``<NON_REF>`` (GenotypeGVCFs stops on it), and a GRCh37/hg19 one (PharmCAT's
-    position list exists in GRCh38 coordinates only, so the pass that makes the lane
-    worthwhile has nothing to run against). See FileProcessor's ``_refuse_non_gatk_gvcf``
-    and ``_refuse_grch37_gvcf``.
+    cannot get past: one carrying NEITHER symbolic allele in the records that were read
+    (renaming cannot add an allele that is not there, and ``GenotypeGVCFs`` stops on such
+    a record after writing output), and a GRCh37/hg19 one (PharmCAT's position list
+    exists in GRCh38 coordinates only, so the pass that makes the lane worthwhile has
+    nothing to run against). See FileProcessor's ``_refuse_unconfirmed_gvcf`` and
+    ``_refuse_grch37_gvcf``.
 
     A gVCF that happens to be *written* as a BCF is routed to the gVCF lane, not the BCF
     one; FileProcessor reads ``##GVCFBlock`` out of the binary header to catch it, and
@@ -1892,11 +1905,15 @@ async def upload_genomic_data(
       at pharmacogene positions come from the file's own reference-confidence blocks, so
       they are called data rather than PharmCAT's --absent-to-ref fabrication. The
       output is never named *.g.vcf*, because PharmCAT condemns that filename before
-      reading a byte. Two shapes are still rejected with 400: reference blocks that are
-      <*> rather than <NON_REF> (GenotypeGVCFs stops on them), and a GRCh37/hg19 gVCF
-      (PharmCAT's position list is GRCh38-only, so the pass that makes the lane
-      worthwhile has nothing to run against — genotype it yourself and upload the
-      GRCh37 VCF, which IS lifted).
+      reading a byte. Reference blocks written <*> rather than <NON_REF>, as
+      DeepVariant writes, are accepted: GenotypeGVCFs reads GATK's
+      spelling only, so that allele is renamed while the file is staged, and nothing
+      else about the blocks changes. Two shapes are still rejected with 400: records
+      carrying neither symbolic allele (renaming cannot add one, and GenotypeGVCFs
+      stops on such a record after writing output), and a GRCh37/hg19 gVCF (PharmCAT's
+      position list is GRCh38-only, so the pass that makes the lane worthwhile has
+      nothing to run against — genotype it yourself and upload the GRCh37 VCF, which
+      IS lifted).
     - BCF: converted, then processed exactly like a VCF. The pipeline's `bcf` branch
       POSTs the file to gatk-api's /bcf-to-vcf (`bcftools view -O z`, then a tabix
       index) and only continues once that endpoint has vouched for a non-empty BGZF

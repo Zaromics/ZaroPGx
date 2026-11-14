@@ -730,6 +730,10 @@
         }
         .pharmcat-message-list li { margin: 0 0 4px 0; break-inside: avoid; page-break-inside: avoid; }
         .pharmcat-message-source { font-weight: bold; color: #555; }
+        /* The same label beside a call, where the note has its own color: PharmCAT's
+           ambiguity message is shown there (_pypgx_evidence.html's call_notes), and a
+           gray name on an amber line reads as a different note. */
+        .call-note .pharmcat-message-source { color: inherit; }
         /* A drug's notes stay with its heading and its first card: Warfarin and its
            three notes ended page 74 with the cards on page 75. */
         .drug-messages { break-inside: avoid; page-break-inside: avoid; break-after: avoid; page-break-after: avoid; }
@@ -1297,6 +1301,12 @@
            from a reference panel. Renders only for a run that had reads to check. #}
         {% if read_phase_coverage %}
             {{ read_phase_coverage|safe }}
+        {% endif %}
+        {# And the same for the calls PharmCAT made itself, which the
+           paragraph above says nothing about: the file it read carries no
+           phase (app/reports/pharmcat_phase.py). #}
+        {% if pharmcat_phase_coverage %}
+            {{ pharmcat_phase_coverage|safe }}
         {% endif %}
         {# The variants behind the calls, and how common they are
            (app/reports/rarity.py). Beside the phase paragraph because both say what

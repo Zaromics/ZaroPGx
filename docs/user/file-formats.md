@@ -8,7 +8,7 @@ title: Input formats
 |---|---|---|
 | VCF (`.vcf`, `.vcf.gz`) | GRCh38; GRCh37/hg19 is lifted over | nothing, or liftover |
 | BCF | as VCF | converted to VCF (bcftools) |
-| gVCF | GRCh38, GATK reference blocks | genotyped (GATK GenotypeGVCFs) |
+| gVCF | GRCh38; GATK `<NON_REF>` or DeepVariant-style `<*>` reference blocks | genotyped (GATK GenotypeGVCFs) |
 | BAM, SAM | GRCh38 | SAM converted to BAM (samtools) |
 | CRAM | GRCh38, written against one of three references (below) | converted to BAM (samtools) |
 | FASTQ | short reads, up to 20 GB by default | aligned to GRCh38 (bwa-mem) |
@@ -75,13 +75,30 @@ PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your
 The report states:
 
 - **How much of PharmCAT's position list your file covered.** Positions without a reference block are no-calls.
+- **Whether the reference-confidence allele was renamed**, and that nothing else about the blocks changed.
 - **That genotypes are re-derived** from the recorded likelihoods, and may differ from your caller's. A reference call needs a reference confidence of 20 over at least 7 reads; a variant needs a genotype quality of 20 and a call quality of 30. Anything else is a no-call.
 - An indel PharmCAT cannot match stays a no-call, as with a plain VCF.
 
+### Reference blocks written `<*>` (DeepVariant)
+
+Accepted. `GenotypeGVCFs` reads GATK's `<NON_REF>` reference blocks and no others, so ZaroPGx renames that allele while it stages your file, and the genotyping then runs exactly as it does for a GATK gVCF.
+
+The rename is a rename. Only the allele's *name* in the ALT column changes; the blocks themselves, their genotypes, their qualities and their read depths are your caller's, as it wrote them. DeepVariant's own documentation gives `TC,<*>` as a variant record — the symbolic allele sits beside the real one — so renaming it is enough to make the file readable without touching anything that carries information. The report says the rename happened and how many records it touched.
+
+Measured on a synthetic GRCh38 gVCF over PharmCAT's 1,226 positions (GATK 4.7.0.0): the renamed file genotypes clean in 2.3 seconds, 1,361 of its rows are reference calls and one is the variant the file carried, and no symbolic allele survives into the output.
+
+`bcftools convert --gvcf2vcf` is not used, having been measured and rejected twice: on a GATK gVCF it keeps the `<NON_REF>` alleles, and on a `<*>` one it keeps `<*>` on every row it writes — 86,227 rows from 1,225 blocks, one per base, because expanding a block is its purpose. PharmCAT refuses both outputs.
+
 Refused, with the reason:
 
-- **Non-GATK reference blocks** (`<*>` instead of `<NON_REF>`, as written by DeepVariant, bcftools and some Illumina callers). Genotype the file with your caller's own tool and upload the VCF. Do not filter the reference blocks out by hand: that deletes your variants too.
-- **GRCh37/hg19 gVCFs.** Run `gatk GenotypeGVCFs` yourself and upload the GRCh37 VCF, which is lifted over.
+- **Reference blocks with no alternate allele at all** — ALT `.`, the block's extent in INFO `END`. This is what `bcftools call -g` writes, measured with bcftools 1.24:
+
+  ```
+  chr10  94762900  .  A  .  .  .  END=94762974;MIN_DP=30  GT:DP  0/0:30
+  ```
+
+  Renaming is not available here: there is no allele to rename, and these blocks record no genotype likelihood for a non-reference allele (`GT:DP`, no `PL`), so `GenotypeGVCFs` has nothing to genotype. Supporting the shape means expanding the blocks over PharmCAT's positions without GATK — a different conversion, not yet built. Genotype the file with your caller's own tool and upload the VCF. Do not filter the reference blocks out by hand: that deletes your variants too.
+- **A gVCF carrying no recognizable reference block** in the records that were read. Renaming cannot add an allele that is not there, and `GenotypeGVCFs` genotypes every record and stops on the first one without the allele *after* writing part of its output — so this is refused at upload rather than partway through a run.
 
 Every VCF caveat applies: no HLA typing, and degraded accuracy for *CYP2D6* and for structural and copy-number variants. One sample only.
 
@@ -192,6 +209,6 @@ Upload sequencing data for a complete result, in a format from the table at the 
 ## Reference Genome Support
 - **GRCh38/hg38** — analyzed directly; the build every result is reported on.
 - **GRCh37/hg19 VCF or BCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if more than half of them cannot be lifted. A BCF is converted to a VCF first, then lifted. A native GRCh38 VCF remains the most reliable input.
-- **GRCh37/hg19 gVCF** — **not accepted.** The gVCF lane's value is the reference pass it emits over PharmCAT's own position list, and that list exists in GRCh38 coordinates only. Run `gatk GenotypeGVCFs` on it yourself and upload the resulting GRCh37 VCF, which *is* lifted. See the gVCF section above.
+- **GRCh37/hg19 gVCF** — **accepted**, and genotyped before it is lifted. PharmCAT's position list exists in GRCh38 coordinates only, so it is expressed in GRCh37 once (cached, and re-derived whenever PharmCAT's list changes), the reference-confidence pass runs over positions your file actually contains, and the result is lifted to GRCh38 afterwards — the same liftover a GRCh37 VCF takes. All of PharmCAT's positions lift in both directions; if any ever failed to, the conversion refuses rather than genotyping over a partial list. One thing is given up: PyPGx's gene regions are GRCh38, so its coverage is not read from your reference blocks and its genes are checked for genotypes instead, as for an uploaded VCF.
 - **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** Liftover converts variants that have already been called. Aligned reads are analyzed by calling variants out of them first, and that call reads each gene from its GRCh38 position — on GRCh37 reads those positions are wrong (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), so you would get star alleles that are not yours rather than an error. Call variants against GRCh37/hg19 yourself and upload the VCF, or realign the reads to GRCh38/hg38.
 - **T2T-CHM13 (any format)** — **detected and refused for now; support is in development.** ZaroPGx reads the assembly out of the file's own contig lengths, or out of its `##reference=` line, and declines the upload. Nothing downstream would catch a CHM13 file: PharmCAT's preprocessor normalizes against GRCh38.p13 without checking which assembly the input is on, and `bcftools norm -c ws` *swaps* a mismatched reference allele rather than failing — so the report would carry confidently wrong star alleles. There is no automatic liftover for it, and doing one yourself is not a workaround either: the published T2T chains exclude GRCh38's alternate haplotype contigs, so *GSTT1* (on `chr22_KI270879v1_alt`) cannot come across at all, only about 60% of T2T's segmental duplications have a clear GRCh38 orthologue — the *CYP2D6*/*CYP2D7*/*CYP2D8* cluster is one such region — and no published work characterises *CYP2D6* or *CYP2C19* in CHM13. Call your variants against GRCh38/hg38, or realign to it, and upload that.
