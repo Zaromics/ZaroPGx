@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, List
 
 import yaml
 from sqlalchemy import event, text
@@ -80,6 +81,67 @@ def _wait_until_ready(name: str, deadline: float) -> None:
         time.sleep(0.5)
 
 
+# Containers this module starts carry these labels: one to find them by, one naming
+# the process that started them.
+CONTAINER_LABEL = "zaropgx-pytest-pg"
+OWNER_LABEL = "zaropgx-pytest-owner"
+
+
+def stale_containers(listing: str, alive) -> List[str]:
+    """The names in a `docker ps` listing whose owning process is gone.
+
+    `server()` stops its container in a finally, which covers a failing test, an
+    error and Ctrl-C. It cannot cover being killed: a `timeout` that fires, a
+    SIGKILL, an OOM kill, a crash. Then the container stays up -- with a tmpfs and
+    a socket directory -- until someone notices, and on a long session they
+    accumulate. So each one records the PID that started it, and a later run clears
+    out the ones whose PID is no longer there.
+
+    `listing` is `docker ps --format "{{.Names}} {{.Label \"...\"}}"` output and
+    `alive` answers whether a PID is running, both passed in so this is testable
+    without Docker. A row whose PID is unreadable is left alone: not being able to
+    tell is a reason to leave a container running, never to remove one.
+    """
+    stale = []
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        name, owner = parts
+        if not name.startswith(f"{CONTAINER_LABEL}-"):
+            continue
+        try:
+            pid = int(owner)
+        except ValueError:
+            continue
+        if not alive(pid):
+            stale.append(name)
+    return stale
+
+
+def _pid_alive(pid: int) -> bool:
+    return pathlib.Path(f"/proc/{pid}").exists()
+
+
+def _reap_stale() -> None:
+    """Remove containers left behind by a killed run. Never raises: a failure here
+    costs a stale container, which is what we started with, not the test run."""
+    try:
+        listing = subprocess.run(
+            [
+                "docker", "ps", "--filter", f"label={CONTAINER_LABEL}",
+                "--format", f'{{{{.Names}}}} {{{{.Label "{OWNER_LABEL}"}}}}',
+            ],
+            capture_output=True, text=True, timeout=30,
+        )  # fmt: skip
+        if listing.returncode != 0:
+            return
+        for name in stale_containers(listing.stdout, _pid_alive):
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
 @contextlib.contextmanager
 def server() -> Iterator[str]:
     """Yield the URL of a PostgreSQL holding db/init's schema."""
@@ -95,9 +157,12 @@ def server() -> Iterator[str]:
     # rootless Docker's pasta forwarding (--tcp-ports=auto) skips that range: on the
     # dev host such a port never reached 127.0.0.1, while 18799 did within 2 s.
     socket_dir = _socket_dir()
+    _reap_stale()
     started = subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", name,
+            "--label", f"{CONTAINER_LABEL}=1",
+            "--label", f"{OWNER_LABEL}={os.getpid()}",
             "-e", "POSTGRES_USER=zaropgx_user",  # db/init grants to this role
             "-e", "POSTGRES_PASSWORD=pytest",
             "-e", "POSTGRES_DB=zaropgx_db",
