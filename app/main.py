@@ -312,7 +312,7 @@ def get_author_name() -> str:
 # Initialize FastAPI app
 # The release this build is. chore(release) bumps it with the other stamps; the docs
 # staleness check below keys on it, so a release always reprints the documentation.
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.4.3"
 
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",

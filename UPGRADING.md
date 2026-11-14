@@ -17,6 +17,91 @@ pins its own release and updates to nothing newer.
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
+## v0.4.2 → v0.4.3
+
+This release changes code inside the gatk-api, genome-downloader and pharmcat images, so it
+needs the new ones: `docker compose pull`, then `docker compose up -d`. The bootstrap update
+command above does both, in that order.
+
+The database gains one migration. The app applies it at startup and records it in
+`schema_migrations`, so there is nothing to run by hand, and an install that never uploads a
+genotyping array is unaffected by it.
+
+### A gene is no longer given a verdict the data cannot support
+
+This is the one change that alters what an existing input reports. Where the file could not
+assess an allele that the AMP/CAP minimum ("Tier 1") set for a gene requires, the gene is now
+reported as **not called, naming the alleles that were missed**, instead of as a normal result
+built out of positions the file does not carry.
+
+The gate asks PharmCAT what it could not assess — the uncalled haplotypes in its own report —
+rather than second-guessing it, so a complete genome is unaffected: nothing is withheld on a
+whole-genome VCF, or on PharmCAT's own complete example. A thin input is where it shows. On a
+genotyping chip, CYP2C9 previously came back Normal Metabolizer, Activity Score 2.0, from 2 of
+the 88 positions that define it; it is now declined. A panel missing only rs7900194 is declined
+for CYP2C9 on that one absence.
+
+So a report that named a phenotype for a gene before may now decline it. That is the intended
+change: the earlier answer was not more informed, only more confident. AMP's own standard names
+the harm — reporting `*1/*1` where the truth is `*1/*8`, which falls hardest on the populations
+whose alleles are the ones left off a sparse panel.
+
+CYP4F2 is deliberately never withheld on this basis: its `*3` is Tier 2 in AMP's table, so its
+Tier 1 set is empty. CYP2C19's list is carried but marked unverified against its primary paper,
+which is not publicly readable; see the note in `app/pharmcat/amp_tier1.py`.
+
+### gVCFs from DeepVariant, and gVCFs in GRCh37, are accepted
+
+A gVCF's reference blocks carry a symbolic ALT whose spelling differs by caller. GATK writes
+`<NON_REF>`, which was the only one accepted. DeepVariant writes `<*>`, and those files are now
+read: gatk-api renames the allele while staging, because GenotypeGVCFs reads GATK's spelling
+only. The flavor is detected from the file's own records, not from its name.
+
+A gVCF written by bcftools is still refused, and the refusal is now accurate about why: bcftools
+writes no symbolic allele at all, but a bare `ALT .` with `END=`, spanning many bases with
+nothing to rename. The refusal names the positions it found and arrives before GATK runs. Earlier
+documentation said bcftools wrote `<*>`; it does not.
+
+A **GRCh37** gVCF is also accepted now. It is not lifted — a gVCF's reference blocks give Picard
+no ALT to work with. Instead PharmCAT's position list is expressed in GRCh37 once and cached, the
+file is genotyped at positions it actually contains, and the result is lifted to GRCh38 by the
+step a GRCh37 VCF already takes. All 1,226 positions were measured to round-trip between the two
+builds exactly. The genome downloader fetches one additional pinned file for this, the reverse
+liftover chain, about 1.2 MB.
+
+### 23andMe and AncestryDNA exports are accepted, provisionally
+
+A consumer genotyping export is read onto PharmCAT's own GRCh38 positions **by rs identifier**,
+not by the coordinates in the file. That is the uncommon choice and it is deliberate: converting
+the file's own build-37 coordinates and lifting them silently drops rs6025, Factor V Leiden,
+because a homozygous-reference row has no ALT for Picard to swap when the two builds disagree
+about which allele is the reference. A chip reports observed bases, which belong to the DNA
+rather than to a build, so the identifier is the stable key. 1,018 of PharmCAT's 1,226 positions
+carry one.
+
+Expect a short report, and read it with the gate above in mind — the two were built together and
+the gate is what makes this input safe to accept at all. PyPGx does not run on an array: it calls
+copy number from read depth, and a chip has no reads, while its outside calls would override
+PharmCAT's no-calls. Chips cannot detect gene duplications or deletions by any method, and those
+decide the phenotype for CYP2D6 among others. The report states the coverage it had, and counts
+separately what it could not use — no-calls, insertion/deletion rows that name no sequence, and
+bases matching neither allele in PharmCAT's record, which indicate a strand problem rather than a
+genotype.
+
+### PharmCAT's ambiguity note now sits beside the call it qualifies
+
+Where a call's pairing cannot be resolved without phased data, PharmCAT says so itself for most
+of those calls. That sentence printed in the notes below the gene table while this report's own
+equivalent note printed in the table, so a reader who had learned to look beside the call read
+those as unqualified. Each such call now carries exactly one line, in the table: PharmCAT's
+sentence where PharmCAT wrote one, attributed to it, and this report's where it did not. Never
+both.
+
+### The PharmCAT evidence table returns on reports from older PharmCAT versions
+
+Reading a PharmCAT 2.x report, the evidence table came back empty with no explanation, because
+the gene symbols sit in a different place in that layout. Both layouts are now read.
+
 ## v0.4.1 → v0.4.2
 
 This release changes code inside the PyPGx and genome-downloader images, so it needs the new
