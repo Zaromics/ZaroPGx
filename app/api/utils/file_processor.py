@@ -2181,8 +2181,6 @@ class FileProcessor:
                 GVCF_STAR_ALLELE,
             ):
                 self._refuse_unconfirmed_gvcf(workflow, analysis.gvcf_symbolic_allele)
-            elif any(token in detected_build for token in GRCH37_BUILD_TOKENS):
-                self._refuse_grch37_gvcf(workflow, analysis.vcf_info.reference_genome)
             else:
                 # needs_gatk, not just the two conversion flags: GenotypeGVCFs runs in
                 # the gatk-api container, and needs_gatk is what upload_router turns
@@ -2198,6 +2196,28 @@ class FileProcessor:
                 workflow["needs_conversion"] = True
                 workflow["needs_gvcf_genotyping"] = True
                 workflow["needs_gatk"] = True
+                if any(token in detected_build for token in GRCH37_BUILD_TOKENS):
+                    # ACCEPTED as of 2026-11-12, and the obstacle named in the old
+                    # refusal is gone rather than worked around: PharmCAT's position list
+                    # is expressed in GRCh37 once and cached, so the reference-confidence
+                    # pass runs over positions this file actually contains
+                    # (derive_grch37_positions). MEASURED: all 1,226 positions lift
+                    # GRCh38 -> GRCh37 and all 1,226 lift back to the same coordinate.
+                    #
+                    # needs_liftover, because the merged VCF arrives in GRCh37 and
+                    # main.nf lifts it exactly as it lifts a GRCh37 VCF upload. The
+                    # PharmCAT sidecar is lifted inside gatk-api instead, since nothing
+                    # downstream touches that file; the mtDNA sidecar deliberately reads
+                    # the UNLIFTED output, because b37's MT is already rCRS and pushing
+                    # it through the hg19 chain shifts MT-RNR1 by 2.
+                    workflow["needs_liftover"] = True
+                    workflow["recommendations"].append(
+                        "<p>This gVCF is on GRCh37/hg19. PharmCAT's own position list is "
+                        "expressed in GRCh37 to genotype it, and the result is lifted to "
+                        "GRCh38 afterwards — the same liftover a GRCh37 VCF upload "
+                        "takes. Positions that cannot be lifted are dropped and "
+                        "counted.</p>"
+                    )
                 workflow["recommendations"].append(
                     "<p>gVCF files are genotyped into a plain VCF before analysis:</p>"
                 )

@@ -80,6 +80,52 @@ def test_the_chain_is_pinned_and_not_trusted_to_tls(downloader):
     )
 
 
+REVERSE_CHAIN_SHA256 = (
+    "14a712e8e147d9fc8e9d87d51977b46f6f8ddb93efbe5d0843d86b6205f587b1"
+)
+
+
+def _reverse_chain(downloader):
+    (chain,) = [g for g in downloader.GENOMES if g["name"] == "hg38_to_hg19_chain"]
+    return chain
+
+
+def test_the_reverse_chain_is_pinned_too(downloader):
+    """The GRCh38->GRCh37 chain, which expresses PharmCAT's GRCh38-only position list in
+    a GRCh37 gVCF's coordinates. Never applied to sample data -- only to that list."""
+    chain = _reverse_chain(downloader)
+
+    assert chain["sha256"] == REVERSE_CHAIN_SHA256
+    assert chain["gz_path"] == "/reference/chain/hg38ToHg19.over.chain.gz"
+
+
+def test_the_reverse_chain_is_fetched_over_https(downloader):
+    """Unlike the chain above. That one uses plain http because eMudhra's emSign G3
+    roots were distrusted in October 2026, breaking verification for UCSC. UCSC has
+    since migrated to Let's Encrypt -- as of 2026-11-12 hgdownload.soe.ucsc.edu chains
+    through ISRG Root X1/X2 and verifies -- so the new entry uses https. The older
+    entry is left as it is: changing it is its own decision, not a side effect here.
+    """
+    assert _reverse_chain(downloader)["url"] == (
+        "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/"
+        "hg38ToHg19.over.chain.gz"
+    )
+
+
+def test_both_chain_pins_match_the_module_the_services_check_against(downloader):
+    """genome-downloader checks a chain when it downloads it; gatk-api and the mtDNA
+    service read it from the shared mount, where anything could have replaced it since,
+    and check it again against app/utils/liftover_chain.py. Two copies of each pin, so
+    this keeps them equal -- a drift would mean one service trusts what another
+    refuses."""
+    from app.utils.liftover_chain import CHAIN_SHA256 as MODULE_FORWARD
+    from app.utils.liftover_chain import REVERSE_CHAIN_SHA256 as MODULE_REVERSE
+
+    assert _chain(downloader)["sha256"] == MODULE_FORWARD
+    assert _reverse_chain(downloader)["sha256"] == MODULE_REVERSE
+    assert MODULE_FORWARD != MODULE_REVERSE, "the two chains are different files"
+
+
 def test_a_download_that_matches_its_hash_is_kept(downloader, tmp_path, monkeypatch):
     body = b"chain 1000 chr1 10 + 0 10 chr1 10 + 0 10 1\n10\n"
     _serve(downloader, monkeypatch, body)

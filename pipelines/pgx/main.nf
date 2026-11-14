@@ -471,6 +471,11 @@ process GVCFToVCF {
     val patient_id
     val report_id
     val reference
+    // The build the UPLOAD is expressed against, as the app detected it. A GRCh37 gVCF
+    // is genotyped against GRCh37 at PharmCAT's positions lifted down to it, and the
+    // sidecar comes back GRCh38; the merged VCF stays GRCh37 for LiftoverVCF below.
+    // Same param the liftover gate reads, so the two cannot disagree about the build.
+    val source_build
     val outdir
 
     output:
@@ -488,7 +493,7 @@ process GVCFToVCF {
     shell:
     '''
     set -euo pipefail
-    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{gvcf} )
+    CURL_ARGS=( -X POST -F reference_genome=!{reference} -F source_build=!{source_build} -F patient_id=!{patient_id} -F report_id=!{report_id} -F file=@!{gvcf} )
     if [ -n "${JOB_ID:-}" ]; then
       CURL_ARGS+=( -F job_id=${JOB_ID} -F step_name=gvcf_to_vcf )
     fi
@@ -1086,12 +1091,17 @@ workflow {
     // other two IS a VCF once converted, and a second copy of the liftover decision is a
     // second copy to drift.
     //
-    // The liftover is unreachable on the gvcf arm today and that is not an oversight: a
-    // GRCh37 gVCF is refused at upload, because PharmCAT's position list -- the interval
-    // list GVCFToVCF emits its reference calls over -- exists in GRCh38 coordinates
-    // only. The arm is written as part of the shared branch anyway rather than special-
-    // cased, so that if a GRCh37 interval list is ever staged the order is already
-    // genotype-then-lift, which is the only correct order.
+    // The liftover arm on the gvcf lane is REACHABLE as of 2026-11-12, which is what
+    // this comment was written in anticipation of: PharmCAT's position list is now
+    // expressed in GRCh37 once and cached (gatk-api's derive_grch37_positions), so a
+    // GRCh37 gVCF is genotyped at positions it actually contains and the merged VCF
+    // arrives here still in GRCh37, to be lifted by the step below. Genotype-then-lift
+    // was always the only correct order, and it is now the order that runs.
+    //
+    // The PharmCAT sidecar does NOT come through here -- it is lifted inside
+    // /gvcf-to-vcf, because this step takes the merged VCF only. And the mtDNA sidecar
+    // below keeps reading converted_vcf_ch, the UNLIFTED file, which is what keeps
+    // chrM out of the hg19-sourced chain.
     else if (params.input_type in ['vcf', 'bcf', 'gvcf']) {
         // Assigned without `def` on purpose: the mtDNA wiring below reads it, and a
         // `def` here would scope it to this branch. Same pattern as vcf_ch/bam_ch.
@@ -1100,7 +1110,7 @@ workflow {
         if (params.input_type == 'bcf') {
             converted_vcf_ch = BcfToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
         } else if (params.input_type == 'gvcf') {
-            converted_vcf_ch = GVCFToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, outdir_ch).vcf.first()
+            converted_vcf_ch = GVCFToVCF(input_ch, patient_id_ch, report_id_ch, reference_ch, Channel.value(params.source_build ?: ''), outdir_ch).vcf.first()
         } else {
             converted_vcf_ch = input_ch
         }

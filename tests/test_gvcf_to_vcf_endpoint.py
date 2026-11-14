@@ -2386,3 +2386,138 @@ def test_a_failed_bgzip_is_refused_rather_than_half_written(
     assert caught.value.status_code == 500
     assert "bgzip exited 1" in caught.value.detail
     assert staged.read_bytes() == before
+
+
+# --------------------------------------------------------------------------
+# A GRCh37 gVCF: PharmCAT's positions expressed in the file's own build
+# (_is_grch37, grch37_positions_path, derive_grch37_positions)
+#
+# This is what made a GRCh37 gVCF refusable. The lane's value is the
+# reference-confidence pass over PharmCAT's own position list, that list is GRCh38-only,
+# and genotyping a GRCh37 file at GRCh38 positions selects the wrong loci SILENTLY --
+# GATK checks an interval list against the reference dictionary, not against biology.
+#
+# MEASURED 2026-11-12 with UCSC's hg38ToHg19 chain and Picard LiftoverVcf at -Xmx4g (3g
+# OOMs): all 1,226 positions lift GRCh38 -> GRCh37, and all 1,226 lift BACK to the exact
+# same GRCh38 coordinate. 0 rejected and 0 moved either way; 7 lift by REF/ALT swap,
+# which costs nothing because only the coordinates are read (GATK takes the file as an
+# interval list). The whole conversion was then run on a synthetic GRCh37 gVCF: 1,226 of
+# 1,226 positions called, the PharmCAT sidecar out in GRCh38 (chr1:97078987) and the
+# merged VCF still in GRCh37 (chr1:97544543) for main.nf to lift.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("build", ["GRCh37", "grch37", "hg19", "b37", " HG19 "])
+def test_a_grch37_build_name_is_recognized_in_every_spelling(gatk_api, build):
+    """The app sends what its header inspector detected and main.nf passes it through, so
+    all three spellings arrive. Matched the way main.nf's own liftover gate matches them,
+    so the two cannot disagree about which files get lifted."""
+    assert gatk_api._is_grch37(build) is True
+
+
+@pytest.mark.parametrize("build", ["GRCh38", "hg38", "", None, "t2t", "chm13"])
+def test_anything_else_is_not_treated_as_grch37(gatk_api, build):
+    """Fail-safe direction: an unrecognized build uses the list as PharmCAT ships it,
+    which is the behaviour from before this existed."""
+    assert gatk_api._is_grch37(build) is False
+
+
+def test_the_derived_list_is_keyed_on_the_grch38_lists_own_digest(gatk_api, tmp_path):
+    """What makes a PharmCAT bump safe. A new position list has a new digest, so it
+    derives a new file and the stale one is simply never named again -- the alternative
+    is a cached GRCh37 list from last release silently deciding this release's calls."""
+    positions = tmp_path / "pharmcat_positions.vcf"
+    positions.write_text("##fileformat=VCFv4.2\n", encoding="utf-8")
+
+    first = gatk_api.grch37_positions_path(str(positions), "a" * 64)
+    second = gatk_api.grch37_positions_path(str(positions), "b" * 64)
+
+    assert first != second
+    assert first.endswith("pharmcat_positions.GRCh37.aaaaaaaaaaaa.vcf")
+    # Beside the list it came from, so one reference tree holds both.
+    assert os.path.dirname(first) == str(tmp_path)
+
+
+def test_a_partial_lift_is_refused_rather_than_genotyped_over(
+    gatk_api, tmp_path, tools
+):
+    """ALL-OR-NOTHING. A dropped position would come back a no-call with nothing in the
+    output to explain it, so a shortfall is an error rather than a smaller list."""
+    positions = tmp_path / "pharmcat_positions.vcf"
+    positions.write_text(
+        "##fileformat=VCFv4.2\n"
+        "chr1\t100\trs1\tA\tG\t.\tPASS\tPX=X\tGT\t0/0\n"
+        "chr1\t200\trs2\tC\tT\t.\tPASS\tPX=X\tGT\t0/0\n",
+        encoding="utf-8",
+    )
+    chain = tmp_path / "hg38ToHg19.over.chain.gz"
+    chain.write_bytes(b"\x1f\x8b" + b"\x00" * 8)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    # The lift "succeeds" but keeps one of the two positions.
+    def lift(job_label, argv, description):
+        out = argv[argv.index("-O") + 1]
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write("##fileformat=VCFv4.2\nchr1\t50\trs1\tA\tG\t.\tPASS\t.\tGT\t0/0\n")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(gatk_api, "_run_tool", lift)
+        mp.setattr(gatk_api, "pinned_mismatch", lambda *a, **k: None)
+        mp.setitem(gatk_api.LIFTOVER_CHAIN_PATHS, ("GRCh38", "GRCh37"), str(chain))
+        mp.setitem(gatk_api.REFERENCE_PATHS, "hg19", str(positions))
+        mp.setattr(gatk_api, "ensure_sequence_dictionary", lambda path: None)
+        with pytest.raises(HTTPException) as caught:
+            gatk_api.derive_grch37_positions("job", str(positions), str(work))
+
+    assert caught.value.status_code == 500
+    detail = caught.value.detail
+    assert "yielded 1" in detail, detail
+    assert "no-call with nothing in the output to explain it" in detail
+
+
+def test_a_missing_reverse_chain_is_named_rather_than_guessed_at(gatk_api, tmp_path):
+    positions = tmp_path / "pharmcat_positions.vcf"
+    positions.write_text("##fileformat=VCFv4.2\n", encoding="utf-8")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(
+            gatk_api.LIFTOVER_CHAIN_PATHS,
+            ("GRCh38", "GRCh37"),
+            str(tmp_path / "absent.chain.gz"),
+        )
+        with pytest.raises(HTTPException) as caught:
+            gatk_api.derive_grch37_positions("job", str(positions), str(tmp_path))
+
+    assert caught.value.status_code == 400
+    assert "liftover chain is not staged" in caught.value.detail
+
+
+def test_a_tampered_reverse_chain_is_refused(gatk_api, tmp_path):
+    """The chain is read from a shared mount where anything could have replaced it, so
+    it is checked against its pin before use -- the same contract /liftover-vcf has for
+    the forward chain."""
+    positions = tmp_path / "pharmcat_positions.vcf"
+    positions.write_text("##fileformat=VCFv4.2\n", encoding="utf-8")
+    chain = tmp_path / "hg38ToHg19.over.chain.gz"
+    chain.write_bytes(b"not the chain")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(gatk_api.LIFTOVER_CHAIN_PATHS, ("GRCh38", "GRCh37"), str(chain))
+        with pytest.raises(HTTPException) as caught:
+            gatk_api.derive_grch37_positions("job", str(positions), str(tmp_path))
+
+    assert caught.value.status_code == 500
+    assert "liftover chain" in caught.value.detail.lower()
+
+
+def test_counting_records_reads_plain_and_gzipped(gatk_api, tmp_path):
+    """The all-or-nothing guard and the cache-hit check both rest on this count."""
+    plain = tmp_path / "a.vcf"
+    plain.write_text("##h\n#CHROM\nchr1\t1\t.\tA\tG\t.\t.\t.\n", encoding="utf-8")
+    squashed = tmp_path / "b.vcf.gz"
+    squashed.write_bytes(gzip.compress(plain.read_bytes()))
+
+    assert gatk_api.count_vcf_records(str(plain)) == 1
+    assert gatk_api.count_vcf_records(str(squashed)) == 1
+    assert gatk_api.count_vcf_records(str(tmp_path / "absent.vcf")) == 0

@@ -656,13 +656,10 @@ def test_an_end_on_a_symbolic_alt_is_a_structural_variant_not_a_block(tmp_path):
     assert FileProcessor(temp_dir=str(tmp_path))._detect_file_type(path) is FileType.VCF
 
 
-def test_a_grch37_gvcf_is_refused_and_says_what_is_actually_missing():
-    """The one refusal here a user is entitled to find surprising, since a GRCh37 *VCF*
-    is supported. The copy has to name the real obstacle -- PharmCAT's position list is
-    GRCh38-only -- and point at the GRCh37 VCF lane that does work."""
+def _grch37_gvcf_workflow():
     from app.api.models import SequencingProfile, VCFHeaderInfo
 
-    workflow = _gvcf_workflow(
+    return _gvcf_workflow(
         vcf_info=VCFHeaderInfo(
             reference_genome="GRCh37",
             sequencing_platform="unknown",
@@ -674,29 +671,58 @@ def test_a_grch37_gvcf_is_refused_and_says_what_is_actually_missing():
         )
     )
 
-    assert workflow["unsupported"] is True
-    assert workflow["needs_conversion"] is False
-    assert workflow["needs_gvcf_genotyping"] is False
-    assert workflow["needs_liftover"] is False, (
-        "a gVCF must never be scheduled for liftover: the genotyping that would have to "
-        "come first has no GRCh37 interval list to run against"
-    )
 
-    reason = workflow["unsupported_reason"].lower()
-    assert "grch37" in reason
-    assert "grch38 coordinates only" in reason
-    assert "genotypegvcfs" in reason
-    # the way out, and that it really is a supported one
-    assert "supported" in reason
+def test_a_grch37_gvcf_is_genotyped_and_then_lifted():
+    """ACCEPTED as of 2026-11-12, and the obstacle named in the old refusal is gone
+    rather than worked around.
+
+    That refusal said the lane's value is the reference-confidence pass over PharmCAT's
+    own position list, that the list is GRCh38-only, and that there is therefore nothing
+    to run the pass over. The list is now expressed in GRCh37 once and cached
+    (gatk-api's derive_grch37_positions). MEASURED: all 1,226 positions lift
+    GRCh38 -> GRCh37 and all 1,226 lift back to the exact same GRCh38 coordinate.
+
+    ``needs_liftover`` is now TRUE, which the old test asserted must never happen -- its
+    reason ("the genotyping that would have to come first has no GRCh37 interval list")
+    is the thing that changed. Genotype-then-lift was always the only correct order; it
+    is now the order that runs.
+    """
+    workflow = _grch37_gvcf_workflow()
+
+    assert workflow["unsupported"] is False
+    assert workflow["needs_conversion"] is True
+    assert workflow["needs_gvcf_genotyping"] is True
+    assert workflow["needs_liftover"] is True
+    assert workflow["needs_gatk"] is True
+
+
+def test_a_grch38_gvcf_is_not_scheduled_for_a_liftover():
+    """The negative control the flag needs: only a GRCh37 file gets one."""
+    assert _gvcf_workflow(vcf_info=None)["needs_liftover"] is False
+
+
+def test_the_grch37_gvcf_plan_says_the_positions_are_expressed_in_its_build():
+    """The reader is owed it: the positions this run emits reference calls over are not
+    the ones PharmCAT ships, and it is the step that used to make the input refusable.
+    """
+    recommendations = " ".join(_grch37_gvcf_workflow()["recommendations"]).lower()
+
+    assert "grch37" in recommendations
+    assert "position list" in recommendations
+    assert "lifted to" in recommendations
+    # And that positions which cannot be lifted are accounted for, not quietly dropped.
+    assert "dropped and" in recommendations
 
 
 def test_a_grch37_gvcf_is_detected_from_its_own_contigs(upload):
-    """End to end, through the real header inspector: the build is read, not assumed."""
+    """End to end, through the real header inspector: the build is read, not assumed.
+    It used to be refused on this evidence; now it is carried on it."""
     resp = upload("old.g.vcf", _gvcf_on("10", CHR10_GRCH37_LENGTH))
 
-    assert resp.status_code == 400, resp.text
-    assert "grch37" in resp.json()["detail"].lower()
-    assert upload.created_patients == []
+    assert resp.status_code == 200, resp.text
+    options = resp.json()["workflow"]["options"]
+    assert options["needs_gvcf_genotyping"] is True
+    assert options["needs_liftover"] is True
 
 
 def test_a_grch38_gvcf_is_detected_from_its_own_contigs_and_accepted(upload):
@@ -757,7 +783,9 @@ def test_the_gvcf_refusals_carry_no_markup_of_their_own():
             sample_count=1,
         )
     )
-    for workflow in (_gvcf_workflow(vcf_info=None, gvcf_symbolic_allele=None), grch37):
+    # The GRCh37 gVCF is no longer among them: it is accepted and carries no refusal
+    # reason at all. What is left is the unconfirmed-flavour refusal.
+    for workflow in (_gvcf_workflow(vcf_info=None, gvcf_symbolic_allele=None),):
         detail = workflow["unsupported_reason"]
         assert "<" not in detail and ">" not in detail, detail
         assert "&lt;" not in detail and "&amp;" not in detail, detail
