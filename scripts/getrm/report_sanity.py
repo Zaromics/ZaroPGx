@@ -17,6 +17,28 @@ they found. It is a sweep, not an assertion: numbers to read, not a pass or fail
 
 Run it on the GeT-RM results after a release, or on any directory `scripts/getrm/run.py`
 has written. The checks are cheap: JSON in, counts out, no reads and no database.
+
+What the corpus showed on 2026-11-14, over 61 GeT-RM genomes, so a later run has
+something to be read against -- which is the whole point of counting rather than
+asserting:
+
+    genes with a variants table            min    4   median    9   max   13
+    positions PharmCAT read                min 1066   median 1066   max 1066
+    positions differing from reference     min    5   median   14   max   23
+    positions it could not read            min    0   median    2   max    9
+    gene rows in the report                min   23   median   23   max   23
+    calls withheld (AMP/CAP Tier 1)        min    0   median    0   max    0
+    PharmCAT reference labels: 226 in the form the summary matches, 216 spelling out
+
+Two of those are worth knowing. Nothing was withheld in any of the 61: the Tier 1 gate
+declines a chip and keeps a complete genome, and this is that measured at corpus scale
+rather than on the one sample it was built against. A zero can also mean a gate that
+never fires, so it was checked against the other possibility: mark CYP2C19's *2, *3 and
+*17 uncalled in one of these same reports and the gate withholds CYP2C19. The zero means
+all 61 were adequate. And both forms of PharmCAT's
+reference label are live in roughly equal number, so neither branch of the summary's
+handling is dead -- a release that normalized that label would move 226 cells to the
+other branch and fail nothing.
 """
 
 from __future__ import annotations
@@ -32,9 +54,11 @@ from typing import Dict, List
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from app.pharmcat.report_json import extract_display_call  # noqa: E402
+from app.pharmcat.report_json import (  # noqa: E402
+    PHARMCAT_REFERENCE_LABEL,
+    extract_display_call,
+)
 from app.reports import pharmcat_variants, tier1_gate  # noqa: E402
-from app.reports.generator import _PHARMCAT_REFERENCE_LABEL  # noqa: E402
 
 
 def _spread(name: str, values: List[float], note: str = "") -> str:
@@ -85,13 +109,13 @@ def main() -> int:
             rows.append({"gene": gene, "diplotype": label, "phenotype": None})
             # The summary shows PharmCAT's own "Reference/Reference" label where the
             # TSV spells the reference allele out, and tells them apart with a pattern
-            # (generator._PHARMCAT_REFERENCE_LABEL). A PharmCAT that renamed that label
+            # (generator.PHARMCAT_REFERENCE_LABEL). A PharmCAT that renamed that label
             # would fail nothing -- the summary would quietly start printing the
             # spelled-out name instead -- so the forms are counted.
             if "eference" in label:
                 key = (
                     "matched"
-                    if _PHARMCAT_REFERENCE_LABEL.fullmatch(label)
+                    if PHARMCAT_REFERENCE_LABEL.fullmatch(label)
                     else "spelled out"
                 )
                 reference_labels[key] += 1

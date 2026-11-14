@@ -117,3 +117,42 @@ def test_a_sweep_that_read_nothing_says_so(sweep, tmp_path, capsys, monkeypatch)
     out = capsys.readouterr().out
     assert "had a pharmcat.json to read" in out
     assert "Every reader found something" not in out
+
+
+def test_the_sweep_runs_with_no_database(tmp_path):
+    """Its own docstring promises "JSON in, counts out, no reads and no database", and
+    it did not hold: it imported the report generator for one regex, the generator
+    imports the database layer, and the sweep died on a missing password before reading
+    a file. Anyone running it after a release, on a machine with no stack up, would have
+    hit that -- which is exactly when it is meant to be run.
+
+    The regex now lives beside PharmCAT's other output knowledge. This runs the script
+    the way that user would: a subprocess, with the database variables taken out of its
+    environment, so an import that reaches the database layer again fails here.
+    """
+    import json
+    import os
+    import subprocess
+
+    run = tmp_path / "HG00000"
+    run.mkdir()
+    (run / "pharmcat.json").write_text(
+        json.dumps({"genes": {"CYP2C19": _gene_block()}}), encoding="utf-8"
+    )
+
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "DB_PASSWORD")
+    }
+
+    done = subprocess.run(
+        [sys.executable, "scripts/getrm/report_sanity.py", str(tmp_path)],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.stderr == ""
+    assert "1 run(s)" in done.stdout
+    assert "Every reader found something in every run." in done.stdout
