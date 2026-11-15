@@ -383,7 +383,23 @@ def normalize_pharmcat_results(response):
                                                     "term", ""
                                                 )
                                             else:
-                                                classification = str(class_obj)
+                                                # str(None) is "None" -- a non-empty
+                                                # string that passes every emptiness
+                                                # guard downstream and reaches the FHIR
+                                                # Task as "Strength of recommendation:
+                                                # None". PharmCAT writes null here for
+                                                # CPIC's warfarin annotation, whose
+                                                # entry is a dosing algorithm rather
+                                                # than a graded recommendation; its own
+                                                # JSON carries no "None" string
+                                                # anywhere. classify_evidence maps None,
+                                                # "" and "None" alike to Unclassified,
+                                                # so the report is unchanged.
+                                                classification = (
+                                                    ""
+                                                    if class_obj is None
+                                                    else str(class_obj)
+                                                )
 
                                         # The genes the recommendation rests on:
                                         # all of them, not the first (CPIC
