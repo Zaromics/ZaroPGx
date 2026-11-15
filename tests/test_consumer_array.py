@@ -206,11 +206,17 @@ def test_a_row_disagreeing_with_the_files_own_shape_is_dropped():
 
 
 @pytest.mark.parametrize("genotype", ["--", "NN", "..", "00", "DD", "II"])
-def test_a_no_call_is_counted_and_left_out(genotype):
+@pytest.mark.parametrize("vendor", ["23andme", "ancestrydna"])
+def test_a_no_call_is_counted_and_left_out(genotype, vendor):
     """A position the chip tried and failed to read is not a position it does not carry,
     and emitting a `./.` would make PharmCAT treat it as covered-but-uncertain rather
-    than absent."""
-    reading = array_genotypes(_chip([("rs6025", genotype)]))
+    than absent.
+
+    Both shapes, because AncestryDNA writes these codings one allele per column --
+    `0 0`, `- -`, `I I` -- and they only reach the no-call set once the two columns
+    are joined. The joining is tested above; this is what it has to produce.
+    """
+    reading = array_genotypes(_chip([("rs6025", genotype)], vendor=vendor))
 
     assert reading.no_calls == 1
     assert reading.genotypes == {}

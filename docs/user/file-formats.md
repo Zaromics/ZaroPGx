@@ -172,6 +172,8 @@ ZaroPGx reads a 23andMe or AncestryDNA raw-data export and analyzes it. Expect a
 
 That is not the obvious design, and the obvious one is wrong. A chip's coordinates are build 37, so the natural route is `bcftools convert --tsv2vcf` followed by the same liftover a GRCh37 VCF gets. Measured, that **silently drops `rs6025` — Factor V Leiden**: a homozygous-reference chip row becomes `REF=T ALT=.`, the reference allele at that position differs between GRCh37 and GRCh38, and Picard cannot swap a reference allele with an alternate that is not there. Seven of PharmCAT's 1,226 positions are exposed to the same failure. A chip reports *observed bases*, which belong to your DNA rather than to a reference build, so the rs number is the stable key.
 
+**Both vendor layouts give the same answer.** AncestryDNA writes the two alleles in two columns where 23andMe writes one genotype in one, which is the kind of difference that produces wrong genotypes rather than an error if it is read naively (fed to `bcftools convert --tsv2vcf` as-is, `rs6025 1 169519049 T T` comes out `T N 0/1` -- a reference call turned into a heterozygote against an allele that does not exist). Measured on the shipped image, with the same 211 genotypes written in each vendor's shape: both are read as 209 usable genotypes carried onto PharmCAT's positions, and the two output VCFs are identical record for record.
+
 Rows that cannot be carried are counted, not guessed at: a no-call (`--`), the `I`/`D` insertion-deletion coding (which names no sequence — the `UGT1A1*28` TA repeat is one of these), an internal probe id with no `rs` number, and a base that matches neither allele in PharmCAT's record, which is a strand problem rather than a genotype.
 
 ### What you will and will not get
