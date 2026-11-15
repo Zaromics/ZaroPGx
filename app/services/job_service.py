@@ -883,10 +883,24 @@ class JobService:
                     ),
                     None,
                 )
+                cancelled = bool((job.job_metadata or {}).get("cancelled"))
                 if failed is not None:
                     current_step = failed.step_name or current_step
                     said = (failed.error_details or {}).get("error")
-                    message = str(said) if said else f"{failed.step_name} failed."
+                    if cancelled:
+                        # A cancelled run ends as `failed`: the step in flight dies
+                        # because it was stopped, and the pipeline's non-zero exit
+                        # overwrites the status the cancel endpoint set. Measured on a
+                        # real cancel -- status "failed", job_metadata.cancelled true,
+                        # and the step's own words "CRAM to BAM conversion failed:
+                        # samtools view exited 0 but wrote no BAM". True, and it reads
+                        # as a defect in the data; the run was stopped on request. The
+                        # metadata says so, so this says so.
+                        message = f"Cancelled while {failed.step_name} was running."
+                    else:
+                        message = str(said) if said else f"{failed.step_name} failed."
+                elif cancelled:
+                    message = "Cancelled before any step reported."
 
                     # Deliberately not scraped out of the job's log. The reason is
                     # there -- "mtDNA calling failed: bcftools failed: [E::vcf_parse]

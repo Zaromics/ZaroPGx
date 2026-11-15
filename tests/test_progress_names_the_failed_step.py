@@ -140,3 +140,44 @@ def test_status_text_reads_an_enum_and_a_string(db_session):
     assert _status_text(JobStatus.FAILED) == "failed"
     assert _status_text("failed") == "failed"
     assert _status_text(None) == ""
+
+
+def test_a_cancelled_run_says_it_was_cancelled(db_session, failed_job):
+    """A cancelled run ends as `failed`: the step in flight dies because it was
+    stopped, and the pipeline's non-zero exit overwrites the status the cancel
+    endpoint set. Measured on a real cancel -- status "failed",
+    job_metadata.cancelled true, and the step's own words "CRAM to BAM conversion
+    failed: samtools view exited 0 but wrote no BAM". That reads as a defect in the
+    data when the run was stopped on request."""
+    job = db_session.query(Job).filter(Job.id == failed_job).one()
+    job.job_metadata = {"cancelled": True, "cancelled_at": "2026-11-15T05:54:33Z"}
+    step = (
+        db_session.query(JobStep)
+        .filter(JobStep.job_id == failed_job, JobStep.step_name == "mtdna_analysis")
+        .one()
+    )
+    step.error_details = {"error": "samtools view exited 0 but wrote no BAM"}
+    db_session.commit()
+
+    progress = JobService(db_session).get_job_progress(str(failed_job))
+
+    assert progress.message == "Cancelled while mtdna_analysis was running."
+    assert "samtools" not in (progress.message or "")
+    assert progress.current_step == "mtdna_analysis"
+
+
+def test_a_failure_that_was_not_cancelled_still_quotes_the_reason(
+    db_session, failed_job
+):
+    """The cancel branch must not swallow a real failure's text."""
+    step = (
+        db_session.query(JobStep)
+        .filter(JobStep.job_id == failed_job, JobStep.step_name == "mtdna_analysis")
+        .one()
+    )
+    step.error_details = {"error": "bcftools failed: could not parse the position"}
+    db_session.commit()
+
+    progress = JobService(db_session).get_job_progress(str(failed_job))
+
+    assert progress.message == "bcftools failed: could not parse the position"
