@@ -8,8 +8,17 @@ RYR1 and CACNA1S "Uncertain Susceptibility", CFTR, and every "N/A",
 colour classes override.
 
 The activity score badges too: white on orange, light green and turquoise was
-2.6, 1.4 and 2.1 to 1, under the 3:1 WCAG asks even of bold text. Those carry
-dark text now, as the yellow one did.
+2.6, 1.4 and 2.1 to 1. Those carry dark text now, as the yellow one did.
+
+**The threshold here was 3:1 and should not have been.** That is WCAG's allowance for
+large text, which means 18.66px bold or 24px regular -- and these badges are bold at
+``0.95em`` over a print body of ``10px``, so **9.5px in the PDF** and about 15px in the
+page. Neither is large, so 4.5:1 applies. Raising the gate failed exactly one tier:
+tier-5's white on ``#28a745`` at **3.13:1**, which the 3:1 gate had been passing. It is
+``#1e7e34`` now, 5.14:1.
+
+Worth knowing: tier-1 (white on ``#dc3545``) passes at **4.53:1**, so any darkening of
+that text or lightening of that red breaks it.
 """
 
 from __future__ import annotations
@@ -18,6 +27,9 @@ import re
 from pathlib import Path
 
 import pytest
+
+#: WCAG 2.x AA for text that is not large: these badges are 9.5px in the PDF.
+MIN_RATIO = 4.5
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "reports" / "templates"
 
@@ -63,7 +75,7 @@ def _contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-def test_every_coloured_badge_reads_at_three_to_one():
+def test_every_coloured_badge_reads_at_four_and_a_half_to_one():
     css = (TEMPLATES / "report_template.html").read_text(encoding="utf-8")
     rules = _rules(css)
     names = {"white": "#ffffff", "black": "#000000"}
@@ -83,7 +95,7 @@ def test_every_coloured_badge_reads_at_three_to_one():
             names.get(background.group(1), background.group(1)),
             names.get(foreground, foreground),
         )
-        assert ratio >= 3, (selector, round(ratio, 2))
+        assert ratio >= MIN_RATIO, (selector, round(ratio, 2))
         checked += 1
     assert checked >= 10
 
