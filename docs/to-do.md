@@ -602,6 +602,14 @@ Open:
   **is called from nowhere**; and the failed step's `error_details` was `{}`, because the
   sidecar reported through the log instead.
 
+  **Not every sidecar does, which narrows this.** Cancelling a real CRAM run on
+  2026-11-15 left `error_details` holding gatk-api's own sentence -- "CRAM to BAM
+  conversion failed: samtools view exited 0 but wrote no BAM" -- so the progress
+  response already carries the run's words for a gatk failure, and the gap is the
+  sidecars that report through the log instead. Worth measuring which do which before
+  building anything: the fix for a sidecar that already fills `error_details` is
+  nothing, and for one that does not it is a change in that sidecar, not in the app.
+
   Naming the failed step is fixed separately (the progress response said
   `current_step: header_analysis`, a step that had completed). What remains is getting the
   run's own words in front of the reader. **Do not scrape them out of the log by
