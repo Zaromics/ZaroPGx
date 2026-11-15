@@ -12,8 +12,8 @@
 ## ZaroPGx Overview
 
 ZaroPGx is a self-hosted pharmacogenomic analytic pipeline. Inputs accepted: VCF, BCF, gVCF, BAM, CRAM,
-SAM, and short-read FASTQ. Reports are made on diplotypes and phenotypes for up to 91 pharmacogenes, bundled with the
-CPIC, DPWG, and FDA guidances that apply, with reports in several accessible formats: PDF; interactive HTML; and FHIR R4 bundle.
+SAM, or short-read FASTQ. Reports are made on diplotypes and phenotypes for up to 91 pharmacogenes, bundled with the
+CPIC, DPWG, and FDA guidances that apply, with reports in PDF, interactive web HTML, and FHIR R4 bundle formats.
 
 <details>
 <summary>Supported genes (91)</summary>
