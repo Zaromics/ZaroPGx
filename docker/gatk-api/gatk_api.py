@@ -225,13 +225,32 @@ try:
         banner = ""
     gatk_version = banner.splitlines()[0] if banner else "unknown"
 
+    def _version_from_banner(line: str) -> str:
+        """The version out of GATK's banner line, or the line itself.
+
+        `gatk --version` prints "The Genome Analysis Toolkit (GATK) v4.7.0.0". What
+        belongs in a version field is 4.7.0.0. Removing the substring "GATK" from that
+        sentence -- which is what this did -- leaves "The Genome Analysis Toolkit ()
+        v4.7.0.0", empty parentheses and all, and that string is what the report's
+        Platform and Citations table printed as GATK's version, and what its bwa row
+        printed after the words "in GATK".
+
+        Falls back to the whole line rather than to "unknown": a banner this does not
+        recognize is still better evidence of what ran than nothing.
+        """
+        found = re.search(r"\bv?(\d+(?:\.\d+)+)", line or "")
+        if found:
+            return found.group(1)
+        # Never an empty field: a whitespace-only banner strips to "", which would
+        # write `"version": ""` into the manifest and print as nothing at all.
+        return (line or "").strip() or "unknown"
+
     def _banner_version(label: str) -> str:
         found = re.search(rf"^{label} Version: (\S+)", banner, re.M)
         return found.group(1) if found else "unknown"
 
     with open(os.path.join(versions_dir, "gatk.json"), "w") as vf:
-        # Keep only the first token if it's a long banner
-        ver_token = gatk_version.replace("GATK", "").strip()
+        ver_token = _version_from_banner(gatk_version)
         vf.write(
             json.dumps(
                 {
