@@ -1588,7 +1588,11 @@
             {% if no_call_notes %}
             <div{% if no_call_notes|length <= 10 %} class="no-call-notes"{% endif %}>
             {% for note in no_call_notes %}
-            <p class="no-call-note"><sup>{{ loop.index }}</sup> {{ note }}.</p>
+            {# The period is added only when the note does not bring one. PyPGx's
+               own reasons are fragments and need it; the AMP/CAP Tier 1 note is a
+               pair of sentences and already ends in one, so every report with a
+               withheld gene printed "positions the data does not cover..". #}
+            <p class="no-call-note"><sup>{{ loop.index }}</sup> {{ note }}{% if not note.rstrip().endswith(('.', '!', '?')) %}.{% endif %}</p>
             {% endfor %}
             </div>
             {% endif %}
