@@ -559,27 +559,6 @@ Open:
 
 ## UI/UX
 
-- **A failed job's reason is in the log and reaches no user-facing surface.** MEASURED
-  2026-11-15 on a real failing run: the database holds `mtDNA calling failed: bcftools
-  failed: [E::vcf_parse] Could not parse the position 'NOTANUMBER'` in `job_logs`, and the
-  page learns none of it. `/api/v1/jobs/{id}/progress` (what the page polls) carries
-  `status`, `current_step` and `message` and no error; `/upload/status/{job_id}` **fetches
-  the logs into a variable it never uses** (`upload_router.py`: `logs =
-  job_service.get_job_logs(job_id)`); `websocket_manager.send_error_notification` exists and
-  **is called from nowhere**; and the failed step's `error_details` was `{}`, because the
-  sidecar reported through the log instead.
-
-  Naming the failed step is fixed separately (the progress response said
-  `current_step: header_analysis`, a step that had completed). What remains is getting the
-  run's own words in front of the reader. **Do not scrape them out of the log by
-  heuristic** -- every rule tried picked a worse line: the newest ("Job updated:
-  JobStatus.FAILED"), the wrapper's header ("Nextflow job failed: stdout:"), and, for a
-  sample named *FailurePathCheck*, the job's own creation line. The honest routes are to
-  carry `error_details` through `fail_step` at each sidecar, to call the error
-  notification that already exists, or to show the job's log in the page. All three are
-  design choices rather than repairs.
-
-
 - [DONE Oct 2026, fix/ui-stage-row-fits] The stage row and the header fit a phone: in a
   form narrower than about 520px the stages sit four to a row (they ran off the card, and
   the page scrolled sideways), and a stage's popup stays on screen
@@ -612,6 +591,26 @@ Open:
   dark theme's labels measure 1.22:1 and it fails; its VCF is hg38, and a GRCh37 job
   watched through the page on 2026-10-19 moved the bar through its 9-second liftover, 1 to
   8%, and on to 100); (3) only then consider visual snapshots.
+
+- **A failed job's reason is in the log and reaches no user-facing surface.** MEASURED
+  2026-11-15 on a real failing run: the database holds `mtDNA calling failed: bcftools
+  failed: [E::vcf_parse] Could not parse the position 'NOTANUMBER'` in `job_logs`, and the
+  page learns none of it. `/api/v1/jobs/{id}/progress` (what the page polls) carries
+  `status`, `current_step` and `message` and no error; `/upload/status/{job_id}` **fetches
+  the logs into a variable it never uses** (`upload_router.py`: `logs =
+  job_service.get_job_logs(job_id)`); `websocket_manager.send_error_notification` exists and
+  **is called from nowhere**; and the failed step's `error_details` was `{}`, because the
+  sidecar reported through the log instead.
+
+  Naming the failed step is fixed separately (the progress response said
+  `current_step: header_analysis`, a step that had completed). What remains is getting the
+  run's own words in front of the reader. **Do not scrape them out of the log by
+  heuristic** -- every rule tried picked a worse line: the newest ("Job updated:
+  JobStatus.FAILED"), the wrapper's header ("Nextflow job failed: stdout:"), and, for a
+  sample named *FailurePathCheck*, the job's own creation line. The honest routes are to
+  carry `error_details` through `fail_step` at each sidecar, to call the error
+  notification that already exists, or to show the job's log in the page. All three are
+  design choices rather than repairs.
 
 ## Data & Database
 
