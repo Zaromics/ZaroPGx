@@ -182,8 +182,13 @@ TIER1: Dict[str, Tier1Set] = {
             "Pratt VM et al. TPMT and NUDT15 Genotyping Recommendations: A Joint "
             "Consensus Recommendation of AMP, CPIC, CAP, DPWG, ESPT and PharmGKB. "
             "J Mol Diagn 2022;24(10):1051-1063. PMID 35931343, PMCID PMC9808500. "
-            "NOTE: a 2026 CPIC thiopurine guideline update exists and may revise this "
-            "set; re-read before relying on it."
+            "The 2026 CPIC thiopurine update (Clin Pharmacol Ther) revises allele "
+            "FUNCTION and dosing -- it adds a TPMT/NUDT15 compound intermediate "
+            "metabolizer phenotype and reclassifies some alleles -- which reaches this "
+            "pipeline through PharmCAT's data, not through this table. Checked "
+            "2026-11-15: AMP has published no newer allele-SELECTION report for these "
+            "two genes, so the Tier 1 set below stands. Its series continues elsewhere "
+            "(CYP3A4/CYP3A5 2023, DPYD 2024), so re-check at a PharmCAT bump."
         ),
         source=PRIMARY,
     ),
