@@ -48,7 +48,7 @@ Where a template ships a different value from the code's default, both are given
 
 | Variable | Default | |
 |---|---|---|
-| `GATK_ENABLED`, `PYPGX_ENABLED`, `OPTITYPE_ENABLED`, `MTDNA_ENABLED` | `true` | The default state of the step switches on the upload page. The services run either way. With GATK off, inputs that need conversion (CRAM, SAM, BCF, gVCF, FASTQ) fail |
+| `GATK_ENABLED`, `PYPGX_ENABLED`, `OPTITYPE_ENABLED`, `MTDNA_ENABLED` | `true` | The default state of the step switches on the upload page. The services otherwise run either way, with one exception: `MTDNA_ENABLED=false` also stops a job calling the mtDNA service when the upload form does not say either way, so an operator who has not deployed `mtdna` does not get jobs that try to reach it. An explicit choice on the form still wins. With GATK off, inputs that need conversion (CRAM, SAM, BCF, gVCF, FASTQ) fail |
 | `PHARMCAT_ABSENT_TO_REF`, `PHARMCAT_UNSPECIFIED_TO_REF` | `false` | The default state of PharmCAT's assume-reference options on the upload page; see {doc}`usage` |
 | `REF_CACHE_ENABLED` | `true` | Build the CRAM reference cache (3.2 GB download, 5.3 GB kept). Without it, only CRAMs written against UCSC hg38 decode, and **Run Demo**, whose CRAM needs the cache, answers 503 |
 | `DOWNLOAD_ON_STARTUP` | `true` | Let the genome downloader stage references when it starts. On an install that finished staging, it still fetches an item a later release added (with `false`, `POST /start-download` to its port 5050 does) |
@@ -61,6 +61,8 @@ Where a template ships a different value from the code's default, both are given
 | `PYPGX_PHARMCAT_PREFERENCE` | `auto` | Which genes PyPGx genotypes. `pharmcat`: not those PharmCAT calls itself (it still calls CYP2D6, which PharmCAT takes from it). `pypgx`: all 87, and PharmCAT uses PyPGx's calls over its own. `auto`: the first for a VCF, BCF or gVCF; all 87 for reads (BAM, CRAM, SAM, FASTQ), so PyPGx measures copy number for PharmCAT's CYP2B6 and CYP4F2 too, but PharmCAT keeps its own calls |
 | `OUTSIDECALLSOVERRIDE` | off | Use a hand-written outside-calls file instead of the generated one |
 | `MAX_HEADER_READ_BYTES`, `MAX_HEADER_PARSE_TIMEOUT_SEC` | `1000000000`, `300` | Limits on reading an upload's header |
+| `MTDNA_API_URL` | `http://mtdna:5000` | Where the app checks the mtDNA service's health |
+| `KROKI_TIMEOUT` | `30` | Seconds to wait for Kroki when rendering the workflow diagram |
 
 ## Reports
 
@@ -83,6 +85,10 @@ Where a template ships a different value from the code's default, both are given
 | `ZAROPGX_SCRATCH` | `./data/temp` | Where ZaroHLA works. HLA typing a whole genome needs tens of GB; point this at a large disk if `data/` is small |
 | `ZAROHLA_SAMTOOLS_THREADS` | `4` | Threads samtools uses as ZaroHLA extracts the HLA reads and converts them for OptiType. A genome with tens of millions of unplaced reads spends most of its HLA time there |
 | `ZAROPGX_ALIGN_REFERENCE` | `./reference/pypgx` | Where the FASTQ alignment index is read from |
+| `UPLOAD_DIR`, `REPORT_DIR` | `/data/uploads`, `/data/reports` | Where uploads are staged and reports written, inside the container |
+| `REFERENCE_DIR` | `reference` | The app's own view of the reference tree. Compose sets `/reference` for the services that need it |
+| `ANNOTATION_DIR` | `<REFERENCE_DIR>/annotation` | Where the annotation bundle is read from, when it is somewhere else |
+| `SHARED_INPUT_ROOTS` | `/data/uploads:/data/results` | Colon-separated directories a service may read an input from in place rather than be sent a copy. A path outside them is refused, with every symlink followed first |
 | `LOG_LEVEL` | `DEBUG` (`.env.production`: `INFO`) | The app's log level |
 
 ## Set by Compose
