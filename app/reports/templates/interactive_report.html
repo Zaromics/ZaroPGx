@@ -887,6 +887,16 @@
                 gap: 8px;
             }
         }
+        /* A recommendation whose every gene had its verdict withheld
+           (tier1_gate.mark_recommendations_without_a_call). The amber of .warning,
+           which this report already uses for "read this before the line under it",
+           rather than a new color. */
+        .tier1-no-call {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 6px 10px;
+            margin: 0 0 6px 0;
+        }
     </style>
 </head>
 <body>
@@ -1213,6 +1223,16 @@
                                         PharmCAT's bundled CPIC/DPWG/FDA data, not from
                                         the uploaded file. The data-recommendation
                                         attribute below deliberately stays escaped. -#}
+                                    {% if group_data['rec'].tier1_no_call %}
+                                    {# Same as report_template.html: the advice is kept and what
+                                       it rests on is stated. #}
+                                    <p style="margin: 4px 0;" class="tier1-no-call"><strong>No genotype under this guidance.</strong>
+                                       {{ group_data['rec'].tier1_no_call|join(', ') }} had
+                                       {{ 'its' if group_data['rec'].tier1_no_call|length == 1 else 'their' }}
+                                       verdict withheld: the data could not assess the alleles a
+                                       clinical test must assess, so no genotype-based action
+                                       follows from the advice below.</p>
+                                    {% endif %}
                                     <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
                                     {# As in report_template.html: "Unspecified" (DPWG, FDA) and
                                        a missing classification are the card's color
