@@ -1233,7 +1233,9 @@
                                        clinical test must assess, so no genotype-based action
                                        follows from the advice below.</p>
                                     {% endif %}
+                                    {% if group_data['rec'].recommendation %}
                                     <p style="margin: 4px 0;"><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
+                                    {% endif %}
                                     {# As in report_template.html: "Unspecified" (DPWG, FDA) and
                                        a missing classification are the card's color
                                        and the legend's "Guideline available" and

@@ -126,3 +126,53 @@ def test_two_withheld_genes_read_as_a_plural(template):
     body = _text(_render(recs)[template])
 
     assert "CYP2C19, CYP2C9 had their verdict withheld" in body
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_a_card_with_no_recommendation_text_does_not_print_the_word_none(template):
+    """CPIC's warfarin entry is a dosing algorithm rather than a sentence, so its
+    annotation carries no recommendation text. The card printed "Recommendation: None"
+    -- Jinja's rendering of the Python value -- on every report that carries warfarin
+    guidance, which is every report in the 61-sample GeT-RM corpus.
+
+    The card keeps its heading and its Source line, which is what there is to say. The
+    strength line below it is already suppressed for the same card, which is
+    unclassified."""
+    recs = [
+        {
+            "gene": None,
+            "recommendation_genes": ["CYP2C9", "CYP4F2", "VKORC1"],
+            "drug": "warfarin",
+            "recommendation": None,
+            "classification": None,
+            "evidence_class": "evidence-unclassified",
+            "guideline_source": "Annotation of CPIC Guideline for warfarin",
+        }
+    ]
+
+    rendered = _render(recs)[template]
+
+    assert "<strong>Recommendation:</strong>" not in rendered
+    assert "Recommendation: None" not in _text(rendered)
+    assert "Annotation of CPIC Guideline for warfarin" in _text(rendered)
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_an_empty_string_is_treated_the_same_as_none(template):
+    """Asserted on the markup, not the text: "Recommendation:" also matches the
+    "Strength of Recommendation:" line, which is a different field and prints
+    legitimately."""
+    recs = _clopidogrel()
+    recs[0]["recommendation"] = ""
+
+    markup = _render(recs)[template]
+
+    assert "<strong>Recommendation:</strong>" not in markup
+    assert "Strength of Recommendation:" in markup
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_a_card_with_text_still_prints_it(template):
+    body = _text(_render(_clopidogrel())[template])
+
+    assert "Recommendation: Alternative antiplatelet therapy recommended" in body

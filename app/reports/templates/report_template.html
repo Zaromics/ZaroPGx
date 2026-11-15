@@ -1743,7 +1743,16 @@
                            verdict withheld: the data could not assess the alleles a clinical test
                            must assess, so no genotype-based action follows from the advice below.</p>
                         {% endif %}
+                        {# An annotation with no recommendation text printed the word
+                           "None" -- Jinja's rendering of the Python value -- on every
+                           report carrying CPIC's warfarin guidance, whose entry is a
+                           dosing algorithm rather than a sentence. The card keeps its
+                           heading and its Source line, which is what there is to say.
+                           Same shape as the strength line below, which this card already
+                           suppresses for being unclassified. #}
+                        {% if group_data['rec'].recommendation %}
                         <p><strong>Recommendation:</strong> {{ group_data['rec'].recommendation|safe }}</p>
+                        {% endif %}
                         {# DPWG's and FDA's "Unspecified" and a missing classification
                            (CPIC warfarin's): no strength, which the card's color and
                            the Drugs legend ("Guideline available", "Unclassified") say;
