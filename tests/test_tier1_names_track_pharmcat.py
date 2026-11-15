@@ -40,6 +40,10 @@ REPO = Path(__file__).resolve().parents[1]
 #: they were taken from in a comment above them.
 SPELLINGS = REPO / "tests" / "test_amp_tier1.py"
 
+#: The annotation bundle pins its own PharmCAT, and fetches that release's
+#: pharmcat_positions.vcf by checksum (test_annotation_bundle.py ties the two).
+BUNDLE = REPO / "docker" / "genome-downloader" / "annotation_bundle.py"
+
 
 def _pinned_version() -> str:
     """The PharmCAT the stack builds against, as compose.yml defaults it."""
@@ -100,3 +104,25 @@ def test_every_entry_records_where_it_came_from():
     for symbol, tier in TIER1.items():
         assert tier.citation, f"{symbol} cites no source"
         assert tier.source, f"{symbol} does not say which tier its set is"
+
+
+def test_the_annotation_bundle_pins_the_pharmcat_the_stack_runs():
+    """The positions panel and the caller must be the same release.
+
+    ``annotation_bundle.PHARMCAT_VERSION`` chooses which release's
+    ``pharmcat_positions.vcf`` is fetched, and ``test_annotation_bundle.py`` ties that
+    choice to its checksum and its URL -- but nothing tied it to the PharmCAT the stack
+    actually runs. Bump one and not the other and the pipeline pre-fills the positions
+    of one release while another calls them, which no checksum notices because each
+    file is the right file for the version named beside it.
+    """
+    text = BUNDLE.read_text(encoding="utf-8")
+    declared = re.search(r'^PHARMCAT_VERSION\s*=\s*"([^"]+)"', text, re.M)
+    assert declared, f"{BUNDLE.name} no longer declares PHARMCAT_VERSION as a literal"
+
+    pinned = _pinned_version()
+    assert declared.group(1) == pinned, (
+        f"{BUNDLE.name} builds the annotation bundle against PharmCAT "
+        f"{declared.group(1)} and the stack runs {pinned}: the positions panel and the "
+        "caller would be different releases"
+    )
