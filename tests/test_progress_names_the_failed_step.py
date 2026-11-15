@@ -134,9 +134,8 @@ def test_status_text_reads_an_enum_and_a_string(db_session):
     """Job.status comes back as JobStatus.FAILED, so str() gives "jobstatus.failed":
     the first version of this fix compared that against "failed" and silently did
     nothing. Both forms have to work."""
-    from app.services.job_service import _status_text
-
     from app.api.models import JobStatus
+    from app.services.job_service import _status_text
 
     assert _status_text(JobStatus.FAILED) == "failed"
     assert _status_text("failed") == "failed"
