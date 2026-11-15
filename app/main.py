@@ -1372,7 +1372,7 @@ async def startup_event():
     _mismatch = build_identity.disagreement(_BUILD_IDENTITY)
     if _mismatch:
         logger.warning(_mismatch)
-        print(f"⚠ {_mismatch}")
+        print(f"⚠️  {_mismatch}")
 
     # Remember the main loop so sync WorkflowService methods can schedule
     # WebSocket broadcasts via run_coroutine_threadsafe when off-loop.
