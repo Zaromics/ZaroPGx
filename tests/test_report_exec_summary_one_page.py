@@ -114,6 +114,30 @@ def _report_html(monkeypatch, tmp_path, data, tsv=None):
     return (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
 
 
+def _uncalled_text(summary):
+    """Every gene the summary names as not called, whatever the reason.
+
+    Three paragraphs carry them now, not one: the genes this sample's data could not
+    answer, the genes no tool reported on (HLA after a VCF), and the genes whose tool
+    failed. They are split because only the first is a statement about the sample
+    (_unresolved_calls.summary_uncalled). A test about double-listing cares about the
+    union, so it does not have to track which list a gene lands in.
+    """
+    parts = []
+    for heading in (
+        "Not called from this sample's data",
+        "Not examined",
+        "Not called because a tool failed",
+    ):
+        start = summary.find(heading)
+        if start == -1:
+            continue
+        rest = summary[start + len(heading) :]
+        stop = rest.find("Not ", 1)
+        parts.append(rest if stop == -1 else rest[:stop])
+    return " ".join(parts)
+
+
 def _summary(page):
     return page[
         page.index('id="exec-summary"') : page.index("<h2>Genetic Results</h2>")
@@ -372,7 +396,7 @@ def test_without_the_tsv_it_keeps_to_pharmcats_panel(monkeypatch, tmp_path):
     assert _called_genes(page) == ["CYP2C19"]
     # Uncalled: a row that says so, and named in the notes. Outside the panel:
     # pointed to.
-    assert "HLA-A" in summary[summary.index("Not called from this sample") :]
+    assert "HLA-A" in _uncalled_text(summary)
     assert "ABCB1" not in summary
     # Both counts from this run's rows (the demo's "66 other genes" read as a
     # miscount beside PyPGx's 87).
@@ -394,9 +418,8 @@ def test_not_called_never_names_a_gene_the_table_shows(monkeypatch, tmp_path):
     shown = set(_called_genes(page))
     assert len(shown) == 18
     summary = _clean(_summary(page))
-    named = summary[summary.index("Not called from this sample") :]
-    named = named[named.index(":") + 1 : named.index(". No phenotype")]
-    assert {g.strip() for g in named.split(",")} & shown == set()
+    named = _uncalled_text(summary)
+    assert not [gene for gene in shown if re.search(rf"\b{re.escape(gene)}\b", named)]
 
 
 def test_a_gene_pharmcats_tsv_leaves_out_is_shown_called(monkeypatch, tmp_path):
@@ -426,7 +449,7 @@ def test_a_gene_pharmcats_tsv_leaves_out_is_shown_called(monkeypatch, tmp_path):
     assert {"MT-RNR1", "HLA-B"} <= set(called)
     summary = _clean(_summary(page))
     assert "normal risk of aminoglycoside-induced hearing loss" in summary
-    not_called = summary[summary.index("Not called from this sample") :]
+    not_called = _uncalled_text(summary)
     assert "MT-RNR1" not in not_called and "HLA-B" not in not_called
 
 

@@ -123,6 +123,61 @@ def test_a_run_with_no_failure_says_nothing_about_one(template):
         assert "CYP2D6" in said.group(0)
 
 
+def _rows_with_a_tool_that_never_ran():
+    """OptiType enabled, its result file never written: the case
+    mark_not_tested_and_failed's own docstring describes for HLA-A and HLA-B."""
+    rows = [
+        {"gene": "HLA-A", "diplotype": "", "phenotype": "", "called_by": "?"},
+        {"gene": "CYP3A5", "diplotype": "", "phenotype": "", "called_by": "M"},
+    ]
+    mark_not_tested_and_failed(
+        rows, report_dir="/nonexistent", failed={}, pypgx_ran=True
+    )
+    return rows
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_a_gene_no_tool_reported_on_is_not_blamed_on_the_sample(template):
+    """The second marker, and the ordinary case rather than the rare one: after a VCF
+    run nothing types HLA-A, and the page said this sample's data could not answer it.
+    The FHIR export codes these `not-performed`."""
+    rows = _rows_with_a_tool_that_never_ran()
+    assert {r["gene"]: r.get("not_tested") for r in rows}["HLA-A"] is True
+
+    body = _render(rows)[template]
+
+    said = re.search(r"Not called from this sample's data \(\d+\):[^.]*", body)
+    if said:
+        assert "HLA-A" not in said.group(0), said.group(0)[:200]
+    assert "not examined" in body.lower()
+    assert "HLA-A" in body
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_the_three_reasons_are_told_apart_at_once(template):
+    """A run with all three: one gene examined and unanswerable, one nothing reported
+    on, one whose tool crashed. Each belongs to exactly one list."""
+    failed = pypgx_failed_genes({"CYP2D6": {"success": False, "error": "MemoryError"}})
+    rows = [
+        {"gene": "HLA-A", "diplotype": "", "phenotype": "", "called_by": "?"},
+        {"gene": "CYP2D6", "diplotype": "", "phenotype": "", "called_by": "P"},
+        {"gene": "CYP3A5", "diplotype": "", "phenotype": "", "called_by": "M"},
+    ]
+    mark_not_tested_and_failed(
+        rows, report_dir="/nonexistent", failed=failed, pypgx_ran=True
+    )
+
+    body = _render(rows)[template]
+
+    said = re.search(r"Not called from this sample's data \(\d+\):[^.]*", body)
+    if said:
+        assert "HLA-A" not in said.group(0)
+        assert "CYP2D6" not in said.group(0)
+    assert "not examined" in body.lower()
+    assert "tool failed" in body
+    assert "PyPGx failed on this gene" in body
+
+
 def test_the_summary_rows_carry_the_marker():
     """The print report's sample-data line is built from summary_rows, which rebuilds
     each row; dropping the marker there put the gene straight back in the wrong list --
@@ -134,3 +189,13 @@ def test_the_summary_rows_carry_the_marker():
 
     assert by_gene["CYP2D6"]["call_error"].startswith("PyPGx failed on this gene")
     assert not by_gene["CYP3A5"]["call_error"]
+
+
+def test_the_summary_rows_carry_the_other_marker_too():
+    """not_tested for the same reason as call_error: the print report's sample-data
+    line is built from these rebuilt rows."""
+    summary = summary_rows([], _rows_with_a_tool_that_never_ran())
+    by_gene = {row["gene"]: row for row in summary}
+
+    assert by_gene["HLA-A"]["not_tested"] is True
+    assert not by_gene["CYP3A5"]["not_tested"]

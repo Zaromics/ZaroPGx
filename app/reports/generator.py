@@ -1843,6 +1843,7 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
                     # list, and a row rebuilt without this marker puts it back in
                     # the wrong one.
                     "call_error": (genes.get(gene) or {}).get("call_error"),
+                    "not_tested": (genes.get(gene) or {}).get("not_tested"),
                 }
             )
     return rows
@@ -2001,7 +2002,7 @@ def partial_coverage_alert(
     per-position statuses (an alignment, read_position_statuses), and the alleles
     this leaves unassessed or partly assessed. A gene with every position read gets
     no line. A gene with no call gets its count alone, since that may be why; for a
-    plain VCF those are left to "Genes examined without a call", which explains a
+    plain VCF those are left to "Genes without a call", which explains a
     variants-only file there, and would otherwise be most of PharmCAT's panel.
 
     For a plain VCF the missing positions are not "unread", they are simply not
