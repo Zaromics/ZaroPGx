@@ -73,7 +73,7 @@ guaranteeing something other than what serves the report.
 |---|---|
 | Complexity | Low: delete two mounts, add one committed `compose.dev.yml` |
 | Release integrity | The verified artifact is the one that runs |
-| Development loop | One rebuild per change — **16 s measured**, see below |
+| Development loop | One rebuild per change — **7–8 s measured**, see below |
 | Operability | One question: which tag is up |
 
 **Pros:** a release means what it says; rollback is a tag change rather than a tag change
@@ -112,8 +112,11 @@ digests the upgrade checks would stop meaning anything. Rejected.
 
 The whole case for Option A is the development loop, so it is worth measuring rather than
 assuming. On this host (rootless Docker, warm layer cache), editing `app/main.py` and
-rebuilding the application image takes **16 seconds** — every layer above `COPY . /app/` is
-cached, so the cost is that one layer. Today's loop is an edit and a container restart, and
+rebuilding the application image takes **7–8 seconds** — every layer above `COPY . /app/` is
+cached, so the cost is that one layer. (Three runs on `main`: 8 s, 7 s, 7 s. An earlier
+measurement in this document said 16 s; it does not reproduce, and the lower figure only
+strengthens the argument. With `feat/build-identity` merged, which moves the build stamp
+after the Sphinx build, the same edit rebuilds in 9 s.) Today's loop is an edit and a container restart, and
 a restart is not free either: the app's health start period runs again. The difference is
 tens of seconds per change, not minutes.
 
