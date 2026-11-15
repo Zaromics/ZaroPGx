@@ -1570,10 +1570,21 @@
         {% if uncalled_genes %}
         <div class="uncalled-genes">
             <h4>Genes examined without a call ({{ uncalled_genes|length }})</h4>
+            {# Same split as _unresolved_calls.summary_uncalled, and for the same
+               reason: a gene whose tool crashed did not fail for want of data, and
+               this paragraph used to say it did. #}
+            {% set failed_genes = uncalled_genes|selectattr('call_error')|list %}
             <p>These genes were included in the analysis but this sample's data did
                not support a diplotype call, so no phenotype or guidance follows from
                them. They are named here rather than tabled above, where they would
-               otherwise fill several pages with empty rows.</p>
+               otherwise fill several pages with empty rows.{% if failed_genes %}
+               {{ failed_genes|length }} of them
+               ({% for d in failed_genes %}{{ d.gene }}{% if not loop.last %}, {% endif %}{% endfor %})
+               are listed for a different reason, given below: a tool failed on them,
+               which says nothing about this sample's data.{% endif %}</p>
+            {% if failed_genes %}
+            <p class="uncalled-list">{% for d in failed_genes %}<strong>{{ d.gene }}</strong> &mdash; {{ d.call_error }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+            {% endif %}
             {# Each gene keeps its Call letter. Without it the move would quietly
                retire two entries of the Source Legend above -- "-" (no call made)
                and "?" (not recorded by this run) attach almost exclusively to

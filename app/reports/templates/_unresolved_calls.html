@@ -53,10 +53,22 @@ differ. Every possibility is listed under Genetic Results.</p>
    (report_template.html: summary_names_uncalled). -#}
 {% macro summary_uncalled(rows, missing_positions_not_assumed) -%}
 {%- set uncalled = rows|sort(attribute='gene')|rejectattr('diplotype', 'a_call')|list %}
-{%- if uncalled %}
-<p class="header-note"><strong>Not called from this sample's data ({{ uncalled|length }}):</strong>
-   {% for d in uncalled %}{{ d.gene }}{% if not loop.last %}, {% endif %}{% endfor %}.
+{#- A gene whose calling tool FAILED is not a gene this sample could not answer, and
+    saying so blames the sample for a crash. generator.mark_not_tested_and_failed puts
+    the reason on the row as call_error (the FHIR export codes those `error`), so the
+    two are told apart here rather than listed under one sentence. #}
+{%- set failed = uncalled|selectattr('call_error')|list %}
+{%- set unsupported = uncalled|rejectattr('call_error')|list %}
+{%- if unsupported %}
+<p class="header-note"><strong>Not called from this sample's data ({{ unsupported|length }}):</strong>
+   {% for d in unsupported %}{{ d.gene }}{% if not loop.last %}, {% endif %}{% endfor %}.
    No phenotype or guidance follows from them.</p>
 {{ uncalled_reason(missing_positions_not_assumed) }}
+{%- endif %}
+{%- if failed %}
+<p class="header-note"><strong>Not called because a tool failed ({{ failed|length }}):</strong>
+   {% for d in failed %}{{ d.gene }} &mdash; {{ d.call_error }}{% if not loop.last %} {% endif %}{% endfor %}
+   This is not a statement about your sample: the data may well support a call, and a
+   re-run may produce one.</p>
 {%- endif %}
 {%- endmacro %}

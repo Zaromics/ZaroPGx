@@ -1837,6 +1837,12 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
                     "activity_score": None,
                     "diplotype_candidates": None,
                     "reference_name": None,
+                    # Carried, like the gate's marker, because these rows are what
+                    # the summary's "Not called from this sample's data" line is
+                    # built from: a gene whose tool crashed belongs in the other
+                    # list, and a row rebuilt without this marker puts it back in
+                    # the wrong one.
+                    "call_error": (genes.get(gene) or {}).get("call_error"),
                 }
             )
     return rows
