@@ -28,12 +28,15 @@ pypgx_minus_pharmcat 66.
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
 import pytest
 
-CONFIG = Path(__file__).resolve().parents[1] / "config" / "genes.json"
+REPO = Path(__file__).resolve().parents[1]
+CONFIG = REPO / "config" / "genes.json"
+GENE_TABLE = REPO / "lexicon" / "gene-table.csv"
 
 #: The gene only OptiType supplies, in `all` and in neither caller's set.
 OPTITYPE_ONLY = {"HLA-C"}
@@ -104,3 +107,46 @@ def test_every_gene_in_all_comes_from_a_caller_that_can_supply_it(sets):
     assert (
         not unknown
     ), f"a caller's set names genes that `all` does not offer: {unknown}"
+
+
+@pytest.fixture(scope="module")
+def lexicon() -> list:
+    with GENE_TABLE.open(encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def test_the_pypgx_set_is_exactly_the_genes_pypgx_calls_targets(sets, lexicon):
+    """A PyPGx upgrade that adds a target gene must be noticed, not followed silently.
+
+    `lexicon/gene-table.csv` is PyPGx's own table, and its `Target` column is what the
+    tool will call. The set we ask for is the 87 genes marked TRUE, exactly. The five
+    other rows are machinery, not results: CYP2A7, CYP2B7 and CYP2D7 are the paralogs
+    PyPGx compares against, and EGFR and VDR are depth-normalisation controls (RYR1 is
+    both a control and a real target, so it stays).
+
+    When this fails after a version bump, the answer is a decision rather than an edit:
+    adding a gene changes the 91 the README lists and the report's gene list with it.
+    """
+    targets = {row["Gene"] for row in lexicon if row["Target"] == "TRUE"}
+    assert targets, "no Target=TRUE rows -- this test has gone blind"
+
+    unasked = sorted(targets - sets["pypgx"])
+    assert not unasked, (
+        "PyPGx calls these genes targets and nothing asks it for them, so they are "
+        f"never reported: {unasked}"
+    )
+    unknown = sorted(sets["pypgx"] - targets)
+    assert not unknown, (
+        "we ask PyPGx for these and its own table does not mark them targets, so the "
+        f"answer can only be nothing: {unknown}"
+    )
+
+
+def test_every_gene_offered_is_one_some_tool_knows(sets, lexicon):
+    """A gene in `all` is in PyPGx's table, or comes from PharmCAT or OptiType."""
+    table = {row["Gene"] for row in lexicon}
+    # HLA-A and HLA-B are PharmCAT's with an outside call, HLA-C is OptiType's alone,
+    # and MT-RNR1 is the mtDNA lane's.
+    elsewhere = {"HLA-A", "HLA-B", "HLA-C", "MT-RNR1"}
+    stray = sorted(sets["all"] - table - elsewhere)
+    assert not stray, f"these are offered and no tool's table knows them: {stray}"
