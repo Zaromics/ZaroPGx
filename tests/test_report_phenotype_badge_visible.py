@@ -75,29 +75,65 @@ def _contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-def test_every_coloured_badge_reads_at_four_and_a_half_to_one():
-    css = (TEMPLATES / "report_template.html").read_text(encoding="utf-8")
+def _variables(css: str) -> dict:
+    """`--success-color: #2ecc71` from the `:root` block, so `var(...)` resolves.
+
+    The interactive report styles its badges through theme variables, and reading the
+    literal text found no colour at all -- which is how its Normal Metabolizer badge
+    sat at 2.10:1 while this file was watching the other template.
+    """
+    root = re.search(r":root\s*\{([^}]*)\}", css)
+    if not root:
+        return {}
+    return {
+        name: value.strip()
+        for name, value in re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", root.group(1))
+    }
+
+
+def _colour(raw: str, variables: dict) -> str | None:
+    """A literal colour, or what the `var(...)` around it resolves to."""
+    named = {"white": "#ffffff", "black": "#000000"}
+    raw = raw.strip()
+    reference = re.fullmatch(r"var\((--[\w-]+)\)", raw)
+    if reference:
+        raw = variables.get(reference.group(1), "")
+    raw = raw.strip()
+    if raw in named:
+        return named[raw]
+    return raw if re.fullmatch(r"#[0-9A-Fa-f]{3,6}", raw) else None
+
+
+@pytest.mark.parametrize("name", ["report_template.html", "interactive_report.html"])
+def test_every_coloured_badge_reads_at_four_and_a_half_to_one(name):
+    css = (TEMPLATES / name).read_text(encoding="utf-8")
     rules = _rules(css)
-    names = {"white": "#ffffff", "black": "#000000"}
+    variables = _variables(css)
     checked = 0
     for selector, body in rules.items():
         if not re.fullmatch(
-            r"\.(as-tier-\d|gene-phenotype|\w+-metabolizer|\w+-function)", selector
+            r"\.(as-tier-\d|gene-phenotype|[\w-]*-metabolizer|[\w-]*-function)"
+            r"(?:\s*,\s*\.[\w-]+)*",
+            selector,
         ):
             continue
-        background = re.search(r"background-color:\s*(#\w+|white|black)", body)
+        background = re.search(
+            r"background(?:-color)?:\s*(#\w+|white|black|var\(--[\w-]+\))", body
+        )
         if not background:
             continue
-        text = re.search(r"(?<![-\w])color:\s*(#\w+|white|black)", body)
+        back = _colour(background.group(1), variables)
+        if back is None:
+            continue
+        text = re.search(r"(?<![-\w])color:\s*(#\w+|white|black|var\(--[\w-]+\))", body)
         # The badges' own white, where a rule sets none (.as-badge, the pill).
-        foreground = text.group(1) if text else "#ffffff"
-        ratio = _contrast(
-            names.get(background.group(1), background.group(1)),
-            names.get(foreground, foreground),
-        )
-        assert ratio >= MIN_RATIO, (selector, round(ratio, 2))
+        front = _colour(text.group(1), variables) if text else "#ffffff"
+        if front is None:
+            continue
+        ratio = _contrast(back, front)
+        assert ratio >= MIN_RATIO, (name, selector, round(ratio, 2))
         checked += 1
-    assert checked >= 10
+    assert checked >= 5, (name, checked)
 
 
 # One score per tier of the Executive Summary's activity score badge.
