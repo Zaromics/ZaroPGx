@@ -27,7 +27,8 @@ TERMINAL_BAD = {"failed", "cancelled", "error"}
 @pytest.mark.e2e
 def test_bcf_upload_completes_with_report_artifact(e2e_client):
     """The lane that had no end-to-end test of any kind: every other input type the
-    pipeline accepts is covered somewhere, and `bcf` was covered only at the endpoint."""
+    pipeline accepts is covered somewhere, and `bcf` was covered only at the endpoint.
+    """
     assert BCF.is_file(), f"missing dataset {BCF}"
     with BCF.open("rb") as fh:
         files = {"files": (BCF.name, fh, "application/octet-stream")}
