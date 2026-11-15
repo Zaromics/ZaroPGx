@@ -937,6 +937,34 @@ class FHIRExportService:
                 }
             ]
 
+        # Why the AMP/CAP Tier 1 gate emptied this gene's verdict
+        # (app/reports/tier1_gate.py). Without it the observation says only
+        # "Unknown", which a receiving system cannot tell from a gene a tool tested
+        # and could not call -- and the two mean different things to whoever reads
+        # it next: this one says the assay did not cover what a clinical test for
+        # this gene must cover, so a proper genotyping test would still be
+        # informative. The report says it on the page; this says it in the bundle.
+        # The alleles, as the page names them; not the citation, which the page
+        # does not print either.
+        withheld = gene_data.get("tier1_withheld")
+        if isinstance(withheld, dict):
+            missing = [
+                _text(name) for name in withheld.get("missing") or [] if _text(name)
+            ]
+            if missing:
+                observation.setdefault("note", []).append(
+                    {
+                        "text": (
+                            "No genotype is reported: this run could not assess "
+                            + ", ".join(missing)
+                            + ", which the AMP/CAP minimum allele set for this gene "
+                            "includes. A reference result would rest on positions the "
+                            "data does not cover, which reads as a normal result "
+                            "rather than as an untested one."
+                        )
+                    }
+                )
+
         # A variant no allele definition lists, predicted to stop or damage the
         # protein (app/reports/unlisted.py): the genotype does not account for it.
         flag = gene_data.get("unlisted_flag")
