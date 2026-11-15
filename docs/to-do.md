@@ -602,6 +602,31 @@ Open:
 
 ## FHIR & Exporting
 
+- **The bundle does not say what kind of input produced it.** MEASURED 2026-11-14: none of
+  the input-provenance facts the report page carries reach the FHIR export. `grep` over
+  `app/services/fhir_export_service.py` for `partial_coverage_alert`, `array_provenance`,
+  `gvcf_provenance`, `vendor_shape`, `n_positions_carried` and `positions_expressed_in`
+  returns **zero hits each**, and `_build_fhir_bundle` is handed normalized PharmCAT data
+  with no input type at all. The DiagnosticReport's `conclusion` reads "Pharmacogenomic
+  analysis completed. N genes analyzed, M actionable findings identified."
+
+  So a bundle built from a **23andMe export** -- where the analysis rested on 209 of the
+  1,018 rs-identified positions in PharmCAT's list, PyPGx never ran because an array has no
+  reads, and most genes were declined -- is indistinguishable, to a receiving system, from
+  one built from a 30x whole genome. The page says all of this plainly (the array
+  provenance paragraph, and the AMP/CAP alert naming the genes it declined); the bundle says
+  none of it.
+
+  Not built, because the question is a design decision rather than a wording one: whether
+  this belongs in `DiagnosticReport.conclusion`, in `method`, in a `Specimen`, or as its own
+  Observation, is an interoperability choice with a right answer in the HL7 Genomics
+  Reporting IG, and the sentence a hospital system reads is the owner's to word. The
+  plumbing is the small part: the input type and the array/gVCF provenance would have to
+  reach `_build_fhir_bundle`, which today receives neither.
+
+  Worth deciding alongside the Phenopacket export below, since both answer "what does a
+  receiving system need to know about how this was produced".
+
 - [DONE Oct 2026, feat/fhir-push-hapi] The FHIR bundle validates against the HL7 Genomics
   Reporting IG 3.0.0 profiles with no errors (HAPI FHIR 8.12 `$validate` with the IG
   loaded, tx.fhir.org for LOINC and SNOMED CT). The 30x NA12878 bundle had 731 errors:
