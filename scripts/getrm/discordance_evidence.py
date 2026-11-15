@@ -111,6 +111,25 @@ def alleles_in(diplotype: str) -> List[str]:
     return found
 
 
+def call_state(alt: int, depth: int) -> str:
+    """What the reads say at one position: absent, one copy, hom, or unclear.
+
+    Its own function so the thresholds can be tested without a CRAM. The `unclear`
+    band is the correction this script needed: the first version called NA06991's
+    CYP2B6 row on 3 alternate reads of 15 (AF 0.20), as likely noise as a variant.
+    """
+    if depth <= 0:
+        return "unclear"
+    fraction = alt / depth
+    if fraction < ABSENT_AF:
+        return "absent"
+    if fraction > HOM_AF:
+        return "hom"
+    if fraction >= ONE_COPY_AF and alt >= MIN_ALT_READS:
+        return "one copy"
+    return "unclear"
+
+
 def measure(cut: Path, variant: str) -> Optional[dict]:
     """Depth and alternate fraction for one ``chrom-pos-ref-alt`` core variant."""
     import pysam
@@ -124,8 +143,12 @@ def measure(cut: Path, variant: str) -> Optional[dict]:
         if contig not in alignment.references:
             return None
         for column in alignment.pileup(
-            contig, int(pos) - 1, int(pos), truncate=True,
-            min_base_quality=13, stepper="samtools",
+            contig,
+            int(pos) - 1,
+            int(pos),
+            truncate=True,
+            min_base_quality=13,
+            stepper="samtools",
         ):
             for read in column.pileups:
                 if read.is_del or read.is_refskip or read.alignment.is_duplicate:
@@ -135,21 +158,12 @@ def measure(cut: Path, variant: str) -> Optional[dict]:
     if depth < MIN_DEPTH:
         return {"variant": variant, "depth": depth, "thin": True}
     found = counts.get(alt.upper(), 0)
-    fraction = found / depth
-    if fraction < ABSENT_AF:
-        state = "absent"
-    elif fraction > HOM_AF:
-        state = "hom"
-    elif fraction >= ONE_COPY_AF and found >= MIN_ALT_READS:
-        state = "one copy"
-    else:
-        state = "unclear"
     return {
         "variant": variant,
         "depth": depth,
         "alt": found,
-        "af": fraction,
-        "state": state,
+        "af": found / depth,
+        "state": call_state(found, depth),
     }
 
 
@@ -158,8 +172,9 @@ def _carried(side: List[str], variant: str, core: Dict[str, List[str]]) -> int:
     return sum(1 for name in side if variant in core.get(name, []))
 
 
-def judge(theirs: List[str], ours: List[str], seen: List[dict],
-          core: Dict[str, List[str]]) -> Tuple[List[str], List[str]]:
+def judge(
+    theirs: List[str], ours: List[str], seen: List[dict], core: Dict[str, List[str]]
+) -> Tuple[List[str], List[str]]:
     """(what GeT-RM's call leaves unexplained, what ours does).
 
     A variant the reads show that no allele on a side requires is unexplained by that
@@ -177,7 +192,9 @@ def judge(theirs: List[str], ours: List[str], seen: List[dict],
                     f"{row['variant']} present ({row['state']}, {row['alt']}/{row['depth']})"
                 )
             elif row["state"] == "absent" and needed > 0:
-                gaps[label].append(f"{row['variant']} required but absent (0/{row['depth']})")
+                gaps[label].append(
+                    f"{row['variant']} required but absent (0/{row['depth']})"
+                )
     return gaps["theirs"], gaps["ours"]
 
 
@@ -190,7 +207,8 @@ def main() -> int:
     parser.add_argument("--gene", help="only this gene")
     parser.add_argument("--sample", help="only this sample")
     parser.add_argument(
-        "--reference", default="/home/iliya/ZaroPGx/reference",
+        "--reference",
+        default="/home/iliya/ZaroPGx/reference",
         help="the staged reference, for REF_PATH (the cuts are CRAM)",
     )
     args = parser.parse_args()
@@ -200,7 +218,8 @@ def main() -> int:
 
     with args.calls.open(encoding="utf-8") as handle:
         rows = [
-            row for row in csv.DictReader(handle, delimiter="\t")
+            row
+            for row in csv.DictReader(handle, delimiter="\t")
             if row.get("verdict") == "discordant"
             and (not args.gene or row["gene"] == args.gene)
             and (not args.sample or row["sample"] == args.sample)
@@ -237,9 +256,11 @@ def main() -> int:
             verdict, note = "both", "each leaves something unexplained"
         tally[verdict] += 1
 
-        print(f"\n{row['sample']} {row['gene']} ({row['caller']})"
-              f"  GeT-RM {row['getrm']}  vs  ours {row['zaropgx']}"
-              f"{'  [tentative]' if row.get('tentative') == 'yes' else ''}")
+        print(
+            f"\n{row['sample']} {row['gene']} ({row['caller']})"
+            f"  GeT-RM {row['getrm']}  vs  ours {row['zaropgx']}"
+            f"{'  [tentative]' if row.get('tentative') == 'yes' else ''}"
+        )
         for m in seen:
             if m.get("indel"):
                 print(f"    {m['variant']:28s} indel -- not measured")
@@ -247,8 +268,10 @@ def main() -> int:
                 print(f"    {m['variant']:28s} only {m['depth']} reads -- says nothing")
             else:
                 mark = "  (kept out of the verdict)" if m["state"] == "unclear" else ""
-                print(f"    {m['variant']:28s} {m['state']:9s} "
-                      f"{m['alt']}/{m['depth']} AF={m['af']:.2f}{mark}")
+                print(
+                    f"    {m['variant']:28s} {m['state']:9s} "
+                    f"{m['alt']}/{m['depth']} AF={m['af']:.2f}{mark}"
+                )
         if unknown:
             print(f"    alleles not in the lexicon: {', '.join(unknown)}")
         for label, gaps in (("GeT-RM", their_gaps), ("ours", our_gaps)):
