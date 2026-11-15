@@ -208,9 +208,13 @@ None appears on the Executive Summary.
 **Variants Outside the Allele Definitions.** PharmCAT and PyPGx call a gene from the
 variants their allele definitions name, and nothing else: a rare variant that stops the
 protein, if no definition lists it, leaves the gene reported as normal. Every run also
-reads every other variant in the coding exons, and splice sites, of 52 genes: every gene
+reads every other variant in the coding exons, and splice sites, of 51 genes: every gene
 PharmCAT has allele definitions for (IFNL3 aside, which it types by one variant outside
-its exons), and the drug-metabolizing enzymes and transporters PyPGx types. PharmCAT's
+its exons), and the drug-metabolizing enzymes and transporters PyPGx types. The bundle
+names 52 such genes and carries exon models for 51: GRCh38 places *GSTT1* off the primary
+assembly, so Ensembl's annotation has no transcript for it there and its exons are in no
+run's regions. The report says which gene this was rather than leaving the count to be
+taken on trust. PharmCAT's
 genes include CFTR, RYR1, CACNA1S, F2 and F5, where a variant can also bear on a disease
 (cystic fibrosis, malignant hyperthermia and some myopathies, thrombophilia or a bleeding
 disorder); the section says so when it lists one. A variant that passes the quality
