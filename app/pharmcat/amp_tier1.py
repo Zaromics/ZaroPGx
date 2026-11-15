@@ -54,6 +54,14 @@ papers: AMP writes DPYD's Tier 1 as ``c.1905+1G>A`` and PharmCAT writes
 ``c.1905+1G>A (*2A)``, and a table keyed on the paper's spelling would match nothing and
 fail open -- every gene adequate, silently. tests/test_amp_tier1.py pins the spellings
 against the fixtures.
+
+Which is why ``VERIFIED_AGAINST`` exists. A PharmCAT that renames an allele does not
+break anything loudly: the name below stops matching, the gene looks adequate, and the
+gate fails open with nothing to say so. The constant records the version every string
+here was read from, and tests/test_tier1_names_track_pharmcat.py checks it two ways --
+against the version the stack pins, which needs only the repository, and against the
+definitions the pharmcat container writes out of its own jar, where a machine has run
+the stack.
 """
 
 from __future__ import annotations
@@ -76,6 +84,12 @@ from typing import Any, Dict, FrozenSet, Iterable, Optional, Tuple
 #: and states the two-tier framework and its criteria without listing the alleles, so
 #: there is no public text that carries them: reading it needs institutional access.
 #: Every route is recorded here so the search is not repeated from scratch.
+#: The PharmCAT whose ``uncallableHaplotypes`` spellings the TIER1 table below was read
+#: from. Bump it only after re-reading those names out of the new jar -- see the module
+#: docstring, and tests/test_tier1_names_track_pharmcat.py, which fails when this and the
+#: stack's pinned PharmCAT disagree.
+VERIFIED_AGAINST = "3.4.0"
+
 PRIMARY = "primary"
 SECONDARY = "secondary"
 
