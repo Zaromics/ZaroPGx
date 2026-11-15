@@ -104,7 +104,9 @@ def _colour(raw: str, variables: dict) -> str | None:
     return raw if re.fullmatch(r"#[0-9A-Fa-f]{3,6}", raw) else None
 
 
-@pytest.mark.parametrize("name", ["report_template.html", "interactive_report.html"])
+@pytest.mark.parametrize(
+    "name", ["report_template.html", "interactive_report.html", "style.css"]
+)
 def test_every_coloured_badge_reads_at_four_and_a_half_to_one(name):
     css = (TEMPLATES / name).read_text(encoding="utf-8")
     rules = _rules(css)
