@@ -57,17 +57,17 @@ def test_the_bundle_names_the_pypgx_the_image_installs():
     installed, declared = _installed_version(), _declared_version()
     assert declared == installed, (
         f"{BUNDLE.name} declares PyPGx {declared} and {DOCKERFILE.name} installs "
-        f"{installed}. Refresh lexicon/gene-table.csv and "
-        "lexicon/allele-table.csv from the new release as well: they are copies of "
-        "PyPGx's own tables, and a stale "
+        f"{installed}. Refresh lexicon/gene-table.csv, allele-table.csv AND "
+        "phenotype-table.csv from the new release -- keeping the MT-RNR1 trim -- "
+        "because they are copies of PyPGx's own tables, and a stale "
         "copy fails nothing -- the gene sets still agree with it, and the report keeps "
         "naming alleles the caller has moved past."
     )
 
 
 def test_the_lexicon_tables_are_there_to_be_refreshed():
-    """The message above tells a reader to refresh two files; they must exist."""
-    for name in ("gene-table.csv", "allele-table.csv"):
+    """The message above names three files to refresh; they must exist."""
+    for name in ("gene-table.csv", "allele-table.csv", "phenotype-table.csv"):
         path = LEXICON / name
         assert path.is_file(), f"lexicon/{name} is missing"
         assert len(path.read_text(encoding="utf-8").splitlines()) > 20, (
