@@ -142,8 +142,12 @@ compile the image's copy, not the checkout's.
 
 ## Action items
 
-1. [ ] Report both identities: the image tag the container was built as, and the git SHA of
+1. [x] Report both identities: the image tag the container was built as, and the git SHA of
    the code it is running, in `/health` and in the startup log. Warn when they differ.
+   **Done** in `feat/build-identity`: the application image carries
+   `/opt/zaropgx/build.json` (tag, commit, build time) and the startup log says so when the
+   running code disagrees with it. Worth having under any option here -- knowing which code
+   answered is not an argument for either model -- so it is not held by this decision.
 2. [ ] Add a committed `compose.dev.yml` carrying `./:/app` and `./:/workspace`, documented
    in `development-setup.md`.
 3. [ ] Remove both mounts from `compose.yml`, in a release of its own, with the change in
