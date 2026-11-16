@@ -313,7 +313,7 @@ def get_author_name() -> str:
 # Initialize FastAPI app
 # The release this build is. chore(release) bumps it with the other stamps; the docs
 # staleness check below keys on it, so a release always reprints the documentation.
-APP_VERSION = "0.4.3"
+APP_VERSION = "0.4.4"
 
 # Read once: /health is polled every 30 seconds by the container's healthcheck, and
 # none of this changes while the process lives.
