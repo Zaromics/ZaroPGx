@@ -141,6 +141,18 @@ def schedule_coroutine(coro) -> None:
     coro.close()
 
 
+def _status_text(value: Any) -> str:
+    """A status as plain lower-case text, whether it arrives as an enum or a string.
+
+    `Job.status` comes back as `JobStatus.FAILED`, so `str(...)` gives
+    "jobstatus.failed" and a comparison against "failed" silently never matches --
+    which is how the first version of the failed-step branch below did nothing at all.
+    Some call sites do hand these around as plain strings (upload_router builds its
+    step dicts that way), so both are accepted.
+    """
+    return str(getattr(value, "value", value) or "").strip().lower()
+
+
 class JobService:
     """
     Service for managing workflows and their execution.
@@ -847,15 +859,68 @@ class JobService:
                     )
                     estimated_completion = job.started_at + estimated_total
 
+            current_step = progress_info.current_step_name or progress_info.stage
+            message = progress_info.message
+
+            # A failed job: name the step that failed and say why.
+            #
+            # The progress calculator describes PROGRESS. Asked about a failed job it
+            # answers with the last stage it reached, which is the wrong step and a
+            # description of work that succeeded: a VCF whose mtDNA step failed on an
+            # unparseable position reported `current_step: header_analysis` and
+            # "Analyzing file headers and metadata. Determining workflow." -- naming a
+            # step that had completed, while the reason sat in the job's log.
+            #
+            # Only on the failed path, and only from what the run already recorded.
+            if _status_text(job.status) in ("failed", "error"):
+                failed = next(
+                    (
+                        step
+                        for step in sorted(
+                            job.steps or [], key=lambda s: s.step_order or 0
+                        )
+                        if _status_text(step.status) in ("failed", "error")
+                    ),
+                    None,
+                )
+                cancelled = bool((job.job_metadata or {}).get("cancelled"))
+                if failed is not None:
+                    current_step = failed.step_name or current_step
+                    said = (failed.error_details or {}).get("error")
+                    if cancelled:
+                        # A cancelled run ends as `failed`: the step in flight dies
+                        # because it was stopped, and the pipeline's non-zero exit
+                        # overwrites the status the cancel endpoint set. Measured on a
+                        # real cancel -- status "failed", job_metadata.cancelled true,
+                        # and the step's own words "CRAM to BAM conversion failed:
+                        # samtools view exited 0 but wrote no BAM". True, and it reads
+                        # as a defect in the data; the run was stopped on request. The
+                        # metadata says so, so this says so.
+                        message = f"Cancelled while {failed.step_name} was running."
+                    else:
+                        message = str(said) if said else f"{failed.step_name} failed."
+                elif cancelled:
+                    message = "Cancelled before any step reported."
+
+                    # Deliberately not scraped out of the job's log. The reason is
+                    # there -- "mtDNA calling failed: bcftools failed: [E::vcf_parse]
+                    # Could not parse the position 'NOTANUMBER'" -- but with no marker
+                    # that distinguishes it from the lines around it, and every rule
+                    # tried here picked a worse one: the newest line ("Job updated:
+                    # JobStatus.FAILED"), the wrapper's header ("Nextflow job failed:
+                    # stdout:"), and, for a sample called FailurePathCheck, the job's
+                    # own creation line. Getting the log in front of the reader is a
+                    # separate change, and docs/to-do.md carries it.
+
             return JobProgressResponse(
                 job_id=str(job.id),
                 status=JobStatus(job.status),
                 total_steps=job.total_steps or 0,
                 completed_steps=job.completed_steps or 0,
                 progress_percentage=round(progress_info.progress_percentage, 2),
-                current_step=progress_info.current_step_name or progress_info.stage,
+                current_step=current_step,
                 estimated_completion=estimated_completion,
-                message=progress_info.message,
+                message=message,
             )
 
         except (ValueError, RuntimeError):
