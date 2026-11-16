@@ -607,7 +607,12 @@
         .as-tier-2 { background-color: #fd7e14; color: #333; } /* 0.5 - orange */
         .as-tier-3 { background-color: #ffc107; color: #333; } /* 0.75 - yellow */
         .as-tier-4 { background-color: #90EE90; color: #333; } /* 1.0-1.5 - light green */
-        .as-tier-5 { background-color: #28a745; }          /* 1.75-2.25 - green */
+        /* Darkened from #28a745, where white measured 3.13:1. The badge is bold at
+           0.95em over a 10px print body -- 9.5px in the PDF, about 15px in the page --
+           and WCAG's large-text allowance wants 18.66px bold, so 4.5:1 applies and
+           3.13 did not meet it. #1e7e34 reads 5.14:1 and keeps the green ramp's
+           direction between tier-4's light green and tier-6's turquoise. */
+        .as-tier-5 { background-color: #1e7e34; }          /* 1.75-2.25 - green */
         .as-tier-6 { 
             background-color: #20c997; 
             color: #333;
@@ -649,7 +654,7 @@
             max-width: max-content;
         }
         .normal-metabolizer {
-            background-color: #28a745;
+            background-color: #1e7e34;
         }
         .poor-metabolizer {
             background-color: #dc3545;
@@ -659,7 +664,7 @@
             color: #333;
         }
         .rapid-metabolizer, .ultrarapid-metabolizer {
-            background-color: #17a2b8;
+            background-color: #117a8b;
         }
         /* Function phenotypes (SLCO1B1, ABCG2) in their metabolizer counterparts'
            colors: decreased as intermediate, increased as rapid
@@ -669,7 +674,7 @@
             color: #333;
         }
         .increased-function {
-            background-color: #17a2b8;
+            background-color: #117a8b;
         }
         /* Possibly Wild Type: transparent background with black border (VCF only) */
         .possibly-wild-type {

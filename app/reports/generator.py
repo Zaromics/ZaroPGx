@@ -2376,7 +2376,10 @@ def render_pdf_document(html_content: str):
             @bottom-right {
                 content: "Page " counter(page) " of " counter(pages);
                 font-size: 10px;
-                color: #888;
+                /* #888 measured 3.54:1 on white, under the 4.5 AA asks of 10px
+                   text. #767676 is the lightest gray that reaches it (4.54:1) and
+                   is indistinguishable at this size. */
+                color: #767676;
             }
         }
         @page header-page {
@@ -2385,7 +2388,10 @@ def render_pdf_document(html_content: str):
             @bottom-right {
                 content: "Page " counter(page) " of " counter(pages);
                 font-size: 10px;
-                color: #888;
+                /* #888 measured 3.54:1 on white, under the 4.5 AA asks of 10px
+                   text. #767676 is the lightest gray that reaches it (4.54:1) and
+                   is indistinguishable at this size. */
+                color: #767676;
             }
         }
         img, svg { max-width: 100%; height: auto; }

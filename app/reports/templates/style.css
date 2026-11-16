@@ -130,8 +130,11 @@ th {
     line-height: 1.4;
 }
 
+/* 5.14:1 with white at 9.5px in the PDF; #28a745 was 3.13:1. This file is
+   handed to WeasyPrint beside the template's own <style> (generator.CSS_FILE),
+   so a color left here would decide the PDF whatever the template says. */
 .normal-metabolizer {
-    background-color: #28a745;
+    background-color: #1e7e34;
 }
 
 .poor-metabolizer {
@@ -144,7 +147,7 @@ th {
 }
 
 .rapid-metabolizer, .ultrarapid-metabolizer {
-    background-color: #17a2b8;
+    background-color: #117a8b;
 }
 
 .decreased-function {
@@ -153,7 +156,7 @@ th {
 }
 
 .increased-function {
-    background-color: #17a2b8;
+    background-color: #117a8b;
 }
 
 /* Possibly Wild Type: transparent background with black border (VCF only) */

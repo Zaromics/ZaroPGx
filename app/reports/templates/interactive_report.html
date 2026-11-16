@@ -181,12 +181,19 @@
             margin-right: 10px;
         }
         
+        /* These four carry white text at about 15px bold, so WCAG AA asks 4.5:1 --
+           the large-text allowance wants 18.66px. The theme variables do not reach
+           it (--success-color #2ecc71 is 2.10:1, --danger-color #e74c3c 3.82,
+           --info-color #3498db 3.15), and they are used for borders and indicators
+           elsewhere where no text sits on them, so the badges carry their own colors
+           instead. These are the static report's, which also means one phenotype is
+           one color whichever report you open -- it was a different green in each. */
         .normal-metabolizer {
-            background-color: var(--success-color);
+            background-color: #1e7e34;
         }
         
         .poor-metabolizer {
-            background-color: var(--danger-color);
+            background-color: #dc3545;
         }
         
         .intermediate-metabolizer {
@@ -195,7 +202,7 @@
         }
         
         .rapid-metabolizer, .ultrarapid-metabolizer {
-            background-color: var(--info-color);
+            background-color: #117a8b;
         }
         /* Function phenotypes in their metabolizer counterparts' colors
            (generator.phenotype_badge_class). */
@@ -204,7 +211,7 @@
             color: #333;
         }
         .increased-function {
-            background-color: var(--info-color);
+            background-color: #117a8b;
         }
         
         /* Possibly Wild Type: transparent background with black border (VCF only) */
