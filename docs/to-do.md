@@ -559,6 +559,24 @@ Open:
 
 ## UI/UX
 
+- **`is_valid` and `validation_errors` are vestigial, and the page has an alert that can
+  never appear.** MEASURED 2026-11-14: `FileAnalysis` declares both
+  (`app/api/utils/file_processor.py`), the upload response and the job metadata carry both
+  (`upload_router.py`), and **nothing in `app/` ever assigns either** -- `FileAnalysis` is
+  constructed in exactly two places and neither passes them. So every upload answers
+  `"is_valid": true, "validation_errors": null`, including on the analysis failure path,
+  which sets `error` and leaves `is_valid` at its `True` default.
+
+  `app/templates/index.html` renders a **"Validation Errors" danger alert** from
+  `afi.validation_errors`. It is unreachable.
+
+  Not a defect on screen today: the standing warnings carry this information now (the
+  `input_warnings_alert` path), and a refusal is an HTTP 4xx with its own message. These
+  fields are from the earlier design. Worth deciding rather than leaving: either populate
+  them where a refusal is detected, or drop them from the response and the page. Dropping
+  them changes the API's shape, which is why it is written down rather than done.
+
+
 - [DONE Oct 2026, fix/ui-stage-row-fits] The stage row and the header fit a phone: in a
   form narrower than about 520px the stages sit four to a row (they ran off the card, and
   the page scrolled sideways), and a stage's popup stays on screen
