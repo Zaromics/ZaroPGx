@@ -72,6 +72,18 @@ A gVCF records *reference-confidence blocks* alongside the variant calls. PharmC
 
 PharmCAT's assume-reference checkboxes are not applied to a gVCF. Positions your file does not cover stay no-calls. PyPGx reads the genotyped VCF, which keeps no reference blocks, so the conversion also records which of PyPGx's genes, and which of the positions PyPGx defines their alleles at, the blocks show reads over; a gene with none at its positions is not called, and a call missing some says how many it read as the reference. The conversion measures the genes in ZaroPGx's copy of PyPGx's tables, which leaves out *MT-RNR1* (the mtDNA step calls it); a gene it did not measure is read as an uploaded VCF's, and not called without a genotype at its positions. A position the conversion leaves a no-call is not passed to PyPGx; under a call, it is counted in the call's note.
 
+Measured end to end on a real GATK gVCF (2026-11-14): HaplotypeCaller `-ERC GVCF` over the
+102 pharmacogene intervals of the public NA12878 30x alignment, 1,140,050 records, uploaded
+as it was written. The report said *"1,223 of PharmCAT's 1,226 positions carried a call,
+and 0 were not covered by the file and remain no-calls. 3 more were covered but not called
+with confidence"* — which agrees with counting the file's own blocks against PharmCAT's
+positions directly. The calls match GeT-RM's consensus for that sample for every gene a
+gVCF can determine: CYP2C9 \*1/\*2, CYP2C19 \*1/\*2, CYP3A5 \*3/\*3, NAT2 \*4/\*5,
+SLCO1B1 \*1/\*15, TPMT \*1/\*1, and CYP2B6, CYP3A4 and CYP4F2 \*1/\*1. CYP2D6 comes
+back \*3/\*4 against GeT-RM's \*3/(\*68)+\*4, the hybrid being structural and invisible
+without reads, and HLA is not called at all, there being no reads to type it from — both
+expected, and both the limits a gVCF shares with any variant-only input.
+
 The report states:
 
 - **How much of PharmCAT's position list your file covered.** Positions without a reference block are no-calls.
@@ -212,5 +224,14 @@ Upload sequencing data for a complete result, in a format from the table at the 
 - **GRCh38/hg38** — analyzed directly; the build every result is reported on.
 - **GRCh37/hg19 VCF or BCF** (Legacy) — **lifted over to GRCh38 automatically** before analysis, using GATK Picard `LiftoverVcf` with UCSC's hg19→hg38 chain. A real coordinate conversion, not a contig relabelling. Variants that cannot be mapped are dropped and the step reports how many; the run fails if more than half of them cannot be lifted. A BCF is converted to a VCF first, then lifted. A native GRCh38 VCF remains the most reliable input.
 - **GRCh37/hg19 gVCF** — **accepted**, and genotyped before it is lifted. PharmCAT's position list exists in GRCh38 coordinates only, so it is expressed in GRCh37 once (cached, and re-derived whenever PharmCAT's list changes), the reference-confidence pass runs over positions your file actually contains, and the result is lifted to GRCh38 afterwards — the same liftover a GRCh37 VCF takes. All of PharmCAT's positions lift in both directions; if any ever failed to, the conversion refuses rather than genotyping over a partial list. One thing is given up: PyPGx's gene regions are GRCh38, so its coverage is not read from your reference blocks and its genes are checked for genotypes instead, as for an uploaded VCF.
+  Measured end to end (2026-11-14) on a gVCF built over PharmCAT's own positions in GRCh37:
+  the projection was derived and cached as `pharmcat_positions.GRCh37.<digest>.vcf` with
+  **1,226 of 1,226** positions, the file was genotyped against `ucsc.hg19.fasta`, and the
+  result lifted back with **1,175 variants lifted, 0 dropped as unliftable** — the file
+  carrying 1,175 of the 1,226 positions, the rest being indels it did not represent. The
+  same list lifted independently with Picard gives 1,226 of 1,226, none rejected. That file
+  was synthetic, so it measures the projection, the genotyping and the lift, and says
+  nothing about calling accuracy: there is no public GRCh37 alignment here to call a real
+  one from.
 - **GRCh37/hg19 BAM, CRAM or SAM** — **not accepted.** Liftover converts variants that have already been called. Aligned reads are analyzed by calling variants out of them first, and that call reads each gene from its GRCh38 position — on GRCh37 reads those positions are wrong (GRCh38's *CYP2D6* window sits roughly 400 kb from GRCh37's), so you would get star alleles that are not yours rather than an error. Call variants against GRCh37/hg19 yourself and upload the VCF, or realign the reads to GRCh38/hg38.
 - **T2T-CHM13 (any format)** — **detected and refused for now; support is in development.** ZaroPGx reads the assembly out of the file's own contig lengths, or out of its `##reference=` line, and declines the upload. Nothing downstream would catch a CHM13 file: PharmCAT's preprocessor normalizes against GRCh38.p13 without checking which assembly the input is on, and `bcftools norm -c ws` *swaps* a mismatched reference allele rather than failing — so the report would carry confidently wrong star alleles. There is no automatic liftover for it, and doing one yourself is not a workaround either: the published T2T chains exclude GRCh38's alternate haplotype contigs, so *GSTT1* (on `chr22_KI270879v1_alt`) cannot come across at all, only about 60% of T2T's segmental duplications have a clear GRCh38 orthologue — the *CYP2D6*/*CYP2D7*/*CYP2D8* cluster is one such region — and no published work characterises *CYP2D6* or *CYP2C19* in CHM13. Call your variants against GRCh38/hg38, or realign to it, and upload that.
