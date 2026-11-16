@@ -357,6 +357,7 @@ def _version_served() -> str:
     commit = str(code.get("commit") or "")[:7]  # type: ignore[union-attr]
     return f"{version}+{commit}" if commit else version
 
+
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
