@@ -50,7 +50,7 @@ TRANSPORTER_GENES = frozenset({"ABCG2", "SLCO1B1"})
 FALLBACK = "See recommendations"
 
 # A gene the run did not call: the interactive report tables every gene, and the
-# PDF says the same of these under "Genes examined without a call".
+# PDF says the same of these under "Genes without a call".
 NOT_CALLED = "Not called: phenotype unknown, so no genotype-based guidance"
 
 # PyPGx's "Indeterminate" diplotype: it could not settle the genotype.

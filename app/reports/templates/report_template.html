@@ -1569,11 +1569,40 @@
 
         {% if uncalled_genes %}
         <div class="uncalled-genes">
-            <h4>Genes examined without a call ({{ uncalled_genes|length }})</h4>
-            <p>These genes were included in the analysis but this sample's data did
-               not support a diplotype call, so no phenotype or guidance follows from
-               them. They are named here rather than tabled above, where they would
-               otherwise fill several pages with empty rows.</p>
+            {# "examined" was wrong for part of this list, and the paragraph below
+               said the sample's data could not answer all of it. Three things end a
+               gene without a call and only one of them is about the sample, so they
+               are drawn apart here exactly as _unresolved_calls.summary_uncalled
+               draws them: call_error (a tool tried and failed), not_tested (no tool
+               reported on it), and the rest. #}
+            {% set failed_genes = uncalled_genes|selectattr('call_error')|list %}
+            {% set unexamined_genes = uncalled_genes|rejectattr('call_error')|selectattr('not_tested')|list %}
+            {% set unsupported_genes = uncalled_genes|rejectattr('call_error')|rejectattr('not_tested')|list %}
+            <h4>Genes without a call ({{ uncalled_genes|length }})</h4>
+            <p>They are named here rather than tabled above, where they would
+               otherwise fill several pages with empty rows. No phenotype or guidance
+               follows from any of them.</p>
+            {% if unsupported_genes %}
+            <p>{{ unsupported_genes|length }}
+               {{ 'was' if unsupported_genes|length == 1 else 'were' }} examined and
+               this sample's data did not support a diplotype call.</p>
+            {% endif %}
+            {% if unexamined_genes %}
+            <p>{{ unexamined_genes|length }}
+               {{ 'was' if unexamined_genes|length == 1 else 'were' }} not examined:
+               no tool in this run reported on
+               {{ 'it' if unexamined_genes|length == 1 else 'them' }}, which says
+               nothing about this sample's data. HLA typing reads an alignment, and
+               the mitochondrial genes need the mitochondrial caller.</p>
+            <p class="uncalled-list">{% for d in unexamined_genes %}{{ d.gene }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {% endif %}
+            {% if failed_genes %}
+            <p>{{ failed_genes|length }}
+               {{ 'was' if failed_genes|length == 1 else 'were' }} not called because a
+               tool failed, which also says nothing about this sample's data: the data
+               may well support a call, and a re-run may produce one.</p>
+            <p class="uncalled-list">{% for d in failed_genes %}<strong>{{ d.gene }}</strong> &mdash; {{ d.call_error }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+            {% endif %}
             {# Each gene keeps its Call letter. Without it the move would quietly
                retire two entries of the Source Legend above -- "-" (no call made)
                and "?" (not recorded by this run) attach almost exclusively to

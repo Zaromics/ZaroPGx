@@ -160,6 +160,6 @@ def test_the_summary_shows_them_called_with_no_phenotype(monkeypatch, tmp_path, 
 def test_the_gene_table_does_not_list_them_as_uncalled(monkeypatch, tmp_path):
     page = _render(monkeypatch, tmp_path, False)
     genes = page[page.index("<h2>Genetic Results</h2>") :]
-    uncalled = _clean(genes[genes.index("Genes examined without a call") :])
+    uncalled = _clean(genes[genes.index("Genes without a call") :])
     assert not re.search(r"\bF2\b|\bF5\b", uncalled.split("Drugs")[0])
     assert F2_CALL in _clean(genes)

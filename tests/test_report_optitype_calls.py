@@ -127,7 +127,7 @@ def test_the_report_lists_hla_c_as_called(monkeypatch, tmp_path):
     )
     page = (tmp_path / result["html_path"].split("/")[-1]).read_text(encoding="utf-8")
     genes = page[page.index("<h2>Genetic Results</h2>") :]
-    uncalled = _clean(genes[genes.index("Genes examined without a call") :])
+    uncalled = _clean(genes[genes.index("Genes without a call") :])
     assert "HLA-C" not in uncalled.split("Drugs")[0]
     hla_c = genes[genes.index(">HLA-C<") :][:2000]
     assert "*01:02/*07:01" in _clean(hla_c)

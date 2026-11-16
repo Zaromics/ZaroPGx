@@ -402,7 +402,7 @@ from the AMP/CAP minimum ("Tier 1") set for that gene. `app/pharmcat/amp_tier1.p
 the table (one citation per gene, each allele name taken from real PharmCAT output rather
 than from the papers, since AMP writes DPYD's Tier 1 as `c.1905+1G>A` and PharmCAT writes
 `c.1905+1G>A (*2A)`); `app/reports/tier1_gate.py` empties the row and routes it down the
-existing "Genes examined without a call" path.
+existing "Genes without a call" path.
 
 MEASURED, and the reason this exists: the full `pharmcat_pipeline` -- preprocessor
 included, NEITHER assume-reference flag, no PyPGx anywhere -- reported `CYP2C9 Normal

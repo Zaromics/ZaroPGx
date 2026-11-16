@@ -839,7 +839,7 @@ def test_the_reasons_always_add_up_to_the_count():
 
 def test_a_plain_vcf_says_not_in_the_vcf_and_leaves_uncalled_genes_alone():
     """A variants-only VCF leaves most of PharmCAT's panel uncalled; those are
-    explained under "Genes examined without a call", not listed again here."""
+    explained under "Genes without a call", not listed again here."""
     from app.reports.generator import partial_coverage_alert
 
     text = partial_coverage_alert(
