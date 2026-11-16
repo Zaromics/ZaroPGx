@@ -188,6 +188,10 @@ cython_debug/
 # Runtime version stamps written by container start scripts into the ./data bind mount.
 # Keep data/versions/about.md tracked; ignore the generated JSON manifests.
 /data/versions/*.json
+# PharmCAT's allele definitions, compacted out of pharmcat.jar at container start
+# (docker/pharmcat/definitions.py) and read back by app/reports/pharmcat_phase.py.
+# Derived from the pinned jar, rewritten whenever that version changes.
+/data/pharmcat/
 
 
 /scripts/example-workflow-usage.sh
