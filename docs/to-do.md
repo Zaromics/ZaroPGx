@@ -54,12 +54,24 @@ curated: true
   NA12878's 30x reads (1.08 GB, 7.6 M pairs) alignment took 11 minutes and peaked at 6.1x
   the FASTQ's size in disk (Oct 2026), so a whole genome would take hours. Open: measure
   disk and MarkDuplicatesSpark's memory on one whole-genome FASTQ.
-- **Not accepted yet — support in development**: 23andMe, AncestryDNA. Detected by name
-  and refused for now. Converting the file is the easy part; support has to solve what
-  comes after it: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157
-  that define *CYP2D6*, AncestryDNA v2 380 and 14, no chip can show a duplication or
-  deletion, and PyPGx reads the gaps as homozygous reference — so today's pipeline would
-  report confidently wrong calls rather than incomplete ones. See
+- **Consumer genotyping arrays (SHIPPED in 0.4.3)**: 23andMe and AncestryDNA raw-data
+  exports, read onto PharmCAT's own GRCh38 positions **by rs identifier** rather than by
+  coordinate — a coordinate-keyed conversion silently drops `rs6025` (Factor V Leiden),
+  where the two builds disagree about which allele is the reference. What this entry used
+  to say — "detected by name and refused for now" — was true until #236.
+
+  The problem it named is solved by the AMP/CAP Tier 1 gate rather than by the conversion:
+  a gene whose minimum allele set the file cannot assess is reported as not called, naming
+  the alleles that were missed, instead of printing a reference call built from positions
+  nobody read. PyPGx does not run at all (it calls copy number from read depth; an array
+  has no reads).
+
+  Measured: 23andMe v5 carries 229 of PharmCAT's 1,226 positions and 25 of the 157 that
+  define *CYP2D6*, AncestryDNA v2 380 and 14; a chip-shaped file carrying **every**
+  rs-identified position yields 20 called genes, so the ceiling on a real export is the
+  vendor's marker selection. Both vendor layouts were put through the lane on the shipped
+  image and produce **identical** output — AncestryDNA's two allele columns are the trap
+  (`bcftools convert --tsv2vcf` reads only the first and invents an `N`). See
   `docs/user/file-formats.md`.
 - **Not accepted yet — support in development**: T2T-CHM13, in any format. Detected from
   the file's own contig lengths or `##reference=` line and refused for now. A liftover
