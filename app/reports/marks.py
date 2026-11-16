@@ -21,9 +21,17 @@ Templates reach these through ``CAUTION`` and ``INFO``, registered as globals by
 ``generator.register_report_template_helpers``. Python that builds an alert
 fragment interpolates ``CAUTION_SVG`` or ``INFO_SVG`` directly.
 ``tests/test_caveat_marks.py`` fails if a surface types a mark instead.
+
+Code that has to recognize a mark, rather than write one, reads these too: a
+fragment that opens with ``CAUTION_SVG`` is already marked, and the predicate
+for that has to be the drawn form. Asking whether the text opens with U+26A0 was
+left behind when the marks became SVG, and silently merged every marked warning
+into one run-on line -- see ``generator.input_warnings_alert``.
 """
 
 from __future__ import annotations
+
+import re
 
 # 1em square, nudged onto the text baseline. aria-hidden because the words that
 # follow each mark already say what it is, so a screen reader gains nothing from
@@ -50,3 +58,13 @@ INFO_SVG = (
     '<circle cx="8" cy="4.3" r="1.1" fill="#ffffff"/>'
     "</svg>"
 )
+
+# The typed forms, kept here so that no other module has to name the characters
+# it is replacing -- ``tests/test_caveat_marks.py`` reads an escape sequence as
+# typing a mark, and rightly: an escape renders the same character. A job stored
+# before the marks were drawn re-renders from the text it stored, so a leading
+# typed caution mark is recognized and replaced by the drawn one
+# (``generator.input_warnings_alert``). Written with ``chr`` for the same reason
+# the test is: so a find-and-replace over the repo's marks cannot rewrite them.
+TYPED_CAUTION = re.compile("^" + chr(0x26A0) + chr(0xFE0F) + r"?\s*")
+TYPED_MARKS = (chr(0x26A0), chr(0x2139))

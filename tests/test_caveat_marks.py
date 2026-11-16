@@ -13,6 +13,7 @@ Both marks are now SVG in app/reports/marks.py -- same colour, weight and size
 in the page and in the PDF. This file keeps them that way.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -44,15 +45,33 @@ SURFACES = sorted(
 )
 
 
+def _escapes(mark: str) -> re.Pattern[str]:
+    """The ways a surface can write `mark` without the character being in the
+    file: a Python escape, and either HTML entity. All of them render the same
+    glyph, so all of them are typing the mark.
+
+    This hole is what let the aggregator keep a `"\\u26a0"` of its own long
+    after the marks were drawn (app/reports/generator.py's input_warnings_alert
+    -- it merged a VCF's warnings into one line and doubled its mark). The
+    characters now live in marks.py, which no surface needs to repeat.
+    """
+    point = ord(mark)
+    return re.compile(
+        rf"\\u0*{point:04x}|\\U0*{point:04x}|&#x0*{point:04x};|&#0*{point};",
+        re.IGNORECASE,
+    )
+
+
 def _typed(path: Path, mark: str) -> list[int]:
     """Line numbers that type `mark` instead of drawing it. A logger line is
     not report text, and a comment may name the character it explains."""
+    escaped = _escapes(mark)
     out = []
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         stripped = line.lstrip()
         if "logger" in line or stripped.startswith(("#", "{#", "*")):
             continue
-        if mark in line:
+        if mark in line or escaped.search(line):
             out.append(n)
     return out
 
@@ -113,3 +132,29 @@ def test_a_mark_survives_autoescape_in_a_template():
 
     assert "&lt;svg" not in rendered
     assert rendered.count("<svg") == 2
+
+
+def test_the_escape_hatch_is_covered_too():
+    """An escape sequence and an HTML entity draw the same glyph as the
+    character, and a surface that writes one is typing the mark."""
+    caution = _escapes(CAUTION_CHAR)
+
+    assert caution.search(r'mark = "\u26a0\ufe0f"')
+    assert caution.search(r"re.compile('^\U000026A0')")
+    assert caution.search("<p>&#x26a0; careful</p>")
+    assert caution.search("<p>&#9888; careful</p>")
+    assert not caution.search("CAUTION_SVG")
+    assert not caution.search(r'"\u2139"'), "that is the info mark"
+    assert _escapes(INFO_CHAR).search(r'"\u2139"')
+
+
+def test_marks_py_is_the_only_place_that_names_the_characters():
+    """Recognising a mark needs the character; writing one does not. One module
+    holds it so the scan above can stay absolute about every other."""
+    from app.reports import marks
+
+    assert marks.TYPED_MARKS == (CAUTION_CHAR, INFO_CHAR)
+    assert marks.TYPED_CAUTION.match(CAUTION_CHAR + SELECTOR + " x")
+    assert marks.TYPED_CAUTION.match(CAUTION_CHAR + " x")
+    assert marks.TYPED_CAUTION.sub("", CAUTION_CHAR + SELECTOR + " x") == "x"
+    assert not marks.TYPED_CAUTION.match("x " + CAUTION_CHAR)

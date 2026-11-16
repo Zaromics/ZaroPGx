@@ -98,7 +98,7 @@ from app.reports.copy_number import (
 from app.reports.credits import CreditRun, ref_numbers, report_credits
 from app.reports.evidence import classify_evidence
 from app.reports.implications import row_implication, table_implication
-from app.reports.marks import CAUTION_SVG
+from app.reports.marks import CAUTION_SVG, INFO_SVG, TYPED_CAUTION, TYPED_MARKS
 from app.reports.pdf_fit import fill_summary_page, fit_sections, mark_headings
 from app.reports.pharmcat_tsv_parser import (
     executive_summary_call,
@@ -1924,12 +1924,20 @@ def read_position_statuses(report_dir: str) -> Dict[str, str]:
 _ONE_PARAGRAPH = re.compile(r"<p>(?P<body>(?:(?!</?p[\s>]).)*)</p>", re.S)
 _BLOCK_TAG = re.compile(r"</?(?:p|ul|ol|li|div|table|h[1-6])[\s>/]", re.I)
 _INLINE_TAG = re.compile(r"</?(?:strong|em|b|i|code|a|br|span|sup|sub)\b[^>]*>", re.I)
-_WARNING_MARK = "\u26a0\ufe0f"
+# A fragment that opens with a mark is a warning of its own; one that opens
+# without a mark continues the line before it. The mark is drawn, so that
+# question has to be asked of the drawn form: asking whether the text opened
+# with U+26A0 was true of what file_processor stored until the marks became SVG
+# and false of everything it has stored since, which merged all six of a VCF's
+# standing warnings into one run-on line and gave that line a typed mark in
+# front of its drawn one. marks.py owns the characters; see TYPED_MARKS there.
+_MARK_OPENERS = (CAUTION_SVG, INFO_SVG, TYPED_MARKS[1])
+_WARNING_MARK = CAUTION_SVG
 
 
 def input_warnings_alert(warnings: List[Any]) -> List[str]:
     """The upload's standing warnings, one alert box for all of them, a line each,
-    every line opened by the warning mark.
+    every line opened by the drawn warning mark.
 
     The upload stores each as a paragraph of its own (file_processor), and the
     report gave each a box of its own: a VCF's seven boxes filled most of a page,
@@ -1940,6 +1948,17 @@ def input_warnings_alert(warnings: List[Any]) -> List[str]:
     "Could not analyze original WGS file: ...") is a warning of its own, marked,
     and escaped unless it carries inline markup. A warning of more than one
     paragraph or a list (the TSV rescue's) keeps a box of its own, in its place.
+
+    Whether a warning arrives marked is asked of the drawn mark, not the typed
+    character the marks used to be: read the typed form only, every marked
+    warning looked unmarked, continued the line before it, and a VCF's six
+    standing caveats rendered as one paragraph behind a single mark -- two
+    marks, in fact, the typed one this added and the drawn one already in the
+    text. A job stored before the marks were drawn still re-renders from
+    what it stored, so a line opening with the typed mark is read as marked and
+    that mark replaced by the drawn one; the lines of the box are then of one
+    mind whatever wrote them. A fragment that keeps a box of its own passes
+    through as stored, marks included.
     """
     alerts: List[Optional[str]] = []
     lines: List[str] = []
@@ -1959,7 +1978,9 @@ def input_warnings_alert(warnings: List[Any]) -> List[str]:
         if slot is None:
             slot = len(alerts)
             alerts.append(None)
-        if body.startswith("\u26a0"):
+        if TYPED_CAUTION.match(body):
+            lines.append(f"{_WARNING_MARK} {TYPED_CAUTION.sub('', body)}")
+        elif body.startswith(_MARK_OPENERS):
             lines.append(body)
         elif match and lines:
             lines[-1] = f"{lines[-1]} {body}"
