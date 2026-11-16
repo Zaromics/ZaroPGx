@@ -74,6 +74,7 @@ Where a template ships a different value from the code's default, both are given
 | `PDF_FALLBACK` | `true` | Try the other engine if the first fails |
 | `KROKI_ENABLED` | `true` | Draw the reports' workflow diagram with Kroki. Off, the reports list the run's steps as text instead; the Kroki containers run either way |
 | `AUTHOR_NAME`, `SOURCE_URL`, `ZAROPGX_VERSION` | from `pyproject.toml`, the GitHub URL | Shown in the reports' footer and Platform table |
+| `ZAROPGX_OPERATOR` | empty | Who runs this install, shown in the web page's footer beside the version. Empty, the footer says what the install is running on instead (`docker`), and names no operator -- a self-hosted deployment is not run by the people who wrote the software. The version there carries the running commit (`0.4.4+a1b2c3d`) when a container is serving code its image was not built from, which is what a mounted checkout does |
 | `FHIR_EXPORT_ENABLED` | `true` | The `/fhir` endpoints and the FHIR bundles written with each report. A job's bundle is sent to `FHIR_SERVER_URL` only when asked (`POST /fhir/push/workflow/{job_id}`) |
 | `HAPI_FHIR_ENABLED` | `true` | Whether this installation has a FHIR server to send bundles to. With `FHIR_EXPORT_ENABLED` on too, a finished job's results on the web page have a **Push to FHIR server** button ({doc}`reports`). The bundled HAPI server runs either way |
 | `KEEP_UPLOADS` | `false` | Keep an upload after its job ends. By default it is deleted when the job completes, fails or is cancelled |

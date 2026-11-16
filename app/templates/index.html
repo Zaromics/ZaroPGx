@@ -110,6 +110,10 @@
             color: var(--card-header-text);
             font-weight: bold;
         }
+        .install-identity {
+            opacity: 0.75;
+            font-size: 0.9em;
+        }
         .footer {
             margin-top: 3rem;
             padding: 1.5rem 0;
@@ -966,6 +970,16 @@
             <p class="mb-1">&copy; 2024-{{ current_year }} {{ author_name or 'Zaromics Initiative' }}</p>
             <p class="mb-1">ZaroPGx is distributed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
             <p class="mb-0">Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>. Provided without warranty; see license for details.</p>
+            {#- What this install is: the version, and either who runs it or what it
+                runs on. Server-rendered and self-contained -- the releases link is a
+                plain link, not a version check, so the page makes no outbound request
+                of its own (tests/test_no_external_service_defaults.py). A version
+                carrying a commit (0.4.4+a1b2c3d) is a container serving code its image
+                was not built from; the title says which. #}
+            <p class="mb-0 mt-2 install-identity"{% if build_detail %} title="{{ build_detail }}"{% endif %}>
+                ZaroPGx {{ app_version }}{% if operator %} &middot; {{ operator }}{% endif %}
+                &middot; <a href="{{ source_url }}/releases" target="_blank" rel="noopener">releases</a>
+            </p>
         </div>
     </div>
 

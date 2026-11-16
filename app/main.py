@@ -319,6 +319,45 @@ APP_VERSION = "0.4.3"
 # none of this changes while the process lives.
 _BUILD_IDENTITY = build_identity.identity(version=APP_VERSION)
 
+#: Who runs this install, shown in the page footer beside the version. Empty by
+#: default, because an unset operator must show nothing rather than a placeholder:
+#: a self-hosted deployment is not run by the people who wrote the software.
+OPERATOR = os.getenv("ZAROPGX_OPERATOR", "").strip()
+
+
+def _where_this_runs() -> str:
+    """Where this process runs -- "docker" in a container, otherwise nothing.
+
+    Shown only when no operator names themselves, so an unlabelled install still
+    says what it is rather than going anonymous.
+    """
+    if Path("/.dockerenv").exists():
+        return "docker"
+    try:
+        if "docker" in Path("/proc/1/cgroup").read_text(encoding="utf-8"):
+            return "docker"
+    except OSError:
+        pass
+    return ""
+
+
+def _version_served() -> str:
+    """The version, with the running commit appended when it is not the image's.
+
+    Semver build metadata (`0.4.4+a1b2c3d`): there is no accepted term for a
+    container serving code its image was not built from -- the mechanism is a bind
+    mount shadowing the image's files -- so this states the fact in the notation that
+    already exists for it rather than inventing a phrase. A reader who sees a bare
+    version is running the image; one who sees a suffix is running that commit.
+    """
+    version = str(_BUILD_IDENTITY.get("version") or APP_VERSION)
+    if _BUILD_IDENTITY.get("agrees") is not False:
+        return version
+    code = _BUILD_IDENTITY.get("code") or {}
+    commit = str(code.get("commit") or "")[:7]  # type: ignore[union-attr]
+    return f"{version}+{commit}" if commit else version
+
+
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
@@ -801,6 +840,12 @@ async def home(request: Request):
                     "SOURCE_URL", "https://github.com/Zaromics/ZaroPGx"
                 ),
                 "current_year": datetime.now().year,
+                # What this install is, for the footer: the version (carrying the
+                # running commit when it is not the image's), and either who runs it
+                # or, unlabelled, what it is running on. See build_identity.
+                "app_version": _version_served(),
+                "operator": OPERATOR or _where_this_runs(),
+                "build_detail": build_identity.disagreement(_BUILD_IDENTITY),
             },
         )
     except Exception as e:
