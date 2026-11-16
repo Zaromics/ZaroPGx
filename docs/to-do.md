@@ -571,6 +571,27 @@ Open:
 
 ## UI/UX
 
+- **An opt-in update check for the footer's install line.** The line added in
+  0.4.4 says which ZaroPGx is running, who runs it (`ZAROPGX_OPERATOR`), and -- when
+  they differ -- that the served code is not the code the image was built from. What it
+  deliberately does NOT say is whether a newer release exists, because knowing that
+  means asking an outside service, and this application makes no outbound request on
+  its own behalf today. `tests/test_no_external_service_defaults.py` exists because
+  `render_with_kroki` nearly defaulted to the public kroki.io; a clinical install
+  telling GitHub that it exists and what version it runs is the operator's decision,
+  not a default.
+
+  The shape, if it is wanted: `ZAROPGX_UPDATE_CHECK`, **default off**, one value naming
+  where to ask (`github`). On, the app asks once and caches the answer on disk for 24
+  hours, fails silent on any error, never blocks a page render, and sends nothing but
+  the request itself -- no version, no install id, no telemetry. The footer then reads
+  `... · 0.4.5 available`. `configuration.md` gets the setting with the egress stated
+  plainly, and `test_no_external_service_defaults.py` gets an explicit carve-out that
+  names this one host rather than letting it through a general exception.
+
+  Worth doing only if someone asks for it. The passive `releases` link already answers
+  "is there something newer" for anyone who wonders, at the cost of a click.
+
 - **`is_valid` and `validation_errors` are vestigial, and the page has an alert that can
   never appear.** MEASURED 2026-11-14: `FileAnalysis` declares both
   (`app/api/utils/file_processor.py`), the upload response and the job metadata carry both

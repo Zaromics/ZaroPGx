@@ -319,6 +319,12 @@ APP_VERSION = "0.4.3"
 # none of this changes while the process lives.
 _BUILD_IDENTITY = build_identity.identity(version=APP_VERSION)
 
+#: Who runs this install, shown in the page footer beside the version. Empty by
+#: default, because an unset operator must show nothing rather than a placeholder:
+#: a self-hosted deployment saying "hosted by ZaroPGx" would be a false claim about
+#: who holds the data.
+OPERATOR = os.getenv("ZAROPGX_OPERATOR", "").strip()
+
 app = FastAPI(
     title="ZaroPGx, an Individual Pharmacogenomic Analysis Platform",
     description="An application with an API for processing genetic data and generating pharmacogenomic reports",
@@ -801,6 +807,12 @@ async def home(request: Request):
                     "SOURCE_URL", "https://github.com/Zaromics/ZaroPGx"
                 ),
                 "current_year": datetime.now().year,
+                # What this install is, for the footer: the version, who runs it,
+                # and -- only when they disagree -- that the code being served is
+                # not the code the image was built from. See build_identity.
+                "app_version": _BUILD_IDENTITY.get("version") or APP_VERSION,
+                "operator": OPERATOR,
+                "build_disagreement": build_identity.disagreement(_BUILD_IDENTITY),
             },
         )
     except Exception as e:

@@ -29,6 +29,10 @@
             --header-bg: #0066cc;
             --header-text: #ffffff;
             --footer-bg: #f8f9fa;
+            /* The install line's warning, as text on the footer. Amber #ffc107 is
+               1.55:1 on this near-white footer and unreadable; this is 5.26:1. The
+               dark theme keeps the amber, which is 10.95:1 there. */
+            --install-warning: #8a6100;
             --card-header-bg: #0066cc;
             --card-header-text: #ffffff;
         }
@@ -37,6 +41,7 @@
             --header-bg: #0b3d91;
             --header-text: #e6e6e6;
             --footer-bg: #0f172a;
+            --install-warning: #ffc107;
             --card-header-bg: #0b3d91;
             --card-header-text: #e6e6e6;
         }
@@ -109,6 +114,15 @@
             background-color: var(--card-header-bg);
             color: var(--card-header-text);
             font-weight: bold;
+        }
+        .install-identity {
+            opacity: 0.75;
+            font-size: 0.9em;
+        }
+        .install-identity-warning {
+            margin-left: 0.5rem;
+            color: var(--install-warning);
+            white-space: nowrap;
         }
         .footer {
             margin-top: 3rem;
@@ -966,6 +980,23 @@
             <p class="mb-1">&copy; 2024-{{ current_year }} {{ author_name or 'Zaromics Initiative' }}</p>
             <p class="mb-1">ZaroPGx is distributed under the <a href="{{ license_url }}" target="_blank" rel="noopener">{{ license_name }}</a>.</p>
             <p class="mb-0">Source code: <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>. Provided without warranty; see license for details.</p>
+            {#- What this install is. Server-rendered and self-contained: the version
+                and the operator are known here, and the releases link is a plain link
+                rather than a version check, so the page makes no outbound request of
+                its own (tests/test_no_external_service_defaults.py). The warning
+                appears only when build_identity says the served code is not the code
+                the image was built from, which is the normal case under a mounted
+                checkout and a real surprise anywhere else. #}
+            <p class="mb-0 mt-2 install-identity">
+                ZaroPGx {{ app_version }}{% if operator %} &middot; hosted by {{ operator }}{% endif %}
+                &middot; <a href="{{ source_url }}/releases" target="_blank" rel="noopener">releases</a>
+                {%- if build_disagreement %}
+                <span class="install-identity-warning" title="{{ build_disagreement }}">
+                    <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+                    running code differs from the image
+                </span>
+                {%- endif %}
+            </p>
         </div>
     </div>
 
