@@ -326,8 +326,11 @@ OPERATOR = os.getenv("ZAROPGX_OPERATOR", "").strip()
 
 
 def _where_this_runs() -> str:
-    """"docker" when this process is in a container, else "" -- shown only when no
-    operator names themselves, so an unlabelled install still says what it is."""
+    """Where this process runs -- "docker" in a container, otherwise nothing.
+
+    Shown only when no operator names themselves, so an unlabelled install still
+    says what it is rather than going anonymous.
+    """
     if Path("/.dockerenv").exists():
         return "docker"
     try:
