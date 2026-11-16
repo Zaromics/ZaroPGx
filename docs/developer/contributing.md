@@ -74,8 +74,18 @@ pypgx, gatk-api, genome-downloader and zarohla:
 ```bash
 git worktree add --detach ../zaropgx-v<version> v<version>
 cd ../zaropgx-v<version>
-ZAROPGX_TAG=<version> docker buildx bake -f docker-bake.hcl --push
+ZAROPGX_TAG=<version> ZAROPGX_COMMIT=$(git rev-parse HEAD) \
+  docker buildx bake -f docker-bake.hcl --push
 ```
+
+**`ZAROPGX_COMMIT` is not optional.** Without it the app image is stamped
+`"commit": "unknown"`, and a container cannot then say whether the code it serves is the
+code it was built with. 0.4.4 was released without it: every install's `Platform:` line
+read `0.4.4+<commit>`, which is the page's way of saying *this container is serving code
+its image was not built from* -- said to every reader, on every install, falsely. The
+word `unknown` is also a string, so the comparison ran rather than abstaining; that half
+is fixed in `build_identity._known`, but a release still has to record the commit for
+the line to mean anything at all.
 
 **4. Publish `mtdna` by hand, from that same tree.** It is deliberately not a bake target
 — its base image is 2.3 GB to pull and 7.2 GB unpacked, enough to exhaust a GitHub Actions

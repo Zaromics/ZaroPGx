@@ -130,6 +130,21 @@ def commit_of(root: Path = CODE_ROOT) -> Optional[str]:
     return _resolve(ref, git_dir, _common_dir(git_dir))
 
 
+def _known(value: object) -> Optional[str]:
+    """A commit, or None for anything that is not one.
+
+    The sentinel has two spellings and both mean the same thing: absent, and the
+    literal word "unknown". `ARG ZAROPGX_COMMIT=unknown` in the app Dockerfile is the
+    second one, so an image built without that argument carries `"commit": "unknown"`
+    in its stamp -- a string, and therefore truthy. Comparing it against a real commit
+    yields "these differ", and the page then tells every reader it is serving code its
+    image does not have. Which is the one claim this whole mechanism exists to avoid
+    making falsely.
+    """
+    text = str(value or "").strip()
+    return None if not text or text.lower() == UNKNOWN else text
+
+
 def identity(
     stamp_path: Path = BUILD_STAMP, root: Path = CODE_ROOT, version: str = UNKNOWN
 ) -> Dict[str, object]:
@@ -141,8 +156,8 @@ def identity(
     and must not be reported as one.
     """
     stamp = _read_stamp(stamp_path)
-    running = commit_of(root)
-    built = stamp.get("commit")
+    running = _known(commit_of(root))
+    built = _known(stamp.get("commit"))
     agrees: Optional[bool] = None
     if built and running:
         agrees = built.startswith(running) or running.startswith(built)
