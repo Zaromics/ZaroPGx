@@ -1776,7 +1776,16 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
     )
     rows = []
     for gene in panel:
-        if gene in tsv:
+        # A gene the AMP/CAP Tier 1 gate withheld (tier1_gate.withhold_inadequate_calls
+        # marks the gene row) must not come back from the TSV. The summary is built from
+        # PharmCAT's calls-only table, which still carries the call the gate declined to
+        # report, and this function prefers the TSV for any gene it carries -- so the
+        # page a reader sees first printed a verdict the gene table, the Alerts box and
+        # the FHIR bundle all said was not reported. Reading the marker here, rather
+        # than pruning the TSV rows where the gate runs, is one mechanism instead of two:
+        # a later withholding reason cannot forget to prune.
+        withheld = bool((genes.get(gene) or {}).get("tier1_withheld"))
+        if gene in tsv and not withheld:
             row = tsv[gene]
             diplotype = (
                 row.get("diplotype_display") or row.get("rec_lookup_diplotype") or ""

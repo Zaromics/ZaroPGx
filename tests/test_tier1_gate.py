@@ -13,11 +13,13 @@ PharmCAT fixtures and requires that nothing at all is withheld.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from app.pharmcat.report_json import iter_gene_blocks
+from app.reports import tier1_gate
 from app.reports.tier1_gate import (
     mark_recommendations_without_a_call,
     withheld_alert,
@@ -442,3 +444,106 @@ def test_only_the_tier_1_allele_is_named_not_every_unassessable_one():
 
     for rare in ("*86", "*87", "*94", "*27"):
         assert rare not in note, f"{rare} is not Tier 1 and must not be listed"
+
+
+# --------------------------------------------------------------------------
+# The Executive Summary reads a second source, and it has to agree
+# --------------------------------------------------------------------------
+
+
+def _called_rows(*genes):
+    """Gene rows that show a call, which is the only kind the gate touches."""
+    return [
+        {
+            "gene": gene,
+            "diplotype": "*1/*2",
+            "diplotype_display": "*1/*2",
+            "phenotype": "Intermediate Metabolizer",
+            "activity_score": "1.0",
+        }
+        for gene in genes
+    ]
+
+
+def _tsv_row(gene, diplotype="*1/*2", phenotype="Intermediate Metabolizer"):
+    """A row as generator builds them from PharmCAT's TSV for the summary page."""
+    return {
+        "gene": gene,
+        "diplotype_display": diplotype,
+        "rec_lookup_diplotype": diplotype,
+        "rec_lookup_phenotype": phenotype,
+        "rec_lookup_activity_score": None,
+    }
+
+
+def test_the_summary_does_not_print_a_withheld_call():
+    """The summary is built from PharmCAT's TSV, which the gate does not touch, and
+    summary_rows prefers the TSV for any gene it carries. So a gene withheld in the
+    gene table was still printed with its call on the page a reader looks at first.
+    Found on a chip-shaped input: the gene table said CYP2C9 was not called for want of
+    *6 while the summary said *1/*2, Intermediate Metabolizer."""
+    from app.reports.generator import summary_rows
+
+    report = _report({"CYP2C9": ["*6"]})
+    genes = _called_rows("CYP2C9")
+    tsv = [_tsv_row("CYP2C9")]
+
+    before = {row["gene"]: row for row in summary_rows(tsv, genes)}
+    assert before["CYP2C9"]["diplotype"] == "*1/*2", "the TSV's call, before the gate"
+
+    withhold_inadequate_calls(genes, report)
+    after = {row["gene"]: row for row in summary_rows(tsv, genes)}
+
+    assert not (after["CYP2C9"].get("diplotype") or "").strip()
+    assert after["CYP2C9"].get("called") is not True
+
+
+def test_a_gene_the_gate_left_alone_still_comes_from_the_tsv():
+    """The suppression is keyed on the gate's own marker, not on emptiness: a gene the
+    TSV calls and the gene rows do not (F2 and F5 are in PharmCAT's calls-only table
+    and not in report.json's genes) must keep its call."""
+    from app.reports.generator import summary_rows
+
+    report = _report({"CYP2C9": ["*6"]})
+    genes = _called_rows("CYP2C9", "CYP2C19")
+    withhold_inadequate_calls(genes, report)
+    tsv = [_tsv_row("CYP2C9"), _tsv_row("CYP2C19", "*1/*17", "Rapid Metabolizer")]
+
+    rows = {row["gene"]: row for row in summary_rows(tsv, genes)}
+
+    assert rows["CYP2C19"]["diplotype"] == "*1/*17"
+    assert rows["CYP2C19"]["phenotype"] == "Rapid Metabolizer"
+
+
+def test_the_summary_page_itself_says_not_called():
+    """At the surface that failed: the rendered page, not the rows behind it."""
+    from app.reports.generator import env
+
+    report = _report({"CYP2C9": ["*6"]})
+    genes = _called_rows("CYP2C9")
+    withhold_inadequate_calls(genes, report)
+
+    page = env.get_template("report_template.html").render(
+        execsum_from_tsv=[_tsv_row("CYP2C9")],
+        diplotypes=genes,
+        recommendations=[],
+        patient_id="p",
+        report_id="r",
+        report_date="2026-11-14",
+        organization="ZaroPGx",
+        disclaimer="",
+    )
+    # The stylesheet names phenotypes in its comments, explaining column widths; it is
+    # not the report speaking.
+    body = re.sub(r"<style.*?</style>", "", page, flags=re.S)
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+    cells = [
+        re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell)).strip()
+        for row in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)
+        if "CYP2C9" in row
+        for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)
+    ]
+
+    assert cells, "no CYP2C9 row on the page at all"
+    assert not any("Intermediate Metabolizer" in cell for cell in cells), cells
+    assert not any("*1/*2" in cell for cell in cells), cells
