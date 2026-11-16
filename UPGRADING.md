@@ -34,10 +34,12 @@ are worth knowing before you compare an old report with a new one:
   Increased Function — did not meet WCAG AA at the size they print, and the test that
   should have caught it was asking for the large-text threshold.
 
-New in the web page's footer: which ZaroPGx this is, and either who runs it
-(`ZAROPGX_OPERATOR`, empty by default) or what it runs on. A version carrying a commit,
-`0.4.4+a1b2c3d`, is a container serving code its image was not built from, which is what
-a mounted checkout does.
+New at the bottom of the web page's documentation card, a `Platform:` line: which
+ZaroPGx this is, who runs it if anyone says so (`ZAROPGX_OPERATOR`, empty by default),
+whether it is containerised, and whether you are reading it on the machine serving it
+(`local`) or over a network (`remote`). A version carrying a commit, `0.4.4+a1b2c3d`, is
+a container serving code its image was not built from, which is what a mounted checkout
+does.
 
 Nothing to do by hand: no configuration changes, no data migration.
 
