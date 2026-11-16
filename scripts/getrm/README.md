@@ -29,9 +29,18 @@ python scripts/getrm/run.py --base-url http://127.0.0.1:18765 --cuts ~/getrm/cut
 python scripts/getrm/score.py ~/getrm/results
 ```
 
-`score.py` writes `calls.tsv`, a row per sample, gene and caller, and `summary.tsv`, the
-counts per gene. Both name the caller: the report's (PharmCAT, or PyPGx or OptiType where
-PharmCAT takes an outside call), and PyPGx's own call for the genes PharmCAT also calls.
+`score.py` writes `calls.tsv`, a row per sample, gene and caller, and the counts per gene
+twice: `summary.tsv` over every scored row and `summary_firm.tsv` over the rows whose
+GeT-RM value is not tentative. All of them name the caller: the report's (PharmCAT, or
+PyPGx or OptiType where PharmCAT takes an outside call), and PyPGx's own call for the
+genes PharmCAT also calls.
+
+**Read the firm number alongside the other one.** A parenthesised GeT-RM value is one
+assay, unconfirmed, and disagreeing with it is not the same as disagreeing with a
+consensus two assays reached. In the 61-sample run, 22 of the 43 discordances are
+tentative: 0.9529 over everything, 0.9714 over the firm rows. The verdict itself does not
+change -- tentativeness is recorded, never judged -- so the two files differ only in which
+rows they count.
 
 ## Reading the score
 
