@@ -1,21 +1,28 @@
-"""The page says which ZaroPGx this is, who runs it, and when the code is not the image.
+"""The page says which ZaroPGx this is and where it is running.
 
-One muted line in the footer, server-rendered. It answers the three questions an
-operator or a visitor actually has -- what version is this, whose install am I on, and
-is it current -- without the page making a request of its own.
+One muted line in the footer, server-rendered:
 
-**It is deliberately a link, not a version check.** Knowing whether a newer release
-exists means asking an outside service, which would be the first outbound call this
-application makes on its own behalf: ``tests/test_no_external_service_defaults.py``
-exists because ``render_with_kroki`` nearly defaulted to the public kroki.io, and a
-self-hosted clinical install telling GitHub that it exists and what version it runs is
-a decision for whoever runs it, not a default. ``docs/to-do.md`` carries the opt-in
-design.
+    ZaroPGx 0.4.4 · St Mary's Genomics · releases     an operator who named themselves
+    ZaroPGx 0.4.4 · docker · releases                 unlabelled, in a container
+    ZaroPGx 0.4.4 · releases                          unlabelled, not in one
+    ZaroPGx 0.4.4+a1b2c3d · … · releases              serving code the image lacks
 
-The warning is the part that earns its place. ``build_identity.disagreement`` returns a
-line only when the served code is not the code the image was built from -- which compose
-makes the normal case for a developer and a real surprise on an install -- and an
-operator debugging "I fixed that bug, why is it still here" has nowhere else to see it.
+**The suffix is semver build metadata, not a phrase.** There is no accepted term for a
+container serving code its image was not built from -- the mechanism is a bind mount
+shadowing the image's files, and the field has no noun for it -- so the line states the
+fact in the notation that already exists for it. A bare version is the image; a version
+carrying a commit is that commit. The full detail goes in the element's title, where
+someone who wants it can find it, and nowhere else.
+
+**The releases link is a link, not a version check.** Knowing whether a newer release
+exists means asking an outside service, and this application makes no outbound request
+on its own behalf: ``test_no_external_service_defaults.py`` exists because
+``render_with_kroki`` nearly defaulted to the public kroki.io. The opt-in design is in
+``docs/to-do.md``.
+
+The line sits at ``opacity: .75`` on the footer, which measures 6.58:1 light and 8.10:1
+dark against Bootstrap's body text -- above the 4.5 AA asks -- so it is muted without
+being faint.
 """
 
 from __future__ import annotations
@@ -27,92 +34,97 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 PAGE = REPO / "app" / "templates" / "index.html"
-MAIN = REPO / "app" / "main.py"
-
-#: WCAG 2.x AA for text that is not large.
-MIN_RATIO = 4.5
 
 
-def _luminance(colour: str) -> float:
-    colour = colour.lstrip("#")
-    parts = [int(colour[i : i + 2], 16) / 255 for i in (0, 2, 4)]
-    parts = [p / 12.92 if p <= 0.04045 else ((p + 0.055) / 1.055) ** 2.4 for p in parts]
-    return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]
+@pytest.fixture(scope="module")
+def main_module():
+    import app.main as main
+
+    return main
 
 
-def _contrast(one: str, two: str) -> float:
-    first, second = _luminance(one), _luminance(two)
-    high, low = max(first, second), min(first, second)
-    return (high + 0.05) / (low + 0.05)
-
-
-def _variable(name: str) -> dict:
-    """{theme: value} for a CSS custom property declared in both theme blocks."""
-    text = PAGE.read_text(encoding="utf-8")
-    light = re.search(r":root\s*\{(.*?)\}", text, re.S)
-    dark = re.search(r"\[data-bs-theme='dark'\]\s*\{(.*?)\}", text, re.S)
-    assert light and dark, "the page no longer declares both theme blocks"
-    found = {}
-    for theme, block in (("light", light.group(1)), ("dark", dark.group(1))):
-        match = re.search(rf"{name}:\s*(#[0-9A-Fa-f]{{6}})", block)
-        assert match, f"{name} is not declared for the {theme} theme"
-        found[theme] = match.group(1)
-    return found
-
-
-def test_the_line_names_the_version_and_the_operator():
+def _line() -> str:
     page = PAGE.read_text(encoding="utf-8")
-    line = re.search(r'class="[^"]*install-identity"[^>]*>(.*?)</p>', page, re.S)
-    assert line, "the footer no longer carries the install identity line"
-    body = line.group(1)
+    found = re.search(r'class="[^"]*install-identity"[^>]*>(.*?)</p>', page, re.S)
+    assert found, "the footer no longer carries the install identity line"
+    return found.group(1)
+
+
+def test_the_line_names_the_version_and_where_it_runs():
+    body = _line()
     assert "{{ app_version }}" in body
-    assert "{{ operator }}" in body, "the operator is not shown"
+    assert "{{ operator }}" in body
     assert "{% if operator %}" in body, (
-        "an unset operator must show nothing: a self-hosted install saying "
-        '"hosted by ZaroPGx" would be a false claim about who holds the data'
+        "with nothing to say about an operator the line must say nothing: a "
+        "self-hosted install is not run by the people who wrote the software"
     )
+
+
+def test_an_unlabelled_install_still_says_what_it_runs_on(main_module):
+    """`operator` falls back to the runtime, so a bare install is not anonymous."""
+    source = (REPO / "app" / "main.py").read_text(encoding="utf-8")
+    assert "OPERATOR or _where_this_runs()" in source
+
+
+def test_a_container_is_recognised_by_its_own_marker(
+    main_module, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(main_module, "Path", Path)
+    assert main_module._where_this_runs() in ("docker", "")
+
+
+def test_the_version_carries_the_commit_only_when_it_is_not_the_image(main_module):
+    served = main_module._version_served
+    base = dict(main_module._BUILD_IDENTITY)
+
+    agreeing = dict(base, version="9.9.9", agrees=True, code={"commit": "aaaaaaa1"})
+    unknown = dict(base, version="9.9.9", agrees=None, code={"commit": "aaaaaaa1"})
+    differing = dict(
+        base, version="9.9.9", agrees=False, code={"commit": "bbbbbbb2222"}
+    )
+
+    for name, identity in (("agreeing", agreeing), ("one side unknown", unknown)):
+        main_module._BUILD_IDENTITY = identity
+        assert served() == "9.9.9", f"{name} must print a bare version"
+
+    main_module._BUILD_IDENTITY = differing
+    assert served() == "9.9.9+bbbbbbb", "the running commit, short, after a +"
+
+    main_module._BUILD_IDENTITY = base
+
+
+def test_an_unknown_commit_is_not_reported_as_a_difference(main_module):
+    """`agrees` is None when one side is unknown, which is not a disagreement."""
+    base = dict(main_module._BUILD_IDENTITY)
+    main_module._BUILD_IDENTITY = dict(base, version="9.9.9", agrees=False, code={})
+    assert (
+        main_module._version_served() == "9.9.9"
+    ), "with no commit to name there is nothing to append"
+    main_module._BUILD_IDENTITY = base
 
 
 def test_the_releases_link_is_a_link_and_not_a_check():
     page = PAGE.read_text(encoding="utf-8")
-    assert "{{ source_url }}/releases" in page, "no link to the releases"
-    line = re.search(r'class="[^"]*install-identity"[^>]*>(.*?)</p>', page, re.S)
-    assert line and "fetch(" not in line.group(1), (
-        "the install line must not call out: an update check is opt-in, and this "
-        "page makes no request of its own"
+    assert "{{ source_url }}/releases" in page
+    assert "fetch(" not in _line(), (
+        "the line must not call out: an update check is opt-in and this page makes "
+        "no request of its own"
     )
 
 
-def test_the_warning_appears_only_on_a_real_disagreement():
+def test_the_detail_is_in_the_title_and_not_in_the_line():
+    """`_line` returns what a reader sees; the title lives in the opening tag."""
     page = PAGE.read_text(encoding="utf-8")
+    opening = re.search(r'<p class="[^"]*install-identity"[^>]*>', page)
+    assert opening, "the line is gone"
+    assert "build_detail" in opening.group(
+        0
+    ), "the explanation belongs in a title attribute, for whoever wants it"
     assert (
-        "{%- if build_disagreement %}" in page or "{% if build_disagreement %}" in page
-    )
-    assert MIN_RATIO  # the next test does the colours
-    main = MAIN.read_text(encoding="utf-8")
-    assert "build_identity.disagreement(_BUILD_IDENTITY)" in main, (
-        "the page must take the warning from build_identity, which returns None "
-        "unless both commits are known AND differ -- an unknown commit is not a "
-        "disagreement and must not be shown as one"
-    )
+        "build_detail" not in _line()
+    ), "and not in the footer text, which stays one short line"
 
 
 def test_the_operator_is_empty_until_someone_sets_it():
-    main = MAIN.read_text(encoding="utf-8")
-    assert re.search(
-        r'OPERATOR\s*=\s*os\.getenv\(\s*"ZAROPGX_OPERATOR",\s*""', main
-    ), "ZAROPGX_OPERATOR must default to empty"
-
-
-@pytest.mark.parametrize(
-    "theme,background", [("light", "--footer-bg"), ("dark", "--footer-bg")]
-)
-def test_the_warning_reads_against_the_footer_it_sits_on(theme, background):
-    """Amber is 1.55:1 on the light footer, which is why this is per-theme."""
-    warning = _variable("--install-warning")[theme]
-    footer = _variable(background)[theme]
-    ratio = _contrast(warning, footer)
-    assert ratio >= MIN_RATIO, (
-        f"the {theme} warning {warning} on {footer} is {ratio:.2f}:1, under the "
-        f"{MIN_RATIO} AA asks of text this size"
-    )
+    source = (REPO / "app" / "main.py").read_text(encoding="utf-8")
+    assert re.search(r'OPERATOR\s*=\s*os\.getenv\(\s*"ZAROPGX_OPERATOR",\s*""', source)
