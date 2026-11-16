@@ -110,9 +110,12 @@
             color: var(--card-header-text);
             font-weight: bold;
         }
+        /* Sits midway between the card's last paragraph and its buttons: my-auto
+           in a flex column splits the free space above and below equally. Muted by
+           opacity rather than a dimmer color, so it stays legible in both themes. */
         .install-identity {
             opacity: 0.75;
-            font-size: 0.9em;
+            font-size: 1em;
         }
         .footer {
             margin-top: 3rem;
@@ -939,10 +942,6 @@
                                     analysis system which attempts to create the most accurate and complete reports possible 
                                     with a given genomic datafile.<br><br>
                                     For detailed information, see the software documentation and access the API reference.</p>
-                                <div class="mt-auto d-flex gap-2">
-                                    <a href="/docs/" class="btn btn-secondary">Documentation</a>
-                                    <a href="/api/docs" class="btn btn-outline-secondary">API Reference</a>
-                                </div>
                                 {#- What this install is. Server-rendered and self-
                                     contained: the releases link is a plain link, not a
                                     version check, so the page makes no outbound request
@@ -950,10 +949,14 @@
                                     A version carrying a commit (0.4.4+a1b2c3d) is a
                                     container serving code its image was not built from;
                                     the title says which. #}
-                                <p class="mt-3 mb-0 install-identity"{% if build_detail %} title="{{ build_detail }}"{% endif %}>
+                                <p class="my-auto install-identity"{% if build_detail %} title="{{ build_detail }}"{% endif %}>
                                     Platform: {{ platform | join(' · ') }}
                                     &middot; <a href="{{ source_url }}/releases" target="_blank" rel="noopener">releases</a>
                                 </p>
+                                <div class="d-flex gap-2">
+                                    <a href="/docs/" class="btn btn-secondary">Documentation</a>
+                                    <a href="/api/docs" class="btn btn-outline-secondary">API Reference</a>
+                                </div>
                             </div>
                         </div>
                     </div>

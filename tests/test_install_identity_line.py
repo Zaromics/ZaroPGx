@@ -69,7 +69,7 @@ def test_the_line_lives_in_the_documentation_card_not_the_footer():
         card < line < footer
     ), "the Platform line belongs at the bottom of the About card, before the footer"
     buttons = page.index('<a href="/api/docs"', card)
-    assert buttons < line, "and below that card's buttons, as its last line"
+    assert line < buttons, "directly above that card's buttons"
 
 
 def test_it_is_labelled_platform(client):
