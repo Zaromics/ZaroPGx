@@ -313,7 +313,7 @@ def get_author_name() -> str:
 # Initialize FastAPI app
 # The release this build is. chore(release) bumps it with the other stamps; the docs
 # staleness check below keys on it, so a release always reprints the documentation.
-APP_VERSION = "0.4.3"
+APP_VERSION = "0.4.4"
 
 # Read once: /health is polled every 30 seconds by the container's healthcheck, and
 # none of this changes while the process lives.
@@ -325,20 +325,41 @@ _BUILD_IDENTITY = build_identity.identity(version=APP_VERSION)
 OPERATOR = os.getenv("ZAROPGX_OPERATOR", "").strip()
 
 
-def _where_this_runs() -> str:
-    """Where this process runs -- "docker" in a container, otherwise nothing.
-
-    Shown only when no operator names themselves, so an unlabelled install still
-    says what it is rather than going anonymous.
-    """
+def _runs_in_a_container() -> bool:
+    """Whether this process is inside a container."""
     if Path("/.dockerenv").exists():
-        return "docker"
+        return True
     try:
-        if "docker" in Path("/proc/1/cgroup").read_text(encoding="utf-8"):
-            return "docker"
+        return "docker" in Path("/proc/1/cgroup").read_text(encoding="utf-8")
     except OSError:
-        pass
-    return ""
+        return False
+
+
+#: Hosts that mean the person reading the page is on the machine serving it.
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"})
+
+
+def _how_it_is_reached(request: Request) -> str:
+    """ "local" when the page is being read on the machine serving it, else "remote".
+
+    Taken from the request's own Host, which is the only thing the server actually
+    knows: the same install is local to the person at its console and remote to
+    everyone else, so this is a property of the reading, not of the deployment. A
+    reverse proxy passes its public name through, which is correctly "remote".
+    """
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip().lower()
+    return "local" if host in _LOOPBACK else "remote"
+
+
+def _platform(request: Request) -> list[str]:
+    """The facts after "Platform:", in order, each its own segment."""
+    facts = [f"ZaroPGx {_version_served()}"]
+    if OPERATOR:
+        facts.append(OPERATOR)
+    if _runs_in_a_container():
+        facts.append("docker")
+    facts.append(_how_it_is_reached(request))
+    return facts
 
 
 def _version_served() -> str:
@@ -840,11 +861,11 @@ async def home(request: Request):
                     "SOURCE_URL", "https://github.com/Zaromics/ZaroPGx"
                 ),
                 "current_year": datetime.now().year,
-                # What this install is, for the footer: the version (carrying the
-                # running commit when it is not the image's), and either who runs it
-                # or, unlabelled, what it is running on. See build_identity.
-                "app_version": _version_served(),
-                "operator": OPERATOR or _where_this_runs(),
+                # What this install is, for the "Platform:" line in the About
+                # card: the version (carrying the running commit when it is not the
+                # image's), who runs it if anyone says, whether it is containerised,
+                # and whether this reader is on the machine serving it.
+                "platform": _platform(request),
                 "build_detail": build_identity.disagreement(_BUILD_IDENTITY),
             },
         )

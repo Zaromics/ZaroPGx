@@ -1,7 +1,7 @@
 """Do the published images actually contain the code this release changed?
 
-    python scripts/verify_image_contents.py --tag 0.4.3 --since v0.4.2 --rev v0.4.3
-    python scripts/verify_image_contents.py --tag 0.4.3 --files app/utils/liftover_chain.py
+    python scripts/verify_image_contents.py --tag 0.4.4 --since v0.4.3 --rev v0.4.4
+    python scripts/verify_image_contents.py --tag 0.4.4 --files app/utils/liftover_chain.py
 
 Seven of the eight images are built from the repository root, and five of them copy files
 out of `app/` into themselves. So an image is only as current as the tree it was built in

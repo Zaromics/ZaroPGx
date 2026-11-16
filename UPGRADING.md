@@ -17,6 +17,32 @@ pins its own release and updates to nothing newer.
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
+## v0.4.3 → v0.4.4
+
+**Every image changes, so this needs the new ones**: `docker compose pull`, then
+`docker compose up -d`. The bootstrap update command above does both, in that order.
+
+Reports written by this release say things the previous one got wrong, and three of those
+are worth knowing before you compare an old report with a new one:
+
+- A gene no tool examined is no longer listed as one the sample could not answer. Every
+  report from a VCF said that about HLA-A, HLA-B and the mitochondrial genes, which are
+  not tested on that input at all.
+- Drug guidance is no longer printed over a call the same report withheld, and a
+  recommendation with no strength no longer prints the word "None".
+- The phenotype badges are darker. The three commonest — Normal Metabolizer, Rapid and
+  Increased Function — did not meet WCAG AA at the size they print, and the test that
+  should have caught it was asking for the large-text threshold.
+
+New at the bottom of the web page's documentation card, a `Platform:` line: which
+ZaroPGx this is, who runs it if anyone says so (`ZAROPGX_OPERATOR`, empty by default),
+whether it is containerised, and whether you are reading it on the machine serving it
+(`local`) or over a network (`remote`). A version carrying a commit, `0.4.4+a1b2c3d`, is
+a container serving code its image was not built from, which is what a mounted checkout
+does.
+
+Nothing to do by hand: no configuration changes, no data migration.
+
 ## v0.4.2 → v0.4.3
 
 This release changes code inside the gatk-api, genome-downloader and pharmcat images, so it
