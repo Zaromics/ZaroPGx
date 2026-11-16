@@ -10,7 +10,9 @@
 #
 # System Requirements:
 #   - Windows 10 22H2 (build 19045) or Windows 11 22H2 (build 22631) or higher
-#   - 16GB RAM, modern 64-bit processor ( with Second Level Address Translation (SLAT) )
+#   - 4 CPU cores, 16 GB RAM, 100 GB storage (minimum, limited function; see
+#     docs/user/installation.md for the acceptable and preferred tiers)
+#   - A modern 64-bit processor with Second Level Address Translation (SLAT)
 #   - Hardware virtualization enabled in BIOS/UEFI
 
 [CmdletBinding()]
