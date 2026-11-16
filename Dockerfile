@@ -104,6 +104,18 @@ COPY . /app/
 # Do not fail the image build if docs have warnings
 RUN [ -d docs ] && python -m sphinx -b html -E -a docs docs/_build/html || true
 
+# The image's own identity, written where the /app mount cannot hide it: compose
+# mounts the checkout over /app, so a stamp inside it would report the checkout as the
+# image. app/utils/build_identity.py reads this; docs/developer/decisions/
+# 0001-runtime-code-delivery.md is why it exists. Last in the file on purpose: the
+# commit changes on every build, and an ARG above the documentation build would
+# rebuild those minutes each time.
+ARG ZAROPGX_TAG=unknown
+ARG ZAROPGX_COMMIT=unknown
+RUN mkdir -p /opt/zaropgx && printf '{"tag":"%s","commit":"%s","built":"%s"}\n' \
+      "$ZAROPGX_TAG" "$ZAROPGX_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      > /opt/zaropgx/build.json
+
 # Expose the port for the application
 EXPOSE 8000
 

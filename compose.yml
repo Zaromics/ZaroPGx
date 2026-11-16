@@ -9,6 +9,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Stamped into /opt/zaropgx/build.json so the running app can say which image it
+      # is, beside which code it is actually running -- this service mounts ./ over
+      # /app, so those are two different things. ZAROPGX_COMMIT is whatever the build
+      # host knows (`git rev-parse HEAD`); absent, the stamp says unknown and nothing
+      # is claimed.
+      args:
+        ZAROPGX_TAG: ${ZAROPGX_TAG:-0.4.3}
+        ZAROPGX_COMMIT: ${ZAROPGX_COMMIT:-unknown}
     container_name: pgx_app
     restart: unless-stopped
     depends_on:

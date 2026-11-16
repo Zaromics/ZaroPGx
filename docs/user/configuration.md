@@ -85,6 +85,13 @@ Where a template ships a different value from the code's default, both are given
 | `ZAROPGX_ALIGN_REFERENCE` | `./reference/pypgx` | Where the FASTQ alignment index is read from |
 | `LOG_LEVEL` | `DEBUG` (`.env.production`: `INFO`) | The app's log level |
 
+## Development only
+
+| Variable | Default | |
+|---|---|---|
+| `ZAROPGX_BUILD_STAMP` | `/opt/zaropgx/build.json` | Where the image's own tag and commit are read from, written there by the `Dockerfile`. Overridable so the identity check can be pointed at a temporary tree in tests |
+| `ZAROPGX_CODE_ROOT` | `/app` | The checkout the application is running from, which Compose mounts. Same reason |
+
 ## Set by Compose
 
 `compose.yml` sets the services' URLs (`PHARMCAT_API_URL`, `GATK_API_URL`, `PYPGX_API_URL`,
