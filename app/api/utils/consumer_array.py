@@ -34,6 +34,15 @@ report.json by preference (docker/pharmcat/pharmcat.py). So the deliverable is A
 three genes, all three with CPIC guidance -- plus F2/F5 only on the TSV lane, which is
 off by default.
 
+THE CEILING, MEASURED. The three genes above are what a vendor's own marker selection
+leaves callable, not what this lane can do. Fed a chip-shaped file carrying EVERY
+rs-identified PharmCAT position -- 998 rows, genotypes from GIAB's public NA12878
+benchmark -- the report called 20 genes, and the calls agree with GeT-RM's consensus for
+that sample wherever both speak: CYP2C19 *1/*2, CYP3A5 *3/*3, NAT2 *4/*5, SLCO1B1 *1/*15,
+TPMT *1/*1, CYP2B6, CYP3A4 and CYP4F2 all *1/*1. So the limit on a real export is which
+markers the vendor chose to put on the chip, not the conversion, the rsID mapping or
+anything downstream of them.
+
 A chip cannot determine CYP2C9, CYP2C19, CYP2D6, TPMT, NUDT15 or DPYD, and the AMP/CAP
 Tier 1 gate (app/pharmcat/amp_tier1.py) is what declines them rather than printing a
 reference call built out of positions nobody read. That gate is a PREREQUISITE of this
