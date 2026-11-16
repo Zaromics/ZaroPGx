@@ -64,6 +64,7 @@ from app.pharmcat.pharmcat_messages import (
     gene_messages,
 )
 from app.pharmcat.report_json import (
+    PHARMCAT_REFERENCE_LABEL,
     SUPPORTED_VERSION_SERIES,
     extract_matcher_metadata,
     parse_pharmcat_version,
@@ -1748,12 +1749,6 @@ def _summary_panel() -> frozenset:
     return _SUMMARY_PANEL
 
 
-# PharmCAT's own label for a diplotype of its reference alleles. Its TSV prints the
-# alleles' names instead, and CFTR's reference allele is named "ivacaftor
-# non-responsive CFTR sequence": the summary's longest cell by far, twice over.
-_PHARMCAT_REFERENCE_LABEL = re.compile(r"Reference(?:/Reference)?")
-
-
 def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
     """The Executive Summary's rows: one for each gene of PharmCAT's panel, in
     order, so every report lists the same genes.
@@ -1792,7 +1787,7 @@ def summary_rows(tsv_rows, diplotypes) -> List[Dict[str, Any]]:
             label = str((genes.get(gene) or {}).get("diplotype") or "")
             reference_name = None
             if (
-                _PHARMCAT_REFERENCE_LABEL.fullmatch(label)
+                PHARMCAT_REFERENCE_LABEL.fullmatch(label)
                 and diplotype
                 and diplotype != label
                 and not row.get("diplotype_candidates")

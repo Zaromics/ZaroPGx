@@ -1073,3 +1073,13 @@ def guideline_source_rank(value: Any) -> int:
     if name in GUIDELINE_SOURCE_ORDER:
         return GUIDELINE_SOURCE_ORDER.index(name)
     return len(GUIDELINE_SOURCE_ORDER)
+
+
+# PharmCAT's own label for a diplotype of its reference alleles. Its TSV prints the
+# alleles' names instead, and CFTR's reference allele is named "ivacaftor
+# non-responsive CFTR sequence": the summary's longest cell by far, twice over.
+#
+# It lives here, beside the other knowledge of what PharmCAT writes, rather than in
+# the report generator: the generator imports the database layer, and an offline
+# checker that only reads JSON should not need a password to learn this pattern.
+PHARMCAT_REFERENCE_LABEL = re.compile(r"Reference(?:/Reference)?")
