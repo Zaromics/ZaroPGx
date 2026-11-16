@@ -51,7 +51,15 @@ turns the mtDNA step and the CRAM reference cache off.
 
 The reference lanes need a populated `./reference` (the genome downloader's). Each test also
 checks that every report link the job returns resolves. FASTQ and mtDNA have no end-to-end
-test.
+test here: alignment needs the `.img` index and minutes of CPU, and mtDNA is switched off
+in the e2e stack. Both were run by hand against the live stack on 2026-11-14, from the
+public NA12878 alignment, and the harnesses are kept outside the repository at
+`~/zaropgx-validation/fastq-check/` and `~/zaropgx-validation/mtdna-check/` with their
+READMEs. What they found: the FASTQ lane scores 38/40 against GeT-RM for that sample and
+35/35 of its firm values; the mtDNA lane returns haplogroup H13a1a1a at quality 0.9957
+with MT-RNR1 measured as reference -- the value `tests/mtdna_outputs.py` records for this
+sample -- and declines with `coverage_below_floor` when the reads carry no chrM at all,
+which is what a pharmacogene-only panel looks like.
 
 `test_ui_smoke` uses the page the way a person does: it opens every stage's popup in the
 light and the dark theme and requires each text to meet WCAG AA contrast against the card
