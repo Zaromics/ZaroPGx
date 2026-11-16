@@ -799,6 +799,14 @@ class WeasyPrintGenerator(PDFGenerator):
                     # and the same one-word failure: a key this dict does not carry is
                     # not an error, it is an omission.
                     "liftover_provenance": template_data.get("liftover_provenance"),
+                    # The third instance of the same omission, and the reason the
+                    # comment above is worth keeping: the array paragraph was added
+                    # with consumer arrays and never forwarded here, so an array
+                    # report said what the file carried in the HTML and nothing at
+                    # all in the PDF -- which is the copy a reader keeps. A guard in
+                    # tests/test_pdf_forwards_provenance.py now asserts this dict
+                    # carries every provenance line the shared template reads.
+                    "array_provenance": template_data.get("array_provenance"),
                     # 159: run-derived provenance, forwarded from template_data
                     "genome_build": template_data.get("genome_build"),
                     "named_allele_matcher_version": template_data.get(
