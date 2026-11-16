@@ -116,6 +116,7 @@
         .install-identity {
             opacity: 0.75;
             font-size: 1em;
+            font-style: italic;
         }
         .footer {
             margin-top: 3rem;
@@ -950,7 +951,7 @@
                                     container serving code its image was not built from;
                                     the title says which. #}
                                 <p class="my-auto install-identity"{% if build_detail %} title="{{ build_detail }}"{% endif %}>
-                                    Platform: {{ platform | join(' · ') }}
+                                    <strong>Platform:</strong> {{ platform | join(' · ') }}
                                     &middot; <a href="{{ source_url }}/releases" target="_blank" rel="noopener">releases</a>
                                 </p>
                                 <div class="d-flex gap-2">
