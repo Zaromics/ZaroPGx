@@ -99,7 +99,7 @@ def _function_source(marker: str) -> str:
         i += 1
 
 
-def _end_job(status: str) -> dict:
+def _end_job(status: str, **extra) -> dict:
     script = HARNESS.replace(
         "SHOW_JOB_ENDED", _function_source("window.showJobEnded = function(")
     ).replace(
@@ -109,6 +109,7 @@ def _end_job(status: str) -> dict:
         "job_id": "job-1",
         "status": status,
         "pdf_report_url": "/reports/p/job-1/job-1_pgx_report.pdf",
+        **extra,
     }
     done = subprocess.run(
         ["node", "-e", script, json.dumps(payload)],
@@ -140,6 +141,51 @@ def test_a_failed_job_is_shown_failed():
     # resets the whole row first, and with no step to match it erased the mark.
     assert not ended["glyphs"], ended["glyphs"]
     assert not any("successfully" in message for message, _ in ended["log"])
+
+
+REASON = (
+    "mtDNA calling failed: bcftools failed: [E::vcf_parse] Could not parse the "
+    "position 'NOTANUMBER'"
+)
+
+
+@needs_node
+def test_a_failed_job_says_why_in_the_card_and_the_log():
+    """The card said "The processing log above says where it stopped and why" and
+    nothing put the why there (tests/test_failed_job_reason_reaches_the_page.py)."""
+    ended = _end_job("failed", error=REASON, message=REASON)
+
+    assert REASON in ended["card"], ended["card"]
+    assert [REASON, "danger"] in ended["log"], ended["log"]
+
+
+@needs_node
+def test_without_the_steps_words_no_reason_is_printed():
+    """`message` alone is not a reason: on a failed job with no failed step it is the
+    progress calculator's description of the stage reached."""
+    stage = "Analyzing file headers and metadata. Determining workflow."
+    ended = _end_job("failed", message=stage)
+
+    assert stage not in ended["card"]
+    assert not any(stage in message for message, _ in ended["log"])
+
+
+@needs_node
+def test_a_long_reason_is_cut_in_the_card_and_whole_in_the_log():
+    stderr = "x" * 5000
+    ended = _end_job("failed", error=stderr)
+
+    assert "x" * 1000 + "…" in ended["card"]
+    assert "x" * 1001 not in ended["card"]
+    assert [stderr, "danger"] in ended["log"]
+
+
+@needs_node
+def test_a_cancelled_job_prints_no_reason():
+    ended = _end_job("cancelled", error="samtools view exited 0 but wrote no BAM")
+
+    assert "samtools" not in ended["card"]
+    assert not any("samtools" in message for message, _ in ended["log"])
 
 
 @needs_node

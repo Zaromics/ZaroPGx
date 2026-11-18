@@ -505,6 +505,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         if progress_response
                         else "Starting workflow"
                     ),
+                    "error": progress_response.error if progress_response else None,
                     "created_at": job.created_at.isoformat(),
                     "started_at": (
                         job.started_at.isoformat() if job.started_at else None

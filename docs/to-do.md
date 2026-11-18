@@ -643,33 +643,8 @@ Open:
   watched through the page on 2026-10-19 moved the bar through its 9-second liftover, 1 to
   8%, and on to 100); (3) only then consider visual snapshots.
 
-- **A failed job's reason is in the log and reaches no user-facing surface.** MEASURED
-  2026-11-15 on a real failing run: the database holds `mtDNA calling failed: bcftools
-  failed: [E::vcf_parse] Could not parse the position 'NOTANUMBER'` in `job_logs`, and the
-  page learns none of it. `/api/v1/jobs/{id}/progress` (what the page polls) carries
-  `status`, `current_step` and `message` and no error; `/upload/status/{job_id}` **fetches
-  the logs into a variable it never uses** (`upload_router.py`: `logs =
-  job_service.get_job_logs(job_id)`); `websocket_manager.send_error_notification` exists and
-  **is called from nowhere**; and the failed step's `error_details` was `{}`, because the
-  sidecar reported through the log instead.
-
-  **Not every sidecar does, which narrows this.** Cancelling a real CRAM run on
-  2026-11-15 left `error_details` holding gatk-api's own sentence -- "CRAM to BAM
-  conversion failed: samtools view exited 0 but wrote no BAM" -- so the progress
-  response already carries the run's words for a gatk failure, and the gap is the
-  sidecars that report through the log instead. Worth measuring which do which before
-  building anything: the fix for a sidecar that already fills `error_details` is
-  nothing, and for one that does not it is a change in that sidecar, not in the app.
-
-  Naming the failed step is fixed separately (the progress response said
-  `current_step: header_analysis`, a step that had completed). What remains is getting the
-  run's own words in front of the reader. **Do not scrape them out of the log by
-  heuristic** -- every rule tried picked a worse line: the newest ("Job updated:
-  JobStatus.FAILED"), the wrapper's header ("Nextflow job failed: stdout:"), and, for a
-  sample named *FailurePathCheck*, the job's own creation line. The honest routes are to
-  carry `error_details` through `fail_step` at each sidecar, to call the error
-  notification that already exists, or to show the job's log in the page. All three are
-  design choices rather than repairs.
+- [DONE Nov 2026, fix/failed-job-reason] A failed job's page shows the failing step's own
+  error message. Still silent: a job that fails with no step marked failed.
 
 ## Data & Database
 
