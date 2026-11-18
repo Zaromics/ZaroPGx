@@ -90,8 +90,6 @@ def upload(client, monkeypatch, tmp_path):
                 has_index=False,
                 file_size=1,
                 vcf_info=None,
-                is_valid=True,
-                validation_errors=[],
             )
             workflow = {
                 "workflow_type": "genomic_analysis",

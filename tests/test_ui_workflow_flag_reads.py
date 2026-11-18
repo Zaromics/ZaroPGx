@@ -85,8 +85,6 @@ def _grch37_vcf_analysis():
             sample_count=1,
             variant_count=1000,
         ),
-        is_valid=True,
-        validation_errors=[],
     )
 
 

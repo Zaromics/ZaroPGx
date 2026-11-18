@@ -402,8 +402,6 @@ def test_fastq_workflow_plans_no_steps_it_cannot_run():
             has_index=False,
             file_size=1,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
         )
     )
 
@@ -469,8 +467,6 @@ def _array_workflow(file_type):
             has_index=False,
             file_size=1,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
         )
     )
 
@@ -551,8 +547,6 @@ def test_grch37_vcf_is_analysed_supported_via_liftover():
                 sample_count=1,
                 variant_count=None,
             ),
-            is_valid=True,
-            validation_errors=[],
         )
     )
     workflow["file_type"] = FileType.VCF.value
@@ -618,8 +612,6 @@ def test_preview_of_a_grch37_vcf_is_not_refused():
                 sample_count=1,
                 variant_count=None,
             ),
-            is_valid=True,
-            validation_errors=[],
         )
     )
     workflow["file_type"] = FileType.VCF.value

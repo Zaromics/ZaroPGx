@@ -650,8 +650,6 @@ class FileAnalysis:
     vcf_info: Optional[VCFHeaderInfo] = None
     file_size: Optional[int] = None
     error: Optional[str] = None
-    is_valid: bool = True
-    validation_errors: Optional[List[str]] = None
     # Same evidence VCFHeaderInfo.reference_genome_ambiguous/candidates carry for
     # VCF/BCF (Task 6/8), but for BAM/CRAM/SAM: vcf_info stays variant-call-only
     # (see above), so a self-contradicting alignment header's @SQ evidence travels through

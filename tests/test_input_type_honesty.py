@@ -325,8 +325,6 @@ def _gvcf_workflow(**analysis_kwargs):
             is_compressed=False,
             has_index=False,
             file_size=1,
-            is_valid=True,
-            validation_errors=[],
             **analysis_kwargs,
         )
     )
@@ -1092,8 +1090,6 @@ def _bcf_workflow(**analysis_kwargs):
             is_compressed=True,
             has_index=False,
             file_size=1,
-            is_valid=True,
-            validation_errors=[],
             **analysis_kwargs,
         )
     )
@@ -1187,8 +1183,6 @@ def _vcf_workflow(**analysis_kwargs):
             is_compressed=True,
             has_index=False,
             file_size=1,
-            is_valid=True,
-            validation_errors=[],
             **analysis_kwargs,
         )
     )

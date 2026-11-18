@@ -62,8 +62,6 @@ def test_the_spooled_upload_is_closed_before_the_job_runs(
             has_index=False,
             file_size=1,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
         )
         workflow = {
             "workflow_type": "genomic_analysis",

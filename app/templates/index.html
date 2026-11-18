@@ -1324,16 +1324,6 @@
                                 </ul>
                             </div>`;
                     }
-                    // Validation errors appear as danger under info
-                    if (afi.validation_errors && Array.isArray(afi.validation_errors) && afi.validation_errors.length > 0) {
-                        infoHtml += `
-                            <div class="alert alert-danger mt-2">
-                                <strong>Validation Errors:</strong>
-                                <ul class="mb-0 mt-1">
-                                    ${afi.validation_errors.map(e => `<li>${e}</li>`).join('')}
-                                </ul>
-                            </div>`;
-                    }
                     infoContainer.innerHTML = infoHtml;
                 }
 
