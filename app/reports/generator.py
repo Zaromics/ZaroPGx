@@ -3741,6 +3741,9 @@ def generate_report(
     run_absent_to_ref = None
     gvcf_provenance = None
     array_provenance = None
+    # The same step rows and flags, as facts rather than paragraphs, for the FHIR
+    # bundle's Observation.method (app/services/fhir/input_method.py).
+    input_method_facts = None
     # Why a variant-only file left genes uncalled, when the job's flags say so.
     missing_positions_not_assumed = False
     if job_id and db_session:
@@ -3946,6 +3949,16 @@ def generate_report(
                     absent_to_ref=absent_to_ref,
                     unspecified_to_ref=unspecified_to_ref,
                 )
+                input_method_facts = {
+                    "file_type": input_type,
+                    "absent_to_ref": absent_to_ref,
+                    "unspecified_to_ref": unspecified_to_ref,
+                    "array": array_step.output_data if array_step is not None else None,
+                    "gvcf": gvcf_step.output_data if gvcf_step is not None else None,
+                    "liftover": (
+                        liftover_step.output_data if liftover_step is not None else None
+                    ),
+                }
             except Exception as e:
                 # Say so in the report, do not just blank the fields.
                 #
@@ -3978,6 +3991,7 @@ def generate_report(
                 liftover_provenance = None
                 gvcf_provenance = None
                 array_provenance = None
+                input_method_facts = None
 
             if not data:
                 logger.warning(
@@ -4061,6 +4075,8 @@ def generate_report(
     input_file_type = (job_metadata.get("file_analysis") or {}).get("file_type")
     if input_file_type:
         data["file_type"] = str(input_file_type).lower()
+    if input_method_facts:
+        data["input_method"] = input_method_facts
 
     # Add tool source information to diplotypes
     file_type = str(data.get("file_type", "vcf")).lower()
