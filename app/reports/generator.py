@@ -4761,6 +4761,15 @@ def generate_report(
         read_phase.annotate_open(data.get("genes", []), read_phase_result)
     except Exception as e:  # naming an alternative must not cost the report
         logger.warning("Read phase alternative not named: %s", e, exc_info=True)
+    # The same fact for the genes whose alternative cannot be named faithfully
+    # (read_phase.UNNAMED): the pairing is unchecked, said without the name.
+    try:
+        _read_phase_unnamed = read_phase.annotate_unnamed(
+            data.get("genes", []), read_phase_result, pypgx_results
+        )
+    except Exception as e:  # saying so must not cost the report
+        logger.warning("Read phase unnamed pairing not noted: %s", e, exc_info=True)
+        _read_phase_unnamed = {}
     _read_phase_alert = read_phase.alert(_read_phase_found)
     if _read_phase_alert:
         workflow_warnings = list(workflow_warnings) + [_read_phase_alert]
@@ -4770,7 +4779,10 @@ def generate_report(
     # printed calls assert an arrangement and how many of those the reads could reach.
     try:
         _read_phase_coverage = read_phase.coverage_note(
-            read_phase.coverage(data.get("genes", []), read_phase_result, pypgx_results)
+            read_phase.coverage(
+                data.get("genes", []), read_phase_result, pypgx_results
+            ),
+            unnamed=sorted(_read_phase_unnamed),
         )
     except Exception as e:  # describing the check must not cost the report
         logger.warning("Read phase coverage not described: %s", e, exc_info=True)
