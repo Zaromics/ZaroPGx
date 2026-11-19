@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Union
 from sqlalchemy.orm import Session
 
 from app.reports.actionable import actionable_genes
-from app.services.fhir import report_data, terminology, xml_format
+from app.services.fhir import report_data, rxnorm, terminology, xml_format
 from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
@@ -709,6 +709,7 @@ class FHIRExportService:
                         resource_id=self._stable_id(
                             "medication-recommendation", implication_id, index
                         ),
+                        drug_id=drug_rec.get("drugId"),
                     )
                     entries.append(
                         {
@@ -1549,12 +1550,12 @@ class FHIRExportService:
                         }
                     ],
                 },
-                # The drug's name. An RxNorm coding with no code stood here:
-                # PharmCAT names drugs by ClinPGx id, not RxNorm, so there is
-                # no code to send.
-                "valueCodeableConcept": {
-                    "text": drug_name,
-                },
+                # The drug's name, with its RxNorm code where config/
+                # rxnorm_drugs.json has one (app/services/fhir/rxnorm.py):
+                # PharmCAT names drugs by ClinPGx id, and an EHR matches by RxNorm.
+                "valueCodeableConcept": rxnorm.drug_concept(
+                    drug_name, drug_data.get("drugId")
+                ),
             }
         )
 
@@ -1628,6 +1629,7 @@ class FHIRExportService:
         implication_ref: str,
         run_id: str,
         resource_id: Optional[str] = None,
+        drug_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a FHIR Task for medication recommendation.
@@ -1667,9 +1669,7 @@ class FHIRExportService:
                     "type": {
                         "coding": [self._loinc_coding("medication_assessed")],
                     },
-                    "valueCodeableConcept": {
-                        "text": drug_name,
-                    },
+                    "valueCodeableConcept": rxnorm.drug_concept(drug_name, drug_id),
                 }
             ],
         }

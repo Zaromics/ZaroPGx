@@ -98,6 +98,20 @@ PHARMCAT_DATA: Dict[str, Any] = {
 }
 
 
+# The fixture names the drug only, as a bundle rebuilt from PharmCAT's database rows
+# does, so its RxNorm code is found by name (app/services/fhir/rxnorm.py).
+CODEINE = {
+    "text": "codeine",
+    "coding": [
+        {
+            "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+            "code": "2670",
+            "display": "codeine",
+        }
+    ],
+}
+
+
 @pytest.fixture
 def bundle() -> Dict[str, Any]:
     service = FHIRExportService(MagicMock())
@@ -228,7 +242,7 @@ def test_medication_recommendation_task_has_no_code(bundle):
                     }
                 ]
             },
-            "valueCodeableConcept": {"text": "codeine"},
+            "valueCodeableConcept": CODEINE,
         },
         # CPIC's strength of recommendation is not LOINC's "Level of evidence"
         # (93044-6): text, under a text type.
@@ -317,7 +331,7 @@ def test_clinical_content_survives(bundle):
 
     (implication,) = [o for o in implications if _component(o, "51963-7")]
     (drug,) = _component(implication, "51963-7")
-    assert drug["valueCodeableConcept"] == {"text": "codeine"}
+    assert drug["valueCodeableConcept"] == CODEINE
     (conclusion,) = _component(implication, "conclusion-string")
     assert conclusion["valueString"] == "Use label recommended dosing."
     assert implication["derivedFrom"][0]["display"] == "CYP2D6 *1/*4"

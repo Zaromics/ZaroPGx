@@ -2121,6 +2121,15 @@ TERMINOLOGY_NOTICES: Tuple[Tuple[str, str], ...] = (
         "subject to its license (https://www.snomed.org/get-snomed).",
     ),
     (
+        "RxNorm",
+        "Drug codes from RxNorm, looked up through RxNav, both from the U.S. "
+        "National Library of Medicine (https://www.nlm.nih.gov/research/umls/rxnorm/). "
+        "This product uses publicly available data courtesy of the U.S. National "
+        "Library of Medicine (NLM), National Institutes of Health, Department of "
+        "Health and Human Services; NLM is not responsible for the product and does "
+        "not endorse or recommend this or any other product.",
+    ),
+    (
         "HGNC",
         "Gene identifiers from the HUGO Gene Nomenclature Committee (HGNC, "
         "https://www.genenames.org), released under CC0.",

@@ -25,6 +25,7 @@ and HGNC; 2026-10-16). Where a value below changed for that, its comment says wh
 
 LOINC = "http://loinc.org"
 SNOMED_CT = "http://snomed.info/sct"
+RXNORM = "http://www.nlm.nih.gov/research/umls/rxnorm"
 # HGNC as the IG's hgnc-vs names it; its codes are HGNC ids ("HGNC:2625"), the
 # symbol is the display. "http://www.genenames.org/geneId" with the symbol as the
 # code, sent before, is in no value set and no terminology server knows it.

@@ -737,7 +737,9 @@ Open:
   IG adds them.
 - Medication recommendations carry no code: the profile's codes (LOINC LL4049-4: consider
   an alternative, decrease dose, ...) would have to be chosen from each guideline's text.
-- Drugs are text: PharmCAT names them by ClinPGx id. RxNorm codes would need a mapping.
+- [DONE Nov 2026, feat/fhir-rxnorm-drugs] Drugs carry RxNorm codes
+  (`config/rxnorm_drugs.json`); rebuild it with `scripts/build_rxnorm_drugs.py` on every
+  PharmCAT bump.
 - [DONE Oct 2026, feat/hapi-genomics-ig] The bundled HAPI server loads the Genomics
   Reporting IG 3.0.0 and the two packages it depends on, so its `$validate` checks a bundle
   against the IG's profiles. They are pinned files in `docker/fhir-server/packages/`, not
