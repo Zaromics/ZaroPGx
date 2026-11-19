@@ -219,7 +219,16 @@ def test_a_push_without_an_answer_was_stored_and_pushing_again_keeps_one_copy(
     assert all(c["created"] == 0 for c in again["resources"].values())
     assert all(c["deleted"] == 0 for c in again["resources"].values())
     assert _count(server, report_query) == 1
-    assert _count(server, f"Observation?_tag=urn:zaropgx:job-id|{job_id}") == 3
+    # As many as the bundle has, counted from it: a literal 3 here outlived the
+    # export's adding two observations (test_pushing_twice_keeps_one_copy was moved
+    # to 5 and this one was not), and failed on a server holding one copy each.
+    observations = sum(
+        e["resource"]["resourceType"] == "Observation" for e in bundle["entry"]
+    )
+    assert observations > 0
+    assert (
+        _count(server, f"Observation?_tag=urn:zaropgx:job-id|{job_id}") == observations
+    )
     assert (
         _count(server, f"Patient?identifier=urn:zaropgx:patient-id|{patient_id}") == 1
     )
