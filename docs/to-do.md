@@ -727,8 +727,8 @@ Open:
   refused, or no answer after the bundle was sent, when the server may have stored it
   (`X-FHIR-Push-Outcome`). Bundled server only: the page does not choose or configure
   another.
-- Push a finished job automatically when a deployment asks for it (a setting, off by
-  default)?
+- [DONE Nov 2026, feat/fhir-auto-push] `FHIR_AUTO_PUSH=true` pushes each completed job's
+  bundle to the FHIR server. Off by default.
 - [DONE Oct 2026, feat/fhir-coded-implications] Phenotypes are therapeutic implications of
   their genotypes, coded from the IG's LOINC answers where one says the same thing, text
   elsewhere (table in docs/samples/README.md). Each drug's implication cites its genes'

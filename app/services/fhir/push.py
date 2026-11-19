@@ -29,8 +29,9 @@ resources on the server, and the same transaction deletes those whose
 identifier the new bundle does not have. One transaction: the server applies
 all of it or none.
 
-Nothing here runs on its own: a push happens when someone asks for it (POST
-/fhir/push/workflow/{job_id}). A server that is down or refuses the bundle is an
+A push happens when someone asks for it (POST /fhir/push/workflow/{job_id}), or,
+with ``FHIR_AUTO_PUSH=true`` (off unless set), when a job completes
+(:func:`auto_push_enabled`; upload_router calls it). A server that is down or refuses the bundle is an
 error for that request only; the job and its files are untouched. One that was
 sent the transaction and gave no answer may have stored it all the same; because
 every entry is conditional, pushing the job again once the server has finished
@@ -51,6 +52,7 @@ import httpx
 
 from app.api.utils.path_jail import resolve_under
 from app.services.fhir import terminology
+from app.utils.env import env_flag
 
 # HAPI takes a few seconds for a 500-entry transaction the first time (every
 # conditional update searches first); a slow server is not a down one.
@@ -113,6 +115,49 @@ _USERINFO = re.compile(r"(//)[^/@\s]+@")
 def _scrub(text: str) -> str:
     """Any user:password@ in a URL inside the text, removed."""
     return _USERINFO.sub(r"\1", text)
+
+
+def auto_push_enabled() -> bool:
+    """FHIR_AUTO_PUSH: send each job's bundle to the FHIR server when the job
+    completes. **Off unless set** to true (1/true/yes/on): a push sends a report to
+    another system, which an operator turns on, not a default. It also needs
+    FHIR_EXPORT_ENABLED (which writes the bundle) and HAPI_FHIR_ENABLED (this
+    install has a server to send it to); ``auto_push_blocked_by`` names whichever
+    is off."""
+    return env_flag("FHIR_AUTO_PUSH", False)
+
+
+def auto_push_blocked_by() -> Optional[str]:
+    """Which setting stops an automatic push FHIR_AUTO_PUSH asked for ("X is off"),
+    or None. Phrased, not the bare name: tests/test_fhir_export_flag.py holds the
+    quoted export flag name to its one env lookup.
+
+    Read with the same defaults the rest of the app gives them: both on unless
+    set otherwise."""
+    from app.services.fhir_export_service import fhir_export_enabled
+
+    if not fhir_export_enabled():
+        return "FHIR_EXPORT_ENABLED is off"
+    if not env_flag("HAPI_FHIR_ENABLED", True):
+        return "HAPI_FHIR_ENABLED is off"
+    return None
+
+
+def push_job(
+    report_dir: Path, job_id: str, patient_id: Optional[str]
+) -> Dict[str, Any]:
+    """Push the bundle a completed job's report wrote, as POST
+    /fhir/push/workflow/{job_id} does; FHIRPushError if there is none or the
+    server does not take it."""
+    path = job_bundle_path(report_dir, job_id, patient_id)
+    if path is None:
+        raise FHIRPushError(
+            f"Job {job_id} has no FHIR bundle: its report did not write one.",
+            reachable=False,
+        )
+    with open(path, "r", encoding="utf-8") as fh:
+        bundle = json.load(fh)
+    return push_bundle(bundle, job_id)
 
 
 def job_bundle_path(
