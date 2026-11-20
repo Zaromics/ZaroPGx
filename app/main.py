@@ -421,6 +421,19 @@ async def documentation_moved(path: str = "") -> RedirectResponse:
 DOCS_SOURCE_DIR = BASE_DIR.parent / "docs"
 # Written into the build so a later start can tell what the pages were printed from.
 DOCS_STAMP = DOCS_BUILD_DIR / ".zaropgx-docs-build"
+# And the source files it was printed from: removing a page edits no file, so only the
+# list can tell that one has gone.
+DOCS_SOURCES = DOCS_BUILD_DIR / ".zaropgx-docs-sources"
+
+
+def _docs_source_list() -> str:
+    return "\n".join(
+        sorted(
+            path.relative_to(DOCS_SOURCE_DIR).as_posix()
+            for path in DOCS_SOURCE_DIR.rglob("*")
+            if path.is_file() and "_build" not in path.parts
+        )
+    )
 
 
 def _docs_sources_newer_than(when: float) -> bool:
@@ -462,6 +475,12 @@ def _docs_build_reason() -> Optional[str]:
         return "the printed documentation cannot be read"
     if _docs_sources_newer_than(built):
         return "a documentation source has changed since it was printed"
+    try:
+        printed_from = DOCS_SOURCES.read_text(encoding="utf-8")
+    except OSError:
+        return "the printed documentation does not list its sources"
+    if printed_from != _docs_source_list():
+        return "a documentation page has been added or removed since it was printed"
     return None
 
 
@@ -480,7 +499,14 @@ def _build_docs_if_stale() -> None:
         reason = _docs_build_reason()
         if reason:
             logger.info(f"Printing the documentation: {reason}")
-            DOCS_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+            # Printed into a fresh directory and swapped in, never over the old
+            # pages: Sphinx does not delete output whose source is gone, so a page
+            # removed from the docs went on being served at its address, on every
+            # install, for good (an internal memo published at
+            # /docs/developer/decisions/ outlived its removal this way).
+            fresh = DOCS_BUILD_DIR.with_name(DOCS_BUILD_DIR.name + ".new")
+            shutil.rmtree(fresh, ignore_errors=True)
+            fresh.parent.mkdir(parents=True, exist_ok=True)
             result = subprocess.run(
                 [
                     sys.executable,
@@ -489,7 +515,7 @@ def _build_docs_if_stale() -> None:
                     "-b",
                     "html",
                     "docs",
-                    str(DOCS_BUILD_DIR),
+                    str(fresh),
                 ],
                 cwd=str(BASE_DIR.parent),
                 check=False,
@@ -497,9 +523,19 @@ def _build_docs_if_stale() -> None:
             if result.returncode == 0:
                 # Only on success: a failed build leaves the previous pages in place
                 # and no stamp, so the next start tries again rather than trusting it.
-                DOCS_STAMP.write_text(APP_VERSION, encoding="utf-8")
+                (fresh / DOCS_STAMP.name).write_text(APP_VERSION, encoding="utf-8")
+                (fresh / DOCS_SOURCES.name).write_text(
+                    _docs_source_list(), encoding="utf-8"
+                )
+                old = DOCS_BUILD_DIR.with_name(DOCS_BUILD_DIR.name + ".old")
+                shutil.rmtree(old, ignore_errors=True)
+                if DOCS_BUILD_DIR.exists():
+                    DOCS_BUILD_DIR.rename(old)
+                fresh.rename(DOCS_BUILD_DIR)
+                shutil.rmtree(old, ignore_errors=True)
                 logger.info(f"Documentation printed for {APP_VERSION}")
             else:
+                shutil.rmtree(fresh, ignore_errors=True)
                 logger.warning(
                     f"Documentation build exited {result.returncode}; "
                     "serving whatever was there before"

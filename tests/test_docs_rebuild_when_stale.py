@@ -28,6 +28,7 @@ def docs(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DOCS_SOURCE_DIR", src)
     monkeypatch.setattr(main, "DOCS_BUILD_DIR", build)
     monkeypatch.setattr(main, "DOCS_STAMP", build / ".zaropgx-docs-build")
+    monkeypatch.setattr(main, "DOCS_SOURCES", build / ".zaropgx-docs-sources")
     return src, build
 
 
@@ -36,6 +37,9 @@ def _printed(build: Path, version: str, *, age: float = 0.0) -> None:
     build.mkdir(parents=True, exist_ok=True)
     (build / "index.html").write_text("<html></html>", encoding="utf-8")
     (build / ".zaropgx-docs-build").write_text(version, encoding="utf-8")
+    (build / ".zaropgx-docs-sources").write_text(
+        main._docs_source_list(), encoding="utf-8"
+    )
     if age:
         when = time.time() - age
         import os
@@ -113,3 +117,84 @@ def test_the_build_directory_is_not_searched_for_changes(docs):
 def test_the_version_is_one_constant_the_release_bump_moves():
     """FastAPI's version and the docs stamp must not drift apart."""
     assert main.app.version == main.APP_VERSION
+
+
+# --- a removed page stops being served ----------------------------------------------
+#
+# Sphinx never deletes output whose source is gone, and the rebuild printed over the
+# old pages, so a page removed from the docs went on being served at its address on
+# every install. Found 2026-11-20: an internal memo removed from the docs was still at
+# https://pgx.zaromics.com/docs/developer/decisions/0001-runtime-code-delivery.html.
+
+
+def _fake_sphinx(pages, returncode=0):
+    """subprocess.run as the rebuild calls it: write `pages` into the output dir."""
+
+    def run(argv, cwd=None, check=False):
+        out = Path(argv[-1])
+        out.mkdir(parents=True, exist_ok=True)
+        for page in pages:
+            (out / page).parent.mkdir(parents=True, exist_ok=True)
+            (out / page).write_text("printed", encoding="utf-8")
+
+        class Done:
+            pass
+
+        done = Done()
+        done.returncode = returncode
+        return done
+
+    return run
+
+
+def test_a_page_removed_from_the_source_is_gone_after_the_rebuild(docs, monkeypatch):
+    _, build = docs
+    _printed(build, "0.3.2")
+    removed = build / "developer" / "decisions" / "0001-runtime-code-delivery.html"
+    removed.parent.mkdir(parents=True)
+    removed.write_text("memo", encoding="utf-8")
+    monkeypatch.setattr(main.subprocess, "run", _fake_sphinx(["index.html"]))
+    monkeypatch.setattr(main, "_mount_docs", lambda: None)
+
+    main._build_docs_if_stale()
+
+    assert (build / "index.html").read_text(encoding="utf-8") == "printed"
+    assert not removed.exists()
+    assert main._docs_build_reason() is None
+    assert sorted(p.name for p in build.parent.iterdir()) == ["html"]
+
+
+def test_a_failed_build_keeps_the_pages_there_were(docs, monkeypatch):
+    _, build = docs
+    _printed(build, "0.3.2")
+    monkeypatch.setattr(main.subprocess, "run", _fake_sphinx([], returncode=2))
+    monkeypatch.setattr(main, "_mount_docs", lambda: None)
+
+    main._build_docs_if_stale()
+
+    assert (build / "index.html").read_text(encoding="utf-8") == "<html></html>"
+    assert sorted(p.name for p in build.parent.iterdir()) == ["html"]
+    assert main._docs_build_reason() is not None
+
+
+def test_deleting_a_page_is_a_change(docs):
+    """Removing a source edits no file, so no mtime says so; the list of sources the
+    build was printed from does."""
+    src, build = docs
+    _printed(build, main.APP_VERSION)
+    assert main._docs_build_reason() is None
+
+    (src / "user" / "credits.md").unlink()
+
+    assert main._docs_build_reason() == (
+        "a documentation page has been added or removed since it was printed"
+    )
+
+
+def test_a_build_that_does_not_list_its_sources_is_reprinted(docs):
+    """Every install upgrading to this release has one."""
+    _, build = docs
+    _printed(build, main.APP_VERSION)
+    (build / ".zaropgx-docs-sources").unlink()
+
+    assert main._docs_build_reason() is not None
