@@ -74,8 +74,8 @@ def test_a_linked_worktree_reads_the_repository_s_refs(tmp_path, checkout):
 
 
 def test_no_checkout_is_not_an_error(tmp_path):
-    """An image running its own copy has no .git. That is the arrangement the ADR
-    proposes, not a fault, so it reads as "no commit here" and nothing is claimed."""
+    """An image running its own copy, without the mount, has no .git. That is not a
+    fault, so it reads as "no commit here" and nothing is claimed."""
     assert build_identity.commit_of(tmp_path) is None
 
 
