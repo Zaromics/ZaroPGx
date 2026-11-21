@@ -17,6 +17,38 @@ pins its own release and updates to nothing newer.
 Development installs that deliberately track a branch can continue to use `git pull` followed
 by `docker compose up -d`.
 
+## v0.4.4 → v0.4.5
+
+**The images change**: `docker compose pull`, then `docker compose up -d`. The bootstrap
+update command above does both, in that order.
+
+The upload API's response no longer carries `is_valid` or `validation_errors`. Nothing
+ever set them, so every upload answered `"is_valid": true`, including the ones it then
+refused. A client that reads either field has to stop reading it.
+
+The FHIR export says more, and some of what it said before is gone:
+
+- Each drug carries its RxNorm code beside its name, for 194 of the 197 drugs PharmCAT
+  3.4.0 can report.
+- Each genotype and variant Observation carries `method`: sequencing for FASTQ, BAM,
+  CRAM, SAM and gVCF, microarray for a 23andMe or AncestryDNA export, and for a VCF only
+  the text, because a VCF does not say where it came from.
+- A bundle built from PharmCAT's report.json, the fallback when a job's PharmCAT results
+  are not in the database, no longer has a therapeutic implication for a drug with no gene
+  and no recommendation. From PharmCAT 3.4.0's example report that was 104 of 111, each
+  one an error under the Genomics Reporting IG.
+
+New setting, off by default: with `FHIR_AUTO_PUSH=true`, each completed job's bundle goes
+to `FHIR_SERVER_URL` the way the Push to FHIR server button sends it. If the push fails,
+the job's log says so, and the job stays completed.
+
+A failed job now shows the failed step's own reason on the page, where before it said
+only "Analysis failed".
+
+Nothing to do by hand: no configuration changes, no data migration. The HAPI FHIR server
+is started with the schema setting it actually reads. Its behavior does not change: it
+still adds what it needs and never alters or drops anything.
+
 ## v0.4.3 → v0.4.4
 
 **Every image changes, so this needs the new ones**: `docker compose pull`, then

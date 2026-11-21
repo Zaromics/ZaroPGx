@@ -1,7 +1,7 @@
 """Do the published images actually contain the code this release changed?
 
-    python scripts/verify_image_contents.py --tag 0.4.4 --since v0.4.3 --rev v0.4.4
-    python scripts/verify_image_contents.py --tag 0.4.4 --files app/utils/liftover_chain.py
+    python scripts/verify_image_contents.py --tag 0.4.5 --since v0.4.4 --rev v0.4.5
+    python scripts/verify_image_contents.py --tag 0.4.5 --files app/utils/liftover_chain.py
 
 Seven of the eight images are built from the repository root, and five of them copy files
 out of `app/` into themselves. So an image is only as current as the tree it was built in
@@ -384,7 +384,7 @@ def check(tag: str, files: Iterable[str], rev: Optional[str] = None) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--tag", required=True, help="the image tag to check, e.g. 0.4.4")
+    ap.add_argument("--tag", required=True, help="the image tag to check, e.g. 0.4.5")
     ap.add_argument("--since", help="the previous release tag; files changed since it")
     ap.add_argument("--until", default="HEAD", help="the end of that range")
     ap.add_argument("--files", nargs="*", help="repository paths to check instead")
