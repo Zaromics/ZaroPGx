@@ -189,7 +189,10 @@ services:
   # HAPI FHIR Server for EHR/PHR/EMR integration
   # Pinned (not :latest) — this service owns a live Postgres schema shared with the
   # rest of the stack, and point releases have shipped non-zero-downtime migrations.
-  # Bump ${HAPI_FHIR_TAG} deliberately: its schema migration runs on first boot.
+  # Bump ${HAPI_FHIR_TAG} deliberately: on first boot Hibernate updates the schema
+  # (below), which adds tables and columns and never changes or removes one. HAPI's
+  # own migrator (hapi-fhir-cli migrate-database) never runs here; docs/to-do.md has
+  # what moving to it would take.
   fhir-server:
     image: hapiproject/hapi:${HAPI_FHIR_TAG:-v8.12.0-2}
     container_name: pgx_fhir_server
@@ -205,13 +208,14 @@ services:
       - spring.datasource.password=${DB_PASSWORD:?DB_PASSWORD is not set - run ./start-docker.sh or set it in .env}
       - spring.datasource.driverClassName=org.postgresql.Driver
       - spring.jpa.properties.hibernate.dialect=ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
-      - spring.jpa.hibernate.ddl-auto=update
+      # The schema setting the starter reads: it builds Hibernate from
+      # spring.jpa.properties, so spring.jpa.hibernate.ddl-auto (here until Nov 2026)
+      # was never read, and the image's own application.yaml set `update` all along.
+      # Five hapi.fhir.jpa.* lines beside it named settings HAPI does not have.
+      # Measured on v8.12.0-2 and an empty schema: ddl-auto=none, 60 tables built;
+      # this key =none, none built and HAPI exits.
+      - spring.jpa.properties.hibernate.hbm2ddl.auto=update
       - spring.jpa.properties.hibernate.default_schema=fhir
-      - hapi.fhir.jpa.database_schema=update
-      - hapi.fhir.jpa.auto_create_tables=true
-      - hapi.fhir.jpa.database_schema_auto_create=true
-      - hapi.fhir.jpa.database_schema_auto_validate=true
-      - hapi.fhir.jpa.disable_temporary_table_creation=true
       - spring.jpa.open-in-view=false
       - hapi.fhir.max_page_size=50
       - hapi.fhir.default_page_size=20

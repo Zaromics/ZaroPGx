@@ -685,7 +685,9 @@ Open:
 - High/Low risk for the HLA, MT-RNR1 and malignant hyperthermia phenotypes is provisional:
   CPIC's EHR priority for the result, said in a note on each (Oct 2026, kept coded for
   now). Revisit if the IG, LOINC or CPIC gives these results terms of their own.
-- HAPI FHIR server: adjust `ddl-auto` appropriately for prod vs dev
+- Move HAPI's schema from Hibernate `update` to HAPI's migration tool at the next HAPI
+  upgrade. It is a manual step per install, and the tool marks an existing schema as
+  migrated without checking it, so diff it against a tool-built schema first.
 - Export to an outside EHR/PHR (a configurable server, authentication)
 - Explore Fasten as a bridge for import/export to HAPI FHIR
 - Export a GA4GH Phenopacket (schema v2, ISO 4454:2022) beside the FHIR bundle, for
