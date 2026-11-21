@@ -75,6 +75,8 @@ from app.genome.contig_names import (
 from app.pharmcat.report_json import PharmCATSchemaError, iter_gene_blocks
 from app.reports.generator import create_interactive_html_report
 from app.reports.pdf_generators import generate_pdf_report_dual_lane
+from app.services import fhir_export_service
+from app.services.fhir import push as fhir_push
 from app.services.job_service import JobService, schedule_coroutine
 from app.services.workflow_progress_calculator import WorkflowProgressCalculator
 from app.utils.env import env_flag
@@ -565,6 +567,54 @@ async def handle_final_stages_progression(
     """
     # job_service is unused here — kept for call-site compatibility
     await asyncio.to_thread(_handle_final_stages_progression_sync, job_id, outdir)
+
+
+def _auto_push_to_fhir(
+    job_service: JobService, job_id: str, patient_id: Optional[str]
+) -> None:
+    """With FHIR_AUTO_PUSH=true, send the completed job's bundle to the FHIR server.
+
+    The job has completed and its reports are written before this runs, and nothing
+    here can change that: a server that is down or refuses the bundle is a warning
+    in the job's log, and the page's Push to FHIR server button can send it again.
+    A push also asked for while FHIR_EXPORT_ENABLED or HAPI_FHIR_ENABLED is off says
+    which setting stopped it, rather than nothing.
+    """
+    try:
+        if not fhir_push.auto_push_enabled():
+            return
+        blocked = fhir_push.auto_push_blocked_by()
+        if blocked:
+            level, message = (
+                LogLevel.WARN,
+                f"FHIR_AUTO_PUSH is on, but {blocked}, so the FHIR bundle "
+                "was not sent.",
+            )
+        else:
+            try:
+                summary = fhir_push.push_job(
+                    fhir_export_service.REPORT_DIR, str(job_id), patient_id
+                )
+                level, message = (
+                    LogLevel.INFO,
+                    f"FHIR bundle sent to {summary.get('server_url')}: "
+                    f"{summary.get('resources')}",
+                )
+            except (fhir_push.FHIRPushError, OSError, ValueError) as e:
+                level, message = (
+                    LogLevel.WARN,
+                    f"The automatic FHIR push failed: {e}",
+                )
+        logger.log(
+            logging.INFO if level == LogLevel.INFO else logging.WARNING,
+            f"Job {job_id}: {message}",
+        )
+        job_service.log_job_event(
+            job_id,
+            JobLogCreate(step_name="fhir_push", log_level=level, message=message),
+        )
+    except Exception as e:  # never the job's outcome
+        logger.warning(f"Job {job_id}: automatic FHIR push did not run: {e}")
 
 
 def _handle_final_stages_progression_sync(job_id: str, outdir: str):
@@ -1131,6 +1181,8 @@ def _handle_final_stages_progression_sync(job_id: str, outdir: str):
 
         logger.info(f"Job {job_id} completed successfully with reports generated")
         logger.info(f"Generated reports: {list(response_data.keys())}")
+
+        _auto_push_to_fhir(job_service, job_id, updated_metadata.get("patient_id"))
 
     except Exception as e:
         logger.error(f"Error in final stages progression for job {job_id}: {e}")

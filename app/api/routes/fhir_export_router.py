@@ -9,8 +9,9 @@ Export is enabled by the FHIR_EXPORT_ENABLED environment variable (default: true
 
 POST /fhir/push/workflow/{job_id} sends a job's bundle to the FHIR server at
 FHIR_SERVER_URL (the bundled HAPI server) as a transaction. Nothing is pushed
-unless asked: the export has always been files, and a server is a destination
-the user picks (app.services.fhir.push).
+unless asked -- here, or for every job by an operator setting FHIR_AUTO_PUSH=true,
+which is off unless set: the export has always been files, and a server is a
+destination someone picks (app.services.fhir.push).
 """
 
 import asyncio
