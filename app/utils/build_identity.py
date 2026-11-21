@@ -6,9 +6,8 @@ places. `compose.yml` mounts the repository over `/app`, so the application code
 verifies by digest -- is shadowed on every install by whatever the checkout holds. The
 image fixes the dependencies; the checkout decides the behavior.
 
-That is a deliberate arrangement with a real cost (docs/developer/decisions/
-0001-runtime-code-delivery.md), and the cheapest half of the answer is to stop it being
-silent: write the image's identity at build time somewhere the mount cannot hide, read the
+That is a deliberate arrangement with a real cost, and the cheapest half of the answer is
+to stop it being silent: write the image's identity at build time somewhere the mount cannot hide, read the
 checkout's commit at runtime, and say both. A mismatch is not an error -- it is the normal
 state of a machine someone is developing on -- so it is reported, not refused.
 
@@ -114,8 +113,8 @@ def _resolve(ref: str, *where: Path) -> Optional[str]:
 def commit_of(root: Path = CODE_ROOT) -> Optional[str]:
     """The commit the code at `root` is on, or None where it is not a checkout.
 
-    Not a checkout is normal too: an image running its own copy has no `.git`, which is
-    the whole point of the arrangement the ADR proposes.
+    Not a checkout is normal too: an image running its own copy, without the mount, has
+    no `.git`.
     """
     git_dir = _git_dir(root)
     if git_dir is None:
