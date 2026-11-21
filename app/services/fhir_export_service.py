@@ -687,6 +687,17 @@ class FHIRExportService:
         if include_recommendations:
             drug_recommendations = pharmcat_data.get("drugRecommendations", [])
             for drug_rec in drug_recommendations:
+                # A row that names no gene and no recommendation states nothing a
+                # therapeutic implication could say: the IG requires the genotype it
+                # derives from, and it went out as "<drug>: See report for details".
+                # The JSON lane makes 100 of these on a PharmCAT 3.4.0 report.json:
+                # pharmcat_client's "Related drug" rows, one per drug a gene's
+                # relatedDrugs lists (flat: `gene`, not `genes`, and a pointer, "See
+                # CPIC guidelines for ABCG2", not a recommendation), plus drugs no
+                # guideline matched. Each was an IG error ("derivedFrom: minimum
+                # required = 1"); the database lane never makes them.
+                if not drug_rec.get("genes") and not drug_rec.get("recommendations"):
+                    continue
                 # Therapeutic Implication observation
                 implication_id = stable_id(
                     "therapeutic-implication", drug_rec.get("drug")
