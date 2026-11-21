@@ -2289,8 +2289,6 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         progress = progress_info.progress_percentage
         current_stage = progress_info.stage.value
 
-        # Get workflow logs
-        logs = job_service.get_job_logs(job_id)
         latest_message = progress_info.message
 
         # A completed job's report links, at the top level, as the completion message

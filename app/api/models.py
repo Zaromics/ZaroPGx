@@ -530,3 +530,10 @@ class JobProgressResponse(BaseModel):
         None, description="Estimated completion time"
     )
     message: Optional[str] = Field(None, description="Current status message")
+    error: Optional[str] = Field(
+        None,
+        description=(
+            "A failed job's reason, in the failed step's own words; absent when "
+            "the step recorded none"
+        ),
+    )
