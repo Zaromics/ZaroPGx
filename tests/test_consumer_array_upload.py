@@ -168,8 +168,6 @@ def _workflow_for(file_type: FileType) -> dict:
             has_index=False,
             file_size=1,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
         )
     )
     workflow["file_type"] = file_type.value

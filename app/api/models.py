@@ -141,8 +141,6 @@ class FileAnalysis(BaseModel):
     vcf_info: Optional[VCFHeaderInfo] = None
     file_size: Optional[int] = None
     error: Optional[str] = None
-    is_valid: bool = True
-    validation_errors: Optional[List[str]] = None
 
 
 class WorkflowOptions(BaseModel):

@@ -2061,8 +2061,6 @@ async def upload_genomic_data(
                         "has_index": file_analysis.has_index,
                         "file_size": file_analysis.file_size,
                         "error": file_analysis.error,
-                        "is_valid": file_analysis.is_valid,
-                        "validation_errors": file_analysis.validation_errors,
                         "vcf_info": (
                             file_analysis.vcf_info.__dict__
                             if file_analysis.vcf_info
@@ -2128,8 +2126,6 @@ async def upload_genomic_data(
                 has_index=file_analysis.has_index,
                 file_size=file_analysis.file_size,
                 vcf_info=vcf_info,
-                is_valid=file_analysis.is_valid,
-                validation_errors=file_analysis.validation_errors,
             ),
             workflow=workflow_info,
         )

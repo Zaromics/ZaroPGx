@@ -217,8 +217,6 @@ def test_upload_genomic_data_smoke_without_services(client, monkeypatch, tmp_pat
             has_index=False,
             file_size=p.stat().st_size,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
         )
 
         return {

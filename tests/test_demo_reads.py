@@ -128,8 +128,6 @@ def demo(client, monkeypatch, tmp_path):
             has_index=True,
             file_size=1,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
         )
         workflow = {
             "workflow_type": "genomic_analysis",

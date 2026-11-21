@@ -33,8 +33,6 @@ def _alignment_analysis(file_type: FileType, build: str | None) -> FileAnalysis:
         has_index=True,
         file_size=1,
         vcf_info=None,
-        is_valid=True,
-        validation_errors=[],
         reference_genome=build,
     )
 
@@ -137,8 +135,6 @@ def test_grch37_vcf_still_uses_the_liftover_lane_not_this_refusal():
                 sample_count=1,
                 variant_count=None,
             ),
-            is_valid=True,
-            validation_errors=[],
         )
     )
     workflow["file_type"] = FileType.VCF.value

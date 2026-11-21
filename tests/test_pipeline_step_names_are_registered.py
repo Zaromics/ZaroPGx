@@ -98,8 +98,6 @@ def _analysis_for(file_type: FileType) -> FileAnalysis:
         is_compressed=True,
         has_index=True,
         file_size=1,
-        is_valid=True,
-        validation_errors=[],
         vcf_info=(
             VCFHeaderInfo(
                 reference_genome="GRCh38",
