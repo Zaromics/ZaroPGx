@@ -809,9 +809,8 @@ Open:
 - [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
-- The lint gate covers `app` and `tests` only, so `docker/` goes unchecked. flake8 F824 on
-  `docker/genome-downloader/downloader_api.py:879`: `global download_status` is never
-  assigned in `_download_genomes`, only mutated, so the statement does nothing.
+- [DONE Nov 2026, fix/downloader-global-noop] CI's flake8 syntax check covers `docker/`
+  and `scripts/` too.
 
 ## Documentation
 

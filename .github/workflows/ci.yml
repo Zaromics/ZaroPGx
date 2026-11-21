@@ -49,9 +49,12 @@ jobs:
 
       # Deliberately a narrow gate. Full flake8 still reports many style findings
       # (mostly E501); keep the blocking select tight. F821 NameErrors cleared in
-      # Wave 3 — F82 is now part of the blocking gate.
+      # Wave 3 — F82 is now part of the blocking gate. This narrow select also
+      # covers docker/ and scripts/, which black and isort deliberately do not:
+      # the services' code is never reformatted, but a no-op `global` (F824) or
+      # an undefined name there is still a bug.
       - name: flake8 (syntax errors, broken asserts, undefined names)
-        run: uv tool run flake8 --select=E9,F63,F7,F82 app tests
+        run: uv tool run flake8 --select=E9,F63,F7,F82 app tests docker scripts
 
       # Informational only. Use `|| true` (not continue-on-error) so a non-zero
       # flake8 exit does not create a red ##[error] annotation on a green job.
