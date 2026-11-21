@@ -4,7 +4,7 @@ services:
   # ~~~~~~~~~~MAIN APP~~~~~~~~~~
   app:
     # Default: pull the published image. Fallback: `docker compose build` builds locally.
-    image: zaromicsresearch/zaropgx-app:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-app:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
@@ -15,7 +15,7 @@ services:
       # host knows (`git rev-parse HEAD`); absent, the stamp says unknown and nothing
       # is claimed.
       args:
-        ZAROPGX_TAG: ${ZAROPGX_TAG:-0.4.4}
+        ZAROPGX_TAG: ${ZAROPGX_TAG:-0.4.5}
         ZAROPGX_COMMIT: ${ZAROPGX_COMMIT:-unknown}
     container_name: pgx_app
     restart: unless-stopped
@@ -101,7 +101,7 @@ services:
 
   # Reference material downloader service
   genome-downloader:
-    image: zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: ./docker/genome-downloader
@@ -147,7 +147,7 @@ services:
 
   # PharmCAT Service Wrapper - combines JAR and API
   pharmcat:
-    image: zaromicsresearch/zaropgx-pharmcat:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-pharmcat:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
@@ -270,7 +270,7 @@ services:
 
   # GATK Service Wrapper
   gatk-api:
-    image: zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
@@ -330,7 +330,7 @@ services:
 
   # PyPGx Service Wrapper
   pypgx:
-    image: zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
@@ -385,7 +385,7 @@ services:
   # submits an HLA job itself. Do not prune this service on the strength of the
   # app's references alone.
   zarohla:
-    image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
@@ -425,7 +425,7 @@ services:
   # upstream's Nextflow pipeline -- that needs a mounted Docker socket, the
   # thing that got the hlatyping service below disabled.
   mtdna:
-    image: zaromicsresearch/zaropgx-mtdna:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-mtdna:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
@@ -527,7 +527,7 @@ services:
   # Nextflow executor orchestrating the ZaroPGx pipeline
   nextflow:
     # CORE pipeline orchestrator — the app submits every analysis here (USE_NEXTFLOW=True).
-    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.4.4}
+    image: zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG:-0.4.5}
     platform: linux/amd64
     build:
       context: .
