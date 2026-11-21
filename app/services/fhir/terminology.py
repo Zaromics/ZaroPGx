@@ -36,6 +36,17 @@ HGVS = "http://varnomen.hgvs.org"
 REFSEQ = "http://www.ncbi.nlm.nih.gov/refseq"
 CLINVAR = "http://www.ncbi.nlm.nih.gov/clinvar"
 
+# The IG's Genomic Study Method Type CodeSystem (3.0.0, content complete; unchanged in
+# the 4.0.0 CI build, 2026-11-17), for Observation.method (app/services/fhir/
+# input_method.py). Only the two codes an input type settles are sent.
+GENOMIC_STUDY_METHOD_TYPE = (
+    "http://hl7.org/fhir/uv/genomics-reporting/CodeSystem/genomic-study-method-type-cs"
+)
+GENOMIC_STUDY_METHOD_TYPE_DISPLAYS = {
+    "ngs-mps": "Next-Generation (NGS)/Massively parallel sequencing (MPS)",
+    "microarray": "Microarray",
+}
+
 OBSERVATION_CATEGORY = "http://terminology.hl7.org/CodeSystem/observation-category"
 DIAGNOSTIC_SERVICE_SECTION = "http://terminology.hl7.org/CodeSystem/v2-0074"
 
