@@ -455,10 +455,6 @@ Open:
 - **Genes with no AMP minimum set are not gated** (SLCO1B1, CFTR, G6PD, RYR1, NAT2,
   CYP2B6, UGT1A1, F2, F5, ABCG2, IFNL3, CACNA1S). They are reported as before; AMP has
   published no minimum for them. If AMP publishes more, add them here.
-- **`uncalledHaplotypes` is not read for anything else.** It also names the alleles a
-  CALLED gene could not assess, which the report currently covers only as general
-  copy-number/structural prose. Naming them per gene would be more precise, for every
-  input type.
 - **A re-read on every PharmCAT bump.** The Tier 1 names must still match what PharmCAT
   emits; a renamed allele makes the gate fail open silently. Same hazard class as
   `pharmcat_positions.vcf`.
