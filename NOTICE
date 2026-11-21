@@ -209,6 +209,13 @@ by The College of American Pathologists. "SNOMED" and "SNOMED CT" are
 registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its
 licence (https://www.snomed.org/get-snomed).
 
+Drug codes from RxNorm, looked up through RxNav, both from the U.S. National
+Library of Medicine (https://www.nlm.nih.gov/research/umls/rxnorm/). This
+product uses publicly available data courtesy of the U.S. National Library of
+Medicine (NLM), National Institutes of Health, Department of Health and Human
+Services; NLM is not responsible for the product and does not endorse or
+recommend this or any other product.
+
 HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of Health
 Level Seven International and their use does not constitute endorsement by
 HL7. HGNC gene identifiers: CC0, https://www.genenames.org.

@@ -127,10 +127,13 @@ PATIENT_FIXTURE: Dict[str, Any] = {
 # references; feat/fhir-implications-cite-phenotype).
 # And when the conclusion came to count the genes a prescribing change comes
 # from (fix/actionable-means-prescribing-change), in the singular for one.
-GOLDEN_JSON_SHA256 = "1cbe43057f8329072b431d3032433a3420b58dd64e29f47dfb574344c925a76a"
-GOLDEN_JSON_BYTES = 26803
-GOLDEN_XML_SHA256 = "dd5fbc4ab08d74559943329a770229f7bc62e2b93a653739058b3a86d5be0ae1"
-GOLDEN_XML_BYTES = 26546
+# And when each drug came to carry its RxNorm code (feat/fhir-rxnorm-drugs): codeine's,
+# 2670, four times. With the lookup switched off the bundle is the previous golden,
+# byte for byte.
+GOLDEN_JSON_SHA256 = "1f8418303feba94cdcde48efc87c04981b2fe80083a9ef831dedace605b86343"
+GOLDEN_JSON_BYTES = 27726
+GOLDEN_XML_SHA256 = "b0cdd5eef6650795f29a3d198a80760eb8926c8964b3cfd9882d3d183e0f6deb"
+GOLDEN_XML_BYTES = 27353
 
 # Every terminology URI the pre-refactor bundle emitted, with its multiplicity.
 # Redundant with the digests above, but it fails readably: a wrong constant shows
@@ -152,6 +155,7 @@ GOLDEN_URI_CENSUS = {
     "http://terminology.hl7.org/CodeSystem/v2-0074": 8,
     "http://unitsofmeasure.org": 1,
     "http://www.genenames.org": 3,
+    "http://www.nlm.nih.gov/research/umls/rxnorm": 4,
     "https://www.clinpgx.org/guidelineAnnotations": 1,
     "urn:ietf:rfc:3986": 10,
     "urn:zaropgx:patient-id": 1,

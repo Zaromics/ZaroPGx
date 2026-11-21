@@ -1,0 +1,1386 @@
+{
+ "pharmcat_version": "3.4.0",
+ "built": "2026-11-19",
+ "source": "Drugs: PharmCAT's prescribing_guidance.json. Codes: NLM RxNav (RxNorm), by exact name; see scripts/build_rxnorm_drugs.py.",
+ "drugs": {
+  "PA448004": {
+   "name": "abacavir",
+   "rxcui": "190521",
+   "rxnorm_name": "abacavir",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166272921": {
+   "name": "abrocitinib",
+   "rxcui": "2591476",
+   "rxnorm_name": "abrocitinib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA452632": {
+   "name": "acenocoumarol",
+   "rxcui": "154",
+   "rxnorm_name": "acenocoumarol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166246281": {
+   "name": "acetaminophen / caffeine / dihydrocodeine",
+   "rxcui": "689569",
+   "rxnorm_name": "acetaminophen / caffeine / dihydrocodeine",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA448320": {
+   "name": "allopurinol",
+   "rxcui": "519",
+   "rxnorm_name": "allopurinol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166185150": {
+   "name": "amifampridine",
+   "rxcui": "2106338",
+   "rxnorm_name": "amifampridine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182002": {
+   "name": "amifampridine phosphate",
+   "rxcui": "2106337",
+   "rxnorm_name": "amifampridine phosphate",
+   "tty": "PIN",
+   "match": "exact"
+  },
+  "PA164744372": {
+   "name": "amikacin",
+   "rxcui": "641",
+   "rxnorm_name": "amikacin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448385": {
+   "name": "amitriptyline",
+   "rxcui": "704",
+   "rxnorm_name": "amitriptyline",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448405": {
+   "name": "amoxapine",
+   "rxcui": "722",
+   "rxnorm_name": "amoxapine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448408": {
+   "name": "amphetamine",
+   "rxcui": "725",
+   "rxnorm_name": "amphetamine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10026": {
+   "name": "aripiprazole",
+   "rxcui": "89013",
+   "rxnorm_name": "aripiprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166161216": {
+   "name": "aripiprazole lauroxil",
+   "rxcui": "1673265",
+   "rxnorm_name": "aripiprazole lauroxil",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182783": {
+   "name": "articaine / epinephrine",
+   "rxcui": "284622",
+   "rxnorm_name": "articaine / epinephrine",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA164712515": {
+   "name": "Ascorbic acid (vitamin C), combinations",
+   "rxcui": null,
+   "rxnorm_name": null,
+   "tty": null,
+   "match": null
+  },
+  "PA164712516": {
+   "name": "Ascorbic acid (vitamin C), plain",
+   "rxcui": null,
+   "rxnorm_name": null,
+   "tty": null,
+   "match": null
+  },
+  "PA10251": {
+   "name": "atazanavir",
+   "rxcui": "343047",
+   "rxnorm_name": "atazanavir",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA134688071": {
+   "name": "atomoxetine",
+   "rxcui": "38400",
+   "rxnorm_name": "atomoxetine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448500": {
+   "name": "atorvastatin",
+   "rxcui": "83367",
+   "rxnorm_name": "atorvastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166179849": {
+   "name": "avatrombopag",
+   "rxcui": "2045726",
+   "rxnorm_name": "avatrombopag",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448515": {
+   "name": "azathioprine",
+   "rxcui": "1256",
+   "rxnorm_name": "azathioprine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165971474": {
+   "name": "belinostat",
+   "rxcui": "1543543",
+   "rxnorm_name": "belinostat",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166268761": {
+   "name": "belzutifan",
+   "rxcui": "2567226",
+   "rxnorm_name": "belzutifan",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166160053": {
+   "name": "brexpiprazole",
+   "rxcui": "1658314",
+   "rxnorm_name": "brexpiprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166153491": {
+   "name": "brivaracetam",
+   "rxcui": "1739745",
+   "rxnorm_name": "brivaracetam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA135057240": {
+   "name": "bupivacaine",
+   "rxcui": "1815",
+   "rxnorm_name": "bupivacaine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448771": {
+   "name": "capecitabine",
+   "rxcui": "194000",
+   "rxnorm_name": "capecitabine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448785": {
+   "name": "carbamazepine",
+   "rxcui": "2002",
+   "rxnorm_name": "carbamazepine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448809": {
+   "name": "carisoprodol",
+   "rxcui": "2101",
+   "rxnorm_name": "carisoprodol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448817": {
+   "name": "carvedilol",
+   "rxcui": "20352",
+   "rxnorm_name": "carvedilol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448871": {
+   "name": "celecoxib",
+   "rxcui": "140587",
+   "rxnorm_name": "celecoxib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164754754": {
+   "name": "cevimeline",
+   "rxcui": "44281",
+   "rxnorm_name": "cevimeline",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448948": {
+   "name": "chloroquine",
+   "rxcui": "2393",
+   "rxnorm_name": "chloroquine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA448966": {
+   "name": "chlorpropamide",
+   "rxcui": "2404",
+   "rxnorm_name": "chlorpropamide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449015": {
+   "name": "citalopram",
+   "rxcui": "2556",
+   "rxnorm_name": "citalopram",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10888": {
+   "name": "clobazam",
+   "rxcui": "21241",
+   "rxnorm_name": "clobazam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449048": {
+   "name": "clomipramine",
+   "rxcui": "2597",
+   "rxnorm_name": "clomipramine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449053": {
+   "name": "clopidogrel",
+   "rxcui": "32968",
+   "rxnorm_name": "clopidogrel",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449061": {
+   "name": "clozapine",
+   "rxcui": "2626",
+   "rxnorm_name": "clozapine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449088": {
+   "name": "codeine",
+   "rxcui": "2670",
+   "rxnorm_name": "codeine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166114911": {
+   "name": "dabrafenib",
+   "rxcui": "1424911",
+   "rxnorm_name": "dabrafenib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449211": {
+   "name": "dapsone",
+   "rxcui": "3108",
+   "rxnorm_name": "dapsone",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164774901": {
+   "name": "darifenacin",
+   "rxcui": "136198",
+   "rxnorm_name": "darifenacin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164749136": {
+   "name": "desflurane",
+   "rxcui": "27340",
+   "rxnorm_name": "desflurane",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449233": {
+   "name": "desipramine",
+   "rxcui": "3247",
+   "rxnorm_name": "desipramine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166400021": {
+   "name": "deuruxolitinib",
+   "rxcui": "2716558",
+   "rxnorm_name": "deuruxolitinib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166169881": {
+   "name": "deutetrabenazine",
+   "rxcui": "1876905",
+   "rxnorm_name": "deutetrabenazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166110257": {
+   "name": "dexlansoprazole",
+   "rxcui": "816346",
+   "rxnorm_name": "dexlansoprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166175998": {
+   "name": "dextromethorphan / quinidine",
+   "rxcui": "1040053",
+   "rxnorm_name": "dextromethorphan / quinidine",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA166278341": {
+   "name": "dextromethorphan hydrobromide / bupropion hydrochloride",
+   "rxcui": "2611256",
+   "rxnorm_name": "bupropion / dextromethorphan",
+   "tty": "MIN",
+   "match": "reviewed"
+  },
+  "PA449283": {
+   "name": "diazepam",
+   "rxcui": "3322",
+   "rxnorm_name": "diazepam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166292901": {
+   "name": "dibekacin",
+   "rxcui": "3328",
+   "rxnorm_name": "dibekacin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166114961": {
+   "name": "dolutegravir",
+   "rxcui": "1433868",
+   "rxnorm_name": "dolutegravir",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449394": {
+   "name": "donepezil",
+   "rxcui": "135447",
+   "rxnorm_name": "donepezil",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449409": {
+   "name": "doxepin",
+   "rxcui": "3638",
+   "rxnorm_name": "doxepin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449421": {
+   "name": "dronabinol",
+   "rxcui": "10402",
+   "rxnorm_name": "dronabinol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449441": {
+   "name": "efavirenz",
+   "rxcui": "195085",
+   "rxnorm_name": "efavirenz",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182348": {
+   "name": "elagolix",
+   "rxcui": "2049846",
+   "rxnorm_name": "elagolix",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166123486": {
+   "name": "eliglustat",
+   "rxcui": "1547220",
+   "rxnorm_name": "eliglustat",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165981594": {
+   "name": "eltrombopag",
+   "rxcui": "711942",
+   "rxnorm_name": "eltrombopag",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449461": {
+   "name": "enflurane",
+   "rxcui": "3920",
+   "rxnorm_name": "enflurane",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182720": {
+   "name": "erdafitinib",
+   "rxcui": "2123125",
+   "rxnorm_name": "erdafitinib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10074": {
+   "name": "escitalopram",
+   "rxcui": "321988",
+   "rxnorm_name": "escitalopram",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10075": {
+   "name": "esomeprazole",
+   "rxcui": "283742",
+   "rxnorm_name": "esomeprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165290929": {
+   "name": "ethinyl estradiol / norelgestromin",
+   "rxcui": "352377",
+   "rxnorm_name": "ethinyl estradiol / norelgestromin",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA165958376": {
+   "name": "fesoterodine",
+   "rxcui": "797195",
+   "rxnorm_name": "fesoterodine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449646": {
+   "name": "flecainide",
+   "rxcui": "4441",
+   "rxnorm_name": "flecainide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166153431": {
+   "name": "flibanserin",
+   "rxcui": "1665509",
+   "rxnorm_name": "flibanserin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164781042": {
+   "name": "flucloxacillin",
+   "rxcui": "4448",
+   "rxnorm_name": "floxacillin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449654": {
+   "name": "flucytosine",
+   "rxcui": "4451",
+   "rxnorm_name": "flucytosine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA128406956": {
+   "name": "fluorouracil",
+   "rxcui": "4492",
+   "rxnorm_name": "fluorouracil",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449673": {
+   "name": "fluoxetine",
+   "rxcui": "4493",
+   "rxnorm_name": "fluoxetine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166176027": {
+   "name": "fluoxetine / olanzapine",
+   "rxcui": "611247",
+   "rxnorm_name": "fluoxetine / olanzapine",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA449683": {
+   "name": "flurbiprofen",
+   "rxcui": "4502",
+   "rxnorm_name": "flurbiprofen",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449685": {
+   "name": "flutamide",
+   "rxcui": "4508",
+   "rxnorm_name": "flutamide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449688": {
+   "name": "fluvastatin",
+   "rxcui": "41127",
+   "rxnorm_name": "fluvastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449690": {
+   "name": "fluvoxamine",
+   "rxcui": "42355",
+   "rxnorm_name": "fluvoxamine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164746820": {
+   "name": "fosphenytoin",
+   "rxcui": "72236",
+   "rxnorm_name": "fosphenytoin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449726": {
+   "name": "galantamine",
+   "rxcui": "4637",
+   "rxnorm_name": "galantamine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA131301952": {
+   "name": "gefitinib",
+   "rxcui": "328134",
+   "rxnorm_name": "gefitinib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449753": {
+   "name": "gentamicin",
+   "rxcui": "1596450",
+   "rxnorm_name": "gentamicin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449761": {
+   "name": "glimepiride",
+   "rxcui": "25789",
+   "rxnorm_name": "glimepiride",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449762": {
+   "name": "glipizide",
+   "rxcui": "4821",
+   "rxnorm_name": "glipizide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449782": {
+   "name": "glyburide",
+   "rxcui": "4815",
+   "rxnorm_name": "glyburide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449841": {
+   "name": "haloperidol",
+   "rxcui": "5093",
+   "rxnorm_name": "haloperidol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449845": {
+   "name": "halothane",
+   "rxcui": "5095",
+   "rxnorm_name": "halothane",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449894": {
+   "name": "hydralazine",
+   "rxcui": "5470",
+   "rxnorm_name": "hydralazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449900": {
+   "name": "hydrocodone",
+   "rxcui": "5489",
+   "rxnorm_name": "hydrocodone",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164777036": {
+   "name": "hydroxychloroquine",
+   "rxcui": "5521",
+   "rxnorm_name": "hydroxychloroquine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449957": {
+   "name": "ibuprofen",
+   "rxcui": "5640",
+   "rxnorm_name": "ibuprofen",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA161199368": {
+   "name": "iloperidone",
+   "rxcui": "73178",
+   "rxnorm_name": "iloperidone",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA449969": {
+   "name": "imipramine",
+   "rxcui": "5691",
+   "rxnorm_name": "imipramine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450085": {
+   "name": "irinotecan",
+   "rxcui": "51499",
+   "rxnorm_name": "irinotecan",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450106": {
+   "name": "isoflurane",
+   "rxcui": "6026",
+   "rxnorm_name": "isoflurane",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450112": {
+   "name": "isoniazid",
+   "rxcui": "6038",
+   "rxnorm_name": "isoniazid",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165950341": {
+   "name": "ivacaftor",
+   "rxcui": "1243041",
+   "rxnorm_name": "ivacaftor",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450137": {
+   "name": "kanamycin",
+   "rxcui": "6099",
+   "rxnorm_name": "kanamycin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450164": {
+   "name": "lamotrigine",
+   "rxcui": "28439",
+   "rxnorm_name": "lamotrigine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450180": {
+   "name": "lansoprazole",
+   "rxcui": "17128",
+   "rxnorm_name": "lansoprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166160006": {
+   "name": "lesinurad",
+   "rxcui": "1731031",
+   "rxnorm_name": "lesinurad",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166176018": {
+   "name": "lidocaine / prilocaine",
+   "rxcui": "166283",
+   "rxnorm_name": "lidocaine / prilocaine",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA166182735": {
+   "name": "lidocaine and tetracaine",
+   "rxcui": "608568",
+   "rxnorm_name": "lidocaine / tetracaine",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA164744510": {
+   "name": "lofexidine",
+   "rxcui": "28863",
+   "rxnorm_name": "lofexidine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165958395": {
+   "name": "lornoxicam",
+   "rxcui": "20890",
+   "rxnorm_name": "lornoxicam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450272": {
+   "name": "lovastatin",
+   "rxcui": "6472",
+   "rxnorm_name": "lovastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182748": {
+   "name": "lusutrombopag",
+   "rxcui": "2054984",
+   "rxnorm_name": "lusutrombopag",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166272922": {
+   "name": "mavacamten",
+   "rxcui": "2600867",
+   "rxnorm_name": "mavacamten",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450338": {
+   "name": "meclizine",
+   "rxcui": "6676",
+   "rxnorm_name": "meclizine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450353": {
+   "name": "meloxicam",
+   "rxcui": "41493",
+   "rxnorm_name": "meloxicam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164748741": {
+   "name": "mepivacaine",
+   "rxcui": "6759",
+   "rxnorm_name": "mepivacaine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450379": {
+   "name": "mercaptopurine",
+   "rxcui": "103",
+   "rxnorm_name": "mercaptopurine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450434": {
+   "name": "methoxyflurane",
+   "rxcui": "6857",
+   "rxnorm_name": "methoxyflurane",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450457": {
+   "name": "methylene blue",
+   "rxcui": "6878",
+   "rxnorm_name": "methylene blue",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450475": {
+   "name": "metoclopramide",
+   "rxcui": "6915",
+   "rxnorm_name": "metoclopramide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450480": {
+   "name": "metoprolol",
+   "rxcui": "6918",
+   "rxnorm_name": "metoprolol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166177513": {
+   "name": "mirabegron",
+   "rxcui": "1300786",
+   "rxnorm_name": "mirabegron",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166163260": {
+   "name": "moviprep",
+   "rxcui": "669559",
+   "rxnorm_name": "MoviPrep",
+   "tty": "BN",
+   "match": "exact"
+  },
+  "PA164746384": {
+   "name": "nalidixic acid",
+   "rxcui": "7240",
+   "rxnorm_name": "nalidixic acid",
+   "tty": "PIN",
+   "match": "exact"
+  },
+  "PA450600": {
+   "name": "nateglinide",
+   "rxcui": "274332",
+   "rxnorm_name": "nateglinide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA151958426": {
+   "name": "nebivolol",
+   "rxcui": "31555",
+   "rxnorm_name": "nebivolol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450608": {
+   "name": "neomycin",
+   "rxcui": "7299",
+   "rxnorm_name": "neomycin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164754913": {
+   "name": "netilmicin",
+   "rxcui": "7337",
+   "rxnorm_name": "netilmicin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165958345": {
+   "name": "nilotinib",
+   "rxcui": "662281",
+   "rxnorm_name": "nilotinib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450640": {
+   "name": "nitrofurantoin",
+   "rxcui": "7454",
+   "rxnorm_name": "nitrofurantoin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450657": {
+   "name": "nortriptyline",
+   "rxcui": "7531",
+   "rxnorm_name": "nortriptyline",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166223601": {
+   "name": "oliceridine",
+   "rxcui": "2392230",
+   "rxnorm_name": "oliceridine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450704": {
+   "name": "omeprazole",
+   "rxcui": "7646",
+   "rxnorm_name": "omeprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450705": {
+   "name": "ondansetron",
+   "rxcui": "26225",
+   "rxnorm_name": "ondansetron",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450732": {
+   "name": "oxcarbazepine",
+   "rxcui": "32624",
+   "rxnorm_name": "oxcarbazepine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182885": {
+   "name": "oxymetazoline and tetracaine",
+   "rxcui": "1809049",
+   "rxnorm_name": "oxymetazoline / tetracaine",
+   "tty": "MIN",
+   "match": "reviewed"
+  },
+  "PA450774": {
+   "name": "pantoprazole",
+   "rxcui": "40790",
+   "rxnorm_name": "pantoprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164784023": {
+   "name": "paromomycin",
+   "rxcui": "7934",
+   "rxnorm_name": "paromomycin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450801": {
+   "name": "paroxetine",
+   "rxcui": "32937",
+   "rxnorm_name": "paroxetine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165291492": {
+   "name": "pazopanib",
+   "rxcui": "714438",
+   "rxnorm_name": "pazopanib",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164749390": {
+   "name": "peginterferon alfa-2a",
+   "rxcui": "120608",
+   "rxnorm_name": "peginterferon alfa-2a",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164784024": {
+   "name": "peginterferon alfa-2b",
+   "rxcui": "253453",
+   "rxnorm_name": "peginterferon alfa-2b",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA165963961": {
+   "name": "pegloticase",
+   "rxcui": "1011650",
+   "rxnorm_name": "pegloticase",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450882": {
+   "name": "perphenazine",
+   "rxcui": "8076",
+   "rxnorm_name": "perphenazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450921": {
+   "name": "phenprocoumon",
+   "rxcui": "8150",
+   "rxnorm_name": "phenprocoumon",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450947": {
+   "name": "phenytoin",
+   "rxcui": "8183",
+   "rxnorm_name": "phenytoin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450965": {
+   "name": "pimozide",
+   "rxcui": "8331",
+   "rxnorm_name": "pimozide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA450985": {
+   "name": "piroxicam",
+   "rxcui": "8356",
+   "rxnorm_name": "piroxicam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA142650384": {
+   "name": "pitavastatin",
+   "rxcui": "861634",
+   "rxnorm_name": "pitavastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166185163": {
+   "name": "pitolisant",
+   "rxcui": "2197878",
+   "rxnorm_name": "pitolisant",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166228921": {
+   "name": "plazomicin",
+   "rxcui": "2049549",
+   "rxnorm_name": "plazomicin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451089": {
+   "name": "pravastatin",
+   "rxcui": "42463",
+   "rxnorm_name": "pravastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451103": {
+   "name": "primaquine",
+   "rxcui": "8687",
+   "rxnorm_name": "primaquine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451108": {
+   "name": "procainamide",
+   "rxcui": "8700",
+   "rxnorm_name": "procainamide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451131": {
+   "name": "propafenone",
+   "rxcui": "8754",
+   "rxnorm_name": "propafenone",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451145": {
+   "name": "propranolol",
+   "rxcui": "8787",
+   "rxnorm_name": "propranolol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451168": {
+   "name": "protriptyline",
+   "rxcui": "8886",
+   "rxnorm_name": "protriptyline",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451201": {
+   "name": "quetiapine",
+   "rxcui": "51272",
+   "rxnorm_name": "quetiapine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451216": {
+   "name": "rabeprazole",
+   "rxcui": "114979",
+   "rxnorm_name": "rabeprazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164888966": {
+   "name": "raltegravir",
+   "rxcui": "719872",
+   "rxnorm_name": "raltegravir",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10176": {
+   "name": "rasburicase",
+   "rxcui": "283821",
+   "rxnorm_name": "rasburicase",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166397682": {
+   "name": "relugolix / estradiol / norethindrone acetate",
+   "rxcui": "2556806",
+   "rxnorm_name": "estradiol / norethindrone / relugolix",
+   "tty": "MIN",
+   "match": "normalized"
+  },
+  "PA451241": {
+   "name": "ribavirin",
+   "rxcui": "9344",
+   "rxnorm_name": "ribavirin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166292902": {
+   "name": "ribostamycin",
+   "rxcui": null,
+   "rxnorm_name": null,
+   "tty": null,
+   "match": null
+  },
+  "PA451257": {
+   "name": "risperidone",
+   "rxcui": "35636",
+   "rxnorm_name": "risperidone",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451271": {
+   "name": "ropivacaine",
+   "rxcui": "35780",
+   "rxnorm_name": "ropivacaine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA134308647": {
+   "name": "rosuvastatin",
+   "rxcui": "301542",
+   "rxnorm_name": "rosuvastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166225061": {
+   "name": "sacituzumab govitecan",
+   "rxcui": "2360232",
+   "rxnorm_name": "sacituzumab govitecan",
+   "tty": "PIN",
+   "match": "exact"
+  },
+  "PA166400041": {
+   "name": "seladelpar",
+   "rxcui": "2690869",
+   "rxnorm_name": "seladelpar",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451333": {
+   "name": "sertraline",
+   "rxcui": "36437",
+   "rxnorm_name": "sertraline",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451341": {
+   "name": "sevoflurane",
+   "rxcui": "36453",
+   "rxnorm_name": "sevoflurane",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451363": {
+   "name": "simvastatin",
+   "rxcui": "36567",
+   "rxnorm_name": "simvastatin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166182736": {
+   "name": "siponimod",
+   "rxcui": "2121085",
+   "rxnorm_name": "siponimod",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166163262": {
+   "name": "sodium ascorbate",
+   "rxcui": "267366",
+   "rxnorm_name": "sodium ascorbate",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166115361": {
+   "name": "sodium nitrite",
+   "rxcui": "9894",
+   "rxnorm_name": "sodium nitrite",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451512": {
+   "name": "streptomycin",
+   "rxcui": "10109",
+   "rxnorm_name": "streptomycin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451522": {
+   "name": "succinylcholine",
+   "rxcui": "10154",
+   "rxnorm_name": "succinylcholine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10715": {
+   "name": "sulfamethoxazole / trimethoprim",
+   "rxcui": "10831",
+   "rxnorm_name": "sulfamethoxazole / trimethoprim",
+   "tty": "MIN",
+   "match": "exact"
+  },
+  "PA451547": {
+   "name": "sulfasalazine",
+   "rxcui": "9524",
+   "rxnorm_name": "sulfasalazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451578": {
+   "name": "tacrolimus",
+   "rxcui": "42316",
+   "rxnorm_name": "tacrolimus",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166115580": {
+   "name": "tafenoquine",
+   "rxcui": "2054023",
+   "rxnorm_name": "tafenoquine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451581": {
+   "name": "tamoxifen",
+   "rxcui": "10324",
+   "rxnorm_name": "tamoxifen",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451583": {
+   "name": "tamsulosin",
+   "rxcui": "77492",
+   "rxnorm_name": "tamsulosin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA452620": {
+   "name": "tegafur",
+   "rxcui": "4582",
+   "rxnorm_name": "tegafur",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA131890625": {
+   "name": "tenoxicam",
+   "rxcui": "37790",
+   "rxnorm_name": "tenoxicam",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA140222719": {
+   "name": "tetrabenazine",
+   "rxcui": "10390",
+   "rxnorm_name": "tetrabenazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451663": {
+   "name": "thioguanine",
+   "rxcui": "10485",
+   "rxnorm_name": "thioguanine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451666": {
+   "name": "thioridazine",
+   "rxcui": "10502",
+   "rxnorm_name": "thioridazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451704": {
+   "name": "tobramycin",
+   "rxcui": "10627",
+   "rxnorm_name": "tobramycin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164774902": {
+   "name": "tolazamide",
+   "rxcui": "10633",
+   "rxnorm_name": "tolazamide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451718": {
+   "name": "tolbutamide",
+   "rxcui": "10635",
+   "rxnorm_name": "tolbutamide",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA164746757": {
+   "name": "tolterodine",
+   "rxcui": "119565",
+   "rxnorm_name": "tolterodine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166268821": {
+   "name": "toluidine blue",
+   "rxcui": "10638",
+   "rxnorm_name": "tolonium chloride",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451735": {
+   "name": "tramadol",
+   "rxcui": "10689",
+   "rxnorm_name": "tramadol",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451791": {
+   "name": "trimipramine",
+   "rxcui": "10834",
+   "rxnorm_name": "trimipramine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA161925594": {
+   "name": "tropisetron",
+   "rxcui": "27392",
+   "rxnorm_name": "tropisetron",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166170051": {
+   "name": "valbenazine",
+   "rxcui": "1918219",
+   "rxnorm_name": "valbenazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451866": {
+   "name": "venlafaxine",
+   "rxcui": "39786",
+   "rxnorm_name": "venlafaxine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166251581": {
+   "name": "viloxazine",
+   "rxcui": "11196",
+   "rxnorm_name": "viloxazine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA10233": {
+   "name": "voriconazole",
+   "rxcui": "121243",
+   "rxnorm_name": "voriconazole",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA166122595": {
+   "name": "vortioxetine",
+   "rxcui": "1455099",
+   "rxnorm_name": "vortioxetine",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA451906": {
+   "name": "warfarin",
+   "rxcui": "11289",
+   "rxnorm_name": "warfarin",
+   "tty": "IN",
+   "match": "exact"
+  },
+  "PA452629": {
+   "name": "zuclopenthixol",
+   "rxcui": "114176",
+   "rxnorm_name": "zuclopenthixol",
+   "tty": "IN",
+   "match": "exact"
+  }
+ }
+}

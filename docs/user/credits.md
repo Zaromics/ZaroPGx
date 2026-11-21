@@ -190,6 +190,8 @@ The FHIR export carries codes from these terminologies:
 
 - **SNOMED CT.** This material includes SNOMED Clinical Terms® (SNOMED CT®) which is used by permission of the International Health Terminology Standards Development Organisation (IHTSDO). All rights reserved. SNOMED CT®, was originally created by The College of American Pathologists. "SNOMED" and "SNOMED CT" are registered trademarks of the IHTSDO. Use of SNOMED CT is subject to its license (https://www.snomed.org/get-snomed).
 
+- **RxNorm.** Drug codes from RxNorm, looked up through RxNav, both from the U.S. National Library of Medicine (https://www.nlm.nih.gov/research/umls/rxnorm/). This product uses publicly available data courtesy of the U.S. National Library of Medicine (NLM), National Institutes of Health, Department of Health and Human Services; NLM is not responsible for the product and does not endorse or recommend this or any other product.
+
 - **HGNC.** Gene identifiers from the HUGO Gene Nomenclature Committee (HGNC, https://www.genenames.org), released under CC0.
 
 - **HL7 FHIR.** HL7®, FHIR® and the FHIR [FLAME DESIGN] are the registered trademarks of Health Level Seven International and their use does not constitute endorsement by HL7. FHIR R4 is published under CC0, and so are the three FHIR packages the bundled HAPI FHIR server loads: the Genomics Reporting Implementation Guide 3.0.0, HL7 Terminology (THO) 6.1.0 and the FHIR Extensions Pack 5.1.0.
