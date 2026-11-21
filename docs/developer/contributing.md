@@ -99,11 +99,13 @@ all satisfied either way, and being the one target outside the bake it is outsid
 bake's context handling too, so nothing else here catches it.
 
 ```bash
-docker build -f docker/mtdna-server-2/Dockerfile \
+docker build --platform linux/amd64 -f docker/mtdna-server-2/Dockerfile \
   -t zaromicsresearch/zaropgx-mtdna:<version> .
 docker push zaromicsresearch/zaropgx-mtdna:<version>
 ```
 
+`--platform linux/amd64` for the same reason the bake targets carry it: the image goes
+out under a tag every install pulls as `linux/amd64`, whatever this machine is.
 `docker build` rather than `docker compose build`: compose takes its project name and its
 `.env` from the directory it runs in, which is not what a second working tree holds.
 
