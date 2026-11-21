@@ -919,7 +919,6 @@ def download_genomes():
 
 
 def _download_genomes():
-    global download_status
     download_status["in_progress"] = True
     # Set again below only for what this run verifies, so /status never pairs a
     # previous run's sha256_verified with this run's error.

@@ -69,8 +69,6 @@ def _vcf_workflow(build: str) -> dict:
                 sample_count=1,
                 variant_count=None,
             ),
-            is_valid=True,
-            validation_errors=[],
         )
     )
     workflow["file_type"] = FileType.VCF.value
@@ -85,8 +83,6 @@ def _alignment_workflow(file_type: FileType, build: str) -> dict:
             has_index=True,
             file_size=1,
             vcf_info=None,
-            is_valid=True,
-            validation_errors=[],
             reference_genome=build,
         )
     )

@@ -324,9 +324,7 @@ def _array_workflow(file_type):
     from app.api.models import FileAnalysis
     from app.api.utils.file_processor import FileProcessor
 
-    analysis = FileAnalysis(
-        file_type=file_type, is_valid=True, is_compressed=False, has_index=False
-    )
+    analysis = FileAnalysis(file_type=file_type, is_compressed=False, has_index=False)
     return FileProcessor(temp_dir="/tmp").determine_workflow(analysis)
 
 

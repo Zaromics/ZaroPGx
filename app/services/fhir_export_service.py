@@ -20,7 +20,13 @@ from typing import Any, Dict, List, Optional, Union
 from sqlalchemy.orm import Session
 
 from app.reports.actionable import actionable_genes
-from app.services.fhir import report_data, rxnorm, terminology, xml_format
+from app.services.fhir import (
+    input_method,
+    report_data,
+    rxnorm,
+    terminology,
+    xml_format,
+)
 from app.services.pharmcat_data_service import PharmCATDataService
 
 logger = logging.getLogger(__name__)
@@ -568,6 +574,11 @@ class FHIRExportService:
             }
         )
 
+        # How the input was turned into genotypes (input_method): on every
+        # Observation measured from it, the genotypes and the variants. None where
+        # the input is not known, and then the element is left out.
+        method = input_method.method_concept(pharmcat_data)
+
         # Create Genotype Observations for each gene
         genes = pharmcat_data.get("genes", [])
         for gene_data in genes:
@@ -577,6 +588,8 @@ class FHIRExportService:
                 run_id=run_id,
                 resource_id=stable_id("genotype", gene_data.get("gene")),
             )
+            if method:
+                genotype_obs["method"] = method
             entries.append(
                 {
                     "fullUrl": f"urn:uuid:{genotype_obs['id']}",
@@ -605,6 +618,8 @@ class FHIRExportService:
                         patient_ref,
                         stable_id("variant", ":".join(map(str, key))),
                     )
+                    if method:
+                        variant_obs["method"] = method
                     entries.append(
                         {
                             "fullUrl": f"urn:uuid:{variant_obs['id']}",

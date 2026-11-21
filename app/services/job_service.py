@@ -478,6 +478,9 @@ class JobService:
                                 if progress_response
                                 else "Processing..."
                             ),
+                            "error": (
+                                progress_response.error if progress_response else None
+                            ),
                             "started_at": (
                                 job.started_at.isoformat() if job.started_at else None
                             ),
@@ -629,6 +632,19 @@ class JobService:
                 step.output_data = _json_safe(update_data.output_data)
             if update_data.error_details is not None:
                 step.error_details = _json_safe(update_data.error_details)
+            # A failing step's reason is kept where the progress response reads it.
+            # Seven sidecar calls (gatk-api x3, pharmcat x3, mtdna) send their reason
+            # as the failed update's message and no "error" in error_details --
+            # mtdna's "mtDNA calling failed: bcftools failed: [E::vcf_parse] Could
+            # not parse the position 'NOTANUMBER'" -- so the message went to the job
+            # log only, and the page said "mtdna_analysis failed." with nothing more.
+            # The message is the sidecar's own sentence, sent with the FAILED status:
+            # this keeps it, it does not infer it from the log.
+            if update_data.status == StepStatus.FAILED and update_data.message:
+                details = dict(step.error_details or {})
+                if not details.get("error"):
+                    details["error"] = update_data.message
+                    step.error_details = _json_safe(details)
             if update_data.retry_count is not None:
                 step.retry_count = update_data.retry_count
 
@@ -735,6 +751,7 @@ class JobService:
                                     "progress_percentage": progress_response.progress_percentage,
                                     "current_step": progress_response.current_step,
                                     "message": progress_response.message,
+                                    "error": progress_response.error,
                                     "started_at": (
                                         job.started_at.isoformat()
                                         if job.started_at
@@ -872,6 +889,7 @@ class JobService:
             # step that had completed, while the reason sat in the job's log.
             #
             # Only on the failed path, and only from what the run already recorded.
+            error = None
             if _status_text(job.status) in ("failed", "error"):
                 failed = next(
                     (
@@ -884,6 +902,9 @@ class JobService:
                     None,
                 )
                 cancelled = bool((job.job_metadata or {}).get("cancelled"))
+                if failed is not None and not cancelled:
+                    said = (failed.error_details or {}).get("error")
+                    error = str(said) if said else None
                 if failed is not None:
                     current_step = failed.step_name or current_step
                     said = (failed.error_details or {}).get("error")
@@ -921,6 +942,7 @@ class JobService:
                 current_step=current_step,
                 estimated_completion=estimated_completion,
                 message=message,
+                error=error,
             )
 
         except (ValueError, RuntimeError):

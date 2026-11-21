@@ -3741,6 +3741,9 @@ def generate_report(
     run_absent_to_ref = None
     gvcf_provenance = None
     array_provenance = None
+    # The same step rows and flags, as facts rather than paragraphs, for the FHIR
+    # bundle's Observation.method (app/services/fhir/input_method.py).
+    input_method_facts = None
     # Why a variant-only file left genes uncalled, when the job's flags say so.
     missing_positions_not_assumed = False
     if job_id and db_session:
@@ -3946,6 +3949,16 @@ def generate_report(
                     absent_to_ref=absent_to_ref,
                     unspecified_to_ref=unspecified_to_ref,
                 )
+                input_method_facts = {
+                    "file_type": input_type,
+                    "absent_to_ref": absent_to_ref,
+                    "unspecified_to_ref": unspecified_to_ref,
+                    "array": array_step.output_data if array_step is not None else None,
+                    "gvcf": gvcf_step.output_data if gvcf_step is not None else None,
+                    "liftover": (
+                        liftover_step.output_data if liftover_step is not None else None
+                    ),
+                }
             except Exception as e:
                 # Say so in the report, do not just blank the fields.
                 #
@@ -3978,6 +3991,7 @@ def generate_report(
                 liftover_provenance = None
                 gvcf_provenance = None
                 array_provenance = None
+                input_method_facts = None
 
             if not data:
                 logger.warning(
@@ -4061,6 +4075,8 @@ def generate_report(
     input_file_type = (job_metadata.get("file_analysis") or {}).get("file_type")
     if input_file_type:
         data["file_type"] = str(input_file_type).lower()
+    if input_method_facts:
+        data["input_method"] = input_method_facts
 
     # Add tool source information to diplotypes
     file_type = str(data.get("file_type", "vcf")).lower()
@@ -4761,6 +4777,15 @@ def generate_report(
         read_phase.annotate_open(data.get("genes", []), read_phase_result)
     except Exception as e:  # naming an alternative must not cost the report
         logger.warning("Read phase alternative not named: %s", e, exc_info=True)
+    # The same fact for the genes whose alternative cannot be named faithfully
+    # (read_phase.UNNAMED): the pairing is unchecked, said without the name.
+    try:
+        _read_phase_unnamed = read_phase.annotate_unnamed(
+            data.get("genes", []), read_phase_result, pypgx_results
+        )
+    except Exception as e:  # saying so must not cost the report
+        logger.warning("Read phase unnamed pairing not noted: %s", e, exc_info=True)
+        _read_phase_unnamed = {}
     _read_phase_alert = read_phase.alert(_read_phase_found)
     if _read_phase_alert:
         workflow_warnings = list(workflow_warnings) + [_read_phase_alert]
@@ -4770,7 +4795,10 @@ def generate_report(
     # printed calls assert an arrangement and how many of those the reads could reach.
     try:
         _read_phase_coverage = read_phase.coverage_note(
-            read_phase.coverage(data.get("genes", []), read_phase_result, pypgx_results)
+            read_phase.coverage(
+                data.get("genes", []), read_phase_result, pypgx_results
+            ),
+            unnamed=sorted(_read_phase_unnamed),
         )
     except Exception as e:  # describing the check must not cost the report
         logger.warning("Read phase coverage not described: %s", e, exc_info=True)

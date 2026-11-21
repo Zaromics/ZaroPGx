@@ -455,10 +455,6 @@ Open:
 - **Genes with no AMP minimum set are not gated** (SLCO1B1, CFTR, G6PD, RYR1, NAT2,
   CYP2B6, UGT1A1, F2, F5, ABCG2, IFNL3, CACNA1S). They are reported as before; AMP has
   published no minimum for them. If AMP publishes more, add them here.
-- **`uncalledHaplotypes` is not read for anything else.** It also names the alleles a
-  CALLED gene could not assess, which the report currently covers only as general
-  copy-number/structural prose. Naming them per gene would be more precise, for every
-  input type.
 - **A re-read on every PharmCAT bump.** The Tier 1 names must still match what PharmCAT
   emits; a renamed allele makes the gate fail open silently. Same hazard class as
   `pharmcat_positions.vcf`.
@@ -592,22 +588,8 @@ Open:
   Worth doing only if someone asks for it. The passive `releases` link already answers
   "is there something newer" for anyone who wonders, at the cost of a click.
 
-- **`is_valid` and `validation_errors` are vestigial, and the page has an alert that can
-  never appear.** MEASURED 2026-11-14: `FileAnalysis` declares both
-  (`app/api/utils/file_processor.py`), the upload response and the job metadata carry both
-  (`upload_router.py`), and **nothing in `app/` ever assigns either** -- `FileAnalysis` is
-  constructed in exactly two places and neither passes them. So every upload answers
-  `"is_valid": true, "validation_errors": null`, including on the analysis failure path,
-  which sets `error` and leaves `is_valid` at its `True` default.
-
-  `app/templates/index.html` renders a **"Validation Errors" danger alert** from
-  `afi.validation_errors`. It is unreachable.
-
-  Not a defect on screen today: the standing warnings carry this information now (the
-  `input_warnings_alert` path), and a refusal is an HTTP 4xx with its own message. These
-  fields are from the earlier design. Worth deciding rather than leaving: either populate
-  them where a refusal is detected, or drop them from the response and the page. Dropping
-  them changes the API's shape, which is why it is written down rather than done.
+- [DONE Nov 2026, fix/drop-vestigial-validation] The unused `is_valid` and
+  `validation_errors` fields are gone from the upload response and the page.
 
 
 - [DONE Oct 2026, fix/ui-stage-row-fits] The stage row and the header fit a phone: in a
@@ -643,33 +625,8 @@ Open:
   watched through the page on 2026-10-19 moved the bar through its 9-second liftover, 1 to
   8%, and on to 100); (3) only then consider visual snapshots.
 
-- **A failed job's reason is in the log and reaches no user-facing surface.** MEASURED
-  2026-11-15 on a real failing run: the database holds `mtDNA calling failed: bcftools
-  failed: [E::vcf_parse] Could not parse the position 'NOTANUMBER'` in `job_logs`, and the
-  page learns none of it. `/api/v1/jobs/{id}/progress` (what the page polls) carries
-  `status`, `current_step` and `message` and no error; `/upload/status/{job_id}` **fetches
-  the logs into a variable it never uses** (`upload_router.py`: `logs =
-  job_service.get_job_logs(job_id)`); `websocket_manager.send_error_notification` exists and
-  **is called from nowhere**; and the failed step's `error_details` was `{}`, because the
-  sidecar reported through the log instead.
-
-  **Not every sidecar does, which narrows this.** Cancelling a real CRAM run on
-  2026-11-15 left `error_details` holding gatk-api's own sentence -- "CRAM to BAM
-  conversion failed: samtools view exited 0 but wrote no BAM" -- so the progress
-  response already carries the run's words for a gatk failure, and the gap is the
-  sidecars that report through the log instead. Worth measuring which do which before
-  building anything: the fix for a sidecar that already fills `error_details` is
-  nothing, and for one that does not it is a change in that sidecar, not in the app.
-
-  Naming the failed step is fixed separately (the progress response said
-  `current_step: header_analysis`, a step that had completed). What remains is getting the
-  run's own words in front of the reader. **Do not scrape them out of the log by
-  heuristic** -- every rule tried picked a worse line: the newest ("Job updated:
-  JobStatus.FAILED"), the wrapper's header ("Nextflow job failed: stdout:"), and, for a
-  sample named *FailurePathCheck*, the job's own creation line. The honest routes are to
-  carry `error_details` through `fail_step` at each sidecar, to call the error
-  notification that already exists, or to show the job's log in the page. All three are
-  design choices rather than repairs.
+- [DONE Nov 2026, fix/failed-job-reason] A failed job's page shows the failing step's own
+  error message. Still silent: a job that fails with no step marked failed.
 
 ## Data & Database
 
@@ -681,30 +638,9 @@ Open:
 
 ## FHIR & Exporting
 
-- **The bundle does not say what kind of input produced it.** MEASURED 2026-11-14: none of
-  the input-provenance facts the report page carries reach the FHIR export. `grep` over
-  `app/services/fhir_export_service.py` for `partial_coverage_alert`, `array_provenance`,
-  `gvcf_provenance`, `vendor_shape`, `n_positions_carried` and `positions_expressed_in`
-  returns **zero hits each**, and `_build_fhir_bundle` is handed normalized PharmCAT data
-  with no input type at all. The DiagnosticReport's `conclusion` reads "Pharmacogenomic
-  analysis completed. N genes analyzed, M actionable findings identified."
-
-  So a bundle built from a **23andMe export** -- where the analysis rested on 209 of the
-  1,018 rs-identified positions in PharmCAT's list, PyPGx never ran because an array has no
-  reads, and most genes were declined -- is indistinguishable, to a receiving system, from
-  one built from a 30x whole genome. The page says all of this plainly (the array
-  provenance paragraph, and the AMP/CAP alert naming the genes it declined); the bundle says
-  none of it.
-
-  Not built, because the question is a design decision rather than a wording one: whether
-  this belongs in `DiagnosticReport.conclusion`, in `method`, in a `Specimen`, or as its own
-  Observation, is an interoperability choice with a right answer in the HL7 Genomics
-  Reporting IG, and the sentence a hospital system reads is the owner's to word. The
-  plumbing is the small part: the input type and the array/gVCF provenance would have to
-  reach `_build_fhir_bundle`, which today receives neither.
-
-  Worth deciding alongside the Phenopacket export below, since both answer "what does a
-  receiving system need to know about how this was produced".
+- [DONE Nov 2026, feat/fhir-input-method] The FHIR bundle says how its genotypes were
+  obtained, in `Observation.method`. Open: the IG's `genomic-study-analysis` profile, the
+  fuller home for the same facts.
 
 - [DONE Oct 2026, feat/fhir-push-hapi] The FHIR bundle validates against the HL7 Genomics
   Reporting IG 3.0.0 profiles with no errors (HAPI FHIR 8.12 `$validate` with the IG
@@ -811,9 +747,8 @@ Open:
 - [DONE] Clean compose stack; prefer `compose.yml` naming and remove legacy `docker-compose.yml` if redundant
 - Implement CI/CD github action to dockerhub image build
 - Clean up deprecated flags
-- The lint gate covers `app` and `tests` only, so `docker/` goes unchecked. flake8 F824 on
-  `docker/genome-downloader/downloader_api.py:879`: `global download_status` is never
-  assigned in `_download_genomes`, only mutated, so the statement does nothing.
+- [DONE Nov 2026, fix/downloader-global-noop] CI's flake8 syntax check covers `docker/`
+  and `scripts/` too.
 
 ## Documentation
 

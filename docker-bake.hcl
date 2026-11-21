@@ -10,7 +10,7 @@
 # the disk-budget problem first.
 
 variable "ZAROPGX_TAG" {
-  default = "0.4.3"
+  default = "0.4.4"
 }
 
 variable "PHARMCAT_VERSION" {
@@ -23,6 +23,16 @@ variable "PHARMCAT_VERSION" {
 #   ZAROPGX_COMMIT=$(git rev-parse HEAD) docker buildx bake -f docker-bake.hcl --push
 variable "ZAROPGX_COMMIT" {
   default = "unknown"
+}
+
+# Every published image is linux/amd64, whatever machine cuts the release. Without this
+# a bake builds for the builder's own platform: amd64 on the machine releases have been
+# cut from, which is the only reason they have been right. Cut one on Apple Silicon and
+# arm64 images would go out under the same tags while every install's compose.yml asks
+# for linux/amd64 (installation.md, "the published images are linux/amd64"). On an arm64
+# builder this cross-builds, which wants QEMU.
+target "_release" {
+  platforms = ["linux/amd64"]
 }
 
 group "default" {
@@ -38,6 +48,7 @@ group "default" {
 }
 
 target "app" {
+  inherits   = ["_release"]
   context    = "."
   dockerfile = "Dockerfile"
   args = {
@@ -50,6 +61,7 @@ target "app" {
 }
 
 target "pharmcat" {
+  inherits   = ["_release"]
   context    = "."
   dockerfile = "docker/pharmcat/Dockerfile"
   args = {
@@ -61,6 +73,7 @@ target "pharmcat" {
 }
 
 target "nextflow" {
+  inherits   = ["_release"]
   context    = "."
   dockerfile = "docker/nextflow/Dockerfile.nextflow"
   tags       = ["zaromicsresearch/zaropgx-nextflow:${ZAROPGX_TAG}"]
@@ -69,6 +82,7 @@ target "nextflow" {
 }
 
 target "pypgx" {
+  inherits   = ["_release"]
   context    = "."
   dockerfile = "docker/pypgx/Dockerfile.pypgx"
   tags       = ["zaromicsresearch/zaropgx-pypgx:${ZAROPGX_TAG}"]
@@ -77,6 +91,7 @@ target "pypgx" {
 }
 
 target "gatk-api" {
+  inherits   = ["_release"]
   context    = "."
   dockerfile = "docker/gatk-api/Dockerfile.gatk-api"
   tags       = ["zaromicsresearch/zaropgx-gatk-api:${ZAROPGX_TAG}"]
@@ -85,6 +100,7 @@ target "gatk-api" {
 }
 
 target "genome-downloader" {
+  inherits   = ["_release"]
   context    = "./docker/genome-downloader"
   dockerfile = "Dockerfile.downloader"
   tags       = ["zaromicsresearch/zaropgx-genome-downloader:${ZAROPGX_TAG}"]
@@ -93,6 +109,7 @@ target "genome-downloader" {
 }
 
 target "zarohla" {
+  inherits   = ["_release"]
   context    = "."
   dockerfile = "docker/zarohla/Dockerfile"
   tags       = ["zaromicsresearch/zaropgx-zarohla:${ZAROPGX_TAG}"]

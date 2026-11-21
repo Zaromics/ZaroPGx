@@ -477,6 +477,70 @@ def annotate_open(genes: Sequence[Any], evidence: Mapping[str, Any]) -> Dict[str
     return found
 
 
+#: The genes docker/pypgx/read_phase.py names no haplotype for (its NAMING_UNFAITHFUL):
+#: naming one from its own variants did not reproduce what PyPGx printed, so the
+#: service names no alternative and annotate_open has nothing to print. Copied rather
+#: than imported, because the service runs in the pypgx image;
+#: tests/test_read_phase_unnamed.py holds the two lists equal.
+UNNAMED = frozenset({"CYP1A2", "CYP2A6", "CYP2E1", "POR", "SLC22A2", "SLCO1B1"})
+
+
+def unnamed_note() -> str:
+    """The line beside a call whose arrangement no fragment reaches, in a gene whose
+    other reading cannot be named.
+
+    The same first clause as ``open_note``, for the same fact, and as short, for the
+    same column. What it leaves out is said in the Methodology paragraph.
+    """
+    return "Reads cannot check this pairing; the other reading cannot be named here."
+
+
+def annotate_unnamed(
+    genes: Sequence[Any], evidence: Mapping[str, Any], pypgx_results: Any
+) -> Dict[str, dict]:
+    """Mark the calls ``annotate_open`` must stay silent on; returns {gene: detail}.
+
+    For the genes in UNNAMED the service names no alternative, because the name would
+    disagree with the caller. That left these calls with no note at all, though the
+    fact behind the note does not depend on the name: the call places two heterozygous
+    variants on different chromosomes and no fragment covers both, so the pairing is
+    the phaser's alone. That fact is said; the name is not.
+
+    The same shape ``annotate_open`` speaks for, so the two read alike: a call of
+    PyPGx's own, exactly two placed variants (one pairing, one alternative), and no
+    pair of them the reads decided. Where the reads decided one, ``annotate_genes``
+    has the better answer, built from evidence.
+    """
+    if str(evidence.get("status")) != "done":
+        return {}
+    decided = {
+        frozenset((str(row.get("a")), str(row.get("b"))))
+        for row in evidence.get("pairs") or []
+        if isinstance(row, Mapping) and row.get("shows") in ("cis", "trans")
+    }
+    found: Dict[str, dict] = {}
+    for row in genes or []:
+        if not isinstance(row, dict) or not pypgx_called(row):
+            continue
+        if row.get("read_phase_conflict") or row.get("read_phase_open"):
+            continue
+        gene = str(row.get("gene") or "").strip().upper()
+        if gene not in UNNAMED:
+            continue
+        says = asserted(pypgx_results, gene)
+        if len(says) != 1 or set(says) & decided:
+            continue
+        detail = {
+            "phaser": PHASER,
+            "alternative": None,
+            "phenotypes": [],
+            "call_note": unnamed_note(),
+        }
+        row["read_phase_open"] = detail
+        found[str(row.get("gene") or gene)] = detail
+    return found
+
+
 def coverage(
     genes: Sequence[Any], evidence: Mapping[str, Any], pypgx_results: Any
 ) -> Optional[Dict[str, int]]:
@@ -532,9 +596,14 @@ def _calls(n: int) -> str:
     return "1 call" if n == 1 else f"{n} calls"
 
 
-def coverage_note(counts: Optional[Mapping[str, int]]) -> Optional[str]:
+def coverage_note(
+    counts: Optional[Mapping[str, int]], unnamed: Sequence[str] = ()
+) -> Optional[str]:
     """The Methodology paragraph: what the reads settled about phase, and what they
     could not reach.
+
+    ``unnamed`` is the genes ``annotate_unnamed`` marked: their note says the pairing
+    is unchecked without naming the other reading, and this paragraph says why.
 
     Counts, not a confidence: how many fragments stand behind an arrangement is a
     measurement, and "no fragment covers both positions" is the most useful thing this
@@ -591,5 +660,16 @@ def coverage_note(counts: Optional[Mapping[str, int]]) -> Optional[str]:
         out.append(
             "A pairing the reads cannot reach is not a doubt about which alleles "
             "were found, only about how they are placed. "
+        )
+    genes = sorted({html.escape(str(g)) for g in unnamed if str(g).strip()})
+    if genes:
+        listed = (
+            genes[0] if len(genes) == 1 else ", ".join(genes[:-1]) + " and " + genes[-1]
+        )
+        out.append(
+            f"For {listed} the other pairing is not named: naming a haplotype from "
+            "its own variants does not reproduce PyPGx's names for "
+            f"{'this gene' if len(genes) == 1 else 'these genes'}, and a name that "
+            "disagrees with the caller would mislead more than none. "
         )
     return "".join(out).rstrip() + "</p>"

@@ -1324,16 +1324,6 @@
                                 </ul>
                             </div>`;
                     }
-                    // Validation errors appear as danger under info
-                    if (afi.validation_errors && Array.isArray(afi.validation_errors) && afi.validation_errors.length > 0) {
-                        infoHtml += `
-                            <div class="alert alert-danger mt-2">
-                                <strong>Validation Errors:</strong>
-                                <ul class="mb-0 mt-1">
-                                    ${afi.validation_errors.map(e => `<li>${e}</li>`).join('')}
-                                </ul>
-                            </div>`;
-                    }
                     infoContainer.innerHTML = infoHtml;
                 }
 
@@ -3187,8 +3177,12 @@
         // Enhanced progress monitoring that integrates with new workflow system
         // A job that ended without completing (failed or cancelled), told as such:
         // in the progress bar, the log and the results card.
-        window.showJobEnded = function(status, smoothProgress) {
+        // reason: a failed job's reason in the failed step's own words (the progress
+        // response's `error`), or nothing when the step recorded none. The card said
+        // the log above gave the reason, and nothing ever put it there.
+        window.showJobEnded = function(status, smoothProgress, reason) {
             const failed = status !== 'cancelled';
+            const said = failed && typeof reason === 'string' ? reason.trim() : '';
             if (smoothProgress) {
                 smoothProgress.stopAnimation();
             }
@@ -3208,6 +3202,9 @@
                 failed ? `Workflow ended: ${status}` : 'Workflow cancelled',
                 failed ? 'danger' : 'warning'
             );
+            if (said) {
+                window.addLogMessage(said, 'danger');
+            }
             const cancelButton = document.getElementById('cancelButton');
             if (cancelButton) {
                 cancelButton.classList.add('d-none');
@@ -3226,6 +3223,13 @@
                 ? 'The job stopped before it finished, so it has no reports. The processing log above says where it stopped and why.'
                 : 'The job was cancelled before it finished, so it has no reports.';
             alert.append(heading, text);
+            if (said) {
+                // A tool's stderr can run to pages; the log above keeps all of it.
+                const reasonText = document.createElement('p');
+                reasonText.className = 'mb-0 small font-monospace text-break';
+                reasonText.textContent = said.length > 1000 ? `${said.slice(0, 1000)}…` : said;
+                alert.append(reasonText);
+            }
             resultsDiv.replaceChildren(alert);
             resultsDiv.classList.remove('d-none');
             const workflowPanel = document.getElementById('workflowAnalysisPanel');
@@ -3418,7 +3422,7 @@
                             window.releaseDemoButtons(jobId);
                         }
                         if (endedAs !== 'completed') {
-                            window.showJobEnded(endedAs, smoothProgress);
+                            window.showJobEnded(endedAs, smoothProgress, data && data.error);
                             return;
                         }
 

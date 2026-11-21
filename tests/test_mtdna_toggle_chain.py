@@ -59,8 +59,6 @@ def _bam_analysis() -> FileAnalysis:
         is_compressed=True,
         has_index=True,
         file_size=1024,
-        is_valid=True,
-        validation_errors=[],
     )
 
 

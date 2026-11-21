@@ -2061,8 +2061,6 @@ async def upload_genomic_data(
                         "has_index": file_analysis.has_index,
                         "file_size": file_analysis.file_size,
                         "error": file_analysis.error,
-                        "is_valid": file_analysis.is_valid,
-                        "validation_errors": file_analysis.validation_errors,
                         "vcf_info": (
                             file_analysis.vcf_info.__dict__
                             if file_analysis.vcf_info
@@ -2128,8 +2126,6 @@ async def upload_genomic_data(
                 has_index=file_analysis.has_index,
                 file_size=file_analysis.file_size,
                 vcf_info=vcf_info,
-                is_valid=file_analysis.is_valid,
-                validation_errors=file_analysis.validation_errors,
             ),
             workflow=workflow_info,
         )
@@ -2293,8 +2289,6 @@ async def get_upload_status(job_id: str, db: Session = Depends(get_db)):
         progress = progress_info.progress_percentage
         current_stage = progress_info.stage.value
 
-        # Get workflow logs
-        logs = job_service.get_job_logs(job_id)
         latest_message = progress_info.message
 
         # A completed job's report links, at the top level, as the completion message
